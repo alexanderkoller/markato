@@ -1,0 +1,5 @@
+.build/
+dist/
+.DS_Store
+Parser/node_modules/
+*.xcodeproj/xcuserdata/
