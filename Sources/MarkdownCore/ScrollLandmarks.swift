@@ -1,7 +1,6 @@
 import Foundation
 
-/// Coordinates in a source/preview reference frame. `offset` identifies the
-/// same passage across replacement of either pane's working window.
+/// A passage expressed in source and preview coordinates.
 public struct ScrollLandmark: Equatable, Sendable {
     public let offset:Int
     public var sourceY:Double
@@ -12,44 +11,74 @@ public struct ScrollLandmark: Equatable, Sendable {
     }
 }
 
+/// A monotone piecewise-linear position map. The preview maps
+/// viewport origins, so no changing alignment term is subtracted afterward.
 public struct ScrollLandmarks: Sendable {
     public private(set) var points:[ScrollLandmark]
-    public init(_ points:[ScrollLandmark]) {
-        var seen=Set<Int>()
-        self.points=points.sorted {
-            $0.offset == $1.offset ? !$0.boundary && $1.boundary : $0.offset<$1.offset
-        }.filter {
-            $0.sourceY.isFinite && $0.previewY.isFinite && seen.insert($0.offset).inserted
+    public init(_ input:[ScrollLandmark]) {
+        var result=[ScrollLandmark]()
+        for var point in input.filter({$0.sourceY.isFinite && $0.previewY.isFinite}).sorted(by:{
+            if $0.sourceY != $1.sourceY {return $0.sourceY<$1.sourceY}
+            func priority(_ p:ScrollLandmark)->Int {p.boundary ? (p.offset==0 || p.offset==Int.max ? 2:0):1}
+            return priority($0)>priority($1)
+        }) {
+            if let last=result.last {
+                if point.sourceY==last.sourceY {continue}
+                point.previewY=max(last.previewY,point.previewY)
+            }
+            result.append(point)
         }
+        points=result
     }
-    /// Interpolate between reference points; continue the outermost slope when
-    /// a gesture briefly advances beyond the currently prepared region.
     public func previewY(for sourceY:Double)->Double? {
-        guard let first=points.first else{return nil}
-        guard points.count>1 else{return first.previewY+sourceY-first.sourceY}
+        guard sourceY.isFinite,let first=points.first,let last=points.last else{return nil}
+        if sourceY<=first.sourceY {return first.previewY+(sourceY-first.sourceY)*segmentSlope(at:0)}
+        if sourceY>=last.sourceY {return last.previewY+(sourceY-last.sourceY)*segmentSlope(at:max(0,points.count-2))}
         var low=0,high=points.count-1
         while low+1<high {
             let middle=(low+high)/2
             if points[middle].sourceY<=sourceY {low=middle}else{high=middle}
         }
-        let a=points[low],b=points[high]
-        let fraction=(sourceY-a.sourceY)/max(1,b.sourceY-a.sourceY)
-        return a.previewY+(b.previewY-a.previewY)*fraction
+        let a=points[low],b=points[high],h=b.sourceY-a.sourceY,t=(sourceY-a.sourceY)/h
+        return a.previewY+t*(b.previewY-a.previewY)
     }
-    /// Moving the native source working window changes its coordinate origin,
-    /// not the frozen distances between landmarks.
-    public mutating func rebaseSource(by delta:Double) {
-        for index in points.indices {points[index].sourceY += delta}
+    private func segmentSlope(at index:Int)->Double {
+        guard points.count>1 else{return 0}
+        let a=points[index],b=points[index+1]
+        return (b.previewY-a.previewY)/(b.sourceY-a.sourceY)
     }
-    /// Keep every captured coordinate. Only extend beyond the frozen region;
-    /// interior layout reports must not change its slopes during a gesture.
-    public mutating func extend(with next:ScrollLandmarks,previewShift:Double) {
-        guard let first=points.first,let last=points.last else {
-            points=next.points.map {var p=$0;p.previewY -= previewShift;return p};return
+    /// Solve passageY = viewportY + top/midpoint/bottom alignment once per
+    /// reference. Interpolation then operates entirely on viewport origins.
+    public static func alignmentOffset(at sourceY:Double,sourceHeight:Double,viewportHeight:Double)->Double {
+        let viewport=max(1,viewportHeight),end=max(0,sourceHeight-viewport)
+        guard end>0 else{return 0}
+        let band=min(viewport,end/2)
+        let top=min(1,max(0,sourceY/band))
+        let bottom=min(1,max(0,(sourceY-end+band)/band))
+        return (top+bottom)*viewport/2
+    }
+    public static func viewportOrigin(for passageY:Double,sourceHeight:Double,viewportHeight:Double)->Double {
+        let viewport=max(1,viewportHeight),end=max(0,sourceHeight-viewport)
+        guard end>0 else{return 0}
+        let band=min(viewport,end/2),gain=1+viewport/(2*band)
+        let topEnd=band+viewport/2,bottomStart=end-band+viewport/2
+        let origin:Double
+        if passageY<topEnd {origin=passageY/gain}
+        else if passageY<=bottomStart {origin=passageY-viewport/2}
+        else {origin=(passageY-viewport/2+(gain-1)*(end-band))/gain}
+        return min(end,max(0,origin))
+    }
+    public func viewportMap(sourceHeight:Double,viewportHeight:Double,previewHeight:Double)->ScrollLandmarks {
+        let end=max(0,sourceHeight-viewportHeight),previewEnd=max(0,previewHeight-viewportHeight)
+        var converted=points.compactMap {point -> ScrollLandmark? in
+            let x=Self.viewportOrigin(for:point.sourceY,sourceHeight:sourceHeight,viewportHeight:viewportHeight)
+            if x<=0.000001 || x>=end-0.000001 {return nil}
+            return ScrollLandmark(offset:point.offset,sourceY:x,
+                previewY:min(previewEnd,max(0,point.previewY-(point.sourceY-x))),boundary:point.boundary)
         }
-        let extra=next.points.filter{!$0.boundary}
-            .map {var p=$0;p.previewY -= previewShift;return p}
-        points.insert(contentsOf:extra.filter{$0.offset<first.offset},at:0)
-        points.append(contentsOf:extra.filter{$0.offset>last.offset})
+        converted.append(ScrollLandmark(offset:0,sourceY:0,previewY:0,boundary:true))
+        if end>0 {converted.append(ScrollLandmark(offset:Int.max,sourceY:end,previewY:previewEnd,boundary:true))}
+        if end==0 {return ScrollLandmarks([ScrollLandmark(offset:0,sourceY:0,previewY:0,boundary:true)])}
+        return ScrollLandmarks(converted)
     }
 }

@@ -2,68 +2,89 @@ import XCTest
 @testable import MarkdownCore
 
 final class ScrollLandmarksTests:XCTestCase {
-    func testInterpolationKeepsOneSpeedBetweenSparseLandmarks() {
-        let map=ScrollLandmarks([
-            ScrollLandmark(offset:0,sourceY:100,previewY:200),
-            ScrollLandmark(offset:400,sourceY:500,previewY:800),
-            ScrollLandmark(offset:800,sourceY:900,previewY:1000)
-        ])
-        XCTAssertEqual(map.previewY(for:100),200)
-        XCTAssertEqual(map.previewY(for:120),230)
-        XCTAssertEqual(map.previewY(for:300),500)
-        XCTAssertEqual(map.previewY(for:500),800)
-        XCTAssertEqual(map.previewY(for:700),900)
-        XCTAssertEqual(map.previewY(for:1000),1050)
+    private func point(_ x:Double,_ y:Double)->ScrollLandmark {
+        ScrollLandmark(offset:Int(x),sourceY:x,previewY:y)
     }
-    func testSourceWindowRebasePreservesFrozenMotion() {
-        var map=ScrollLandmarks([
-            ScrollLandmark(offset:100,sourceY:10,previewY:30),
-            ScrollLandmark(offset:200,sourceY:110,previewY:230)
-        ])
-        let before=map.previewY(for:60)
-        map.rebaseSource(by:4000)
-        XCTAssertEqual(map.previewY(for:4060),before)
-        XCTAssertEqual(map.previewY(for:4070)!-before!,20,accuracy:1e-9)
+    func testImageTopIsAnExactReferenceAndTravelIsLinear() {
+        let map=ScrollLandmarks([point(0,0),point(100,120),point(500,920)])
+        XCTAssertEqual(map.previewY(for:100)!,120,accuracy:1e-8)
+        for x in stride(from:100.0,through:499,by:0.5) {
+            XCTAssertEqual(map.previewY(for:x+0.5)!-map.previewY(for:x)!,1,accuracy:1e-8)
+        }
     }
-    func testNewDOMCoordinatesDoNotReplaceFrozenInteriorLandmarks() {
-        var frozen=ScrollLandmarks([
-            ScrollLandmark(offset:100,sourceY:100,previewY:200),
-            ScrollLandmark(offset:200,sourceY:200,previewY:400)
-        ])
-        let new=ScrollLandmarks([
-            ScrollLandmark(offset:100,sourceY:110,previewY:50),
-            ScrollLandmark(offset:150,sourceY:165,previewY:300),
-            ScrollLandmark(offset:200,sourceY:220,previewY:450),
-            ScrollLandmark(offset:300,sourceY:300,previewY:650)
-        ])
-        frozen.extend(with:new,previewShift:50)
-        XCTAssertEqual(frozen.points.count,3)
-        XCTAssertEqual(frozen.previewY(for:150),300)
-        XCTAssertEqual(frozen.previewY(for:250),500)
-        XCTAssertEqual(frozen.points.last?.previewY,600)
+    func testCompressedPassagesAndEdgesNeverReverse() {
+        for height in [500.0,850,1600,8000] {
+            for viewport in [380.0,760,1190] {
+                for ratio in [0.01,0.2,0.4,1,4,20] {
+                    let raw=ScrollLandmarks((0...20).map{point(Double($0)*height/20,Double($0)*height/20*ratio)})
+                    let map=raw.viewportMap(sourceHeight:height,viewportHeight:viewport,
+                        previewHeight:height*ratio)
+                    let end=max(0,height-viewport),expected=max(0,height*ratio-viewport)
+                    XCTAssertEqual(map.previewY(for:0)!,0,accuracy:1e-8)
+                    // A source shorter than its viewport has no scroll domain.
+                    XCTAssertEqual(map.previewY(for:end)!,end==0 ? 0:expected,accuracy:1e-8)
+                    var previous=map.previewY(for:0)!
+                    for step in 1...1000 {
+                        let value=map.previewY(for:Double(step)*end/1000)!
+                        XCTAssertGreaterThanOrEqual(value+1e-8,previous)
+                        XCTAssertGreaterThanOrEqual(value,-1e-8)
+                        XCTAssertLessThanOrEqual(value,expected+1e-8)
+                        previous=value
+                    }
+                }
+            }
+        }
     }
-    func testHeadingFreeWindowUsesOnlyItsEdges() {
-        let map=ScrollLandmarks([
-            ScrollLandmark(offset:500,sourceY:200,previewY:16,boundary:true),
-            ScrollLandmark(offset:1000,sourceY:1000,previewY:1516,boundary:true)
-        ])
-        XCTAssertEqual(map.previewY(for:600),766)
-        XCTAssertEqual(map.previewY(for:1100),1703.5)
+    func testLinearIntervalsHaveConstantGainAndMeetAtReferences() {
+        let map=ScrollLandmarks([point(0,0),point(100,50),point(300,650)])
+        XCTAssertEqual(map.previewY(for:50)!,25,accuracy:1e-8)
+        XCTAssertEqual(map.previewY(for:200)!,350,accuracy:1e-8)
+        XCTAssertEqual(map.previewY(for:100)!,50,accuracy:1e-8)
+        XCTAssertEqual(map.previewY(for:99.999)!,49.9995,accuracy:1e-8)
+        XCTAssertEqual(map.previewY(for:100.001)!,50.003,accuracy:1e-8)
     }
-    func testRealLandmarkWinsOverRegionBoundaryAtSameSourceOffset() {
-        let map=ScrollLandmarks([
-            ScrollLandmark(offset:0,sourceY:0,previewY:0,boundary:true),
-            ScrollLandmark(offset:0,sourceY:0,previewY:16),
-            ScrollLandmark(offset:100,sourceY:100,previewY:116,boundary:true)
-        ])
-        XCTAssertEqual(map.points.count,2)
-        XCTAssertFalse(map.points[0].boundary)
-        XCTAssertEqual(map.previewY(for:0),16)
+    func testInvalidGeometryCannotBreakOrderingOrProduceNonfiniteResults() {
+        let map=ScrollLandmarks([point(100,100),point(0,0),point(50,80),point(75,20),
+            ScrollLandmark(offset:1,sourceY:.nan,previewY:10),point(50,90)])
+        XCTAssertEqual(map.points.count,4)
+        for (a,b) in zip(map.points,map.points.dropFirst()) {
+            XCTAssertGreaterThan(b.sourceY,a.sourceY)
+            XCTAssertGreaterThanOrEqual(b.previewY,a.previewY)
+        }
+        XCTAssertNil(map.previewY(for:.infinity))
+        XCTAssertNil(ScrollLandmarks([]).previewY(for:0))
     }
-    func testEmptyAndInitiallyUnpreparedGestures() {
-        var map=ScrollLandmarks([])
-        XCTAssertNil(map.previewY(for:0))
-        map.extend(with:ScrollLandmarks([ScrollLandmark(offset:10,sourceY:20,previewY:30)]),previewShift:10)
-        XCTAssertEqual(map.previewY(for:50),50)
+    func testMidpointReferenceAndInverseForShortAndLongDocuments() {
+        for height in [600.0,1000,2000,8000] {
+            let viewport=760.0,end=max(0,height-viewport)
+            for step in 0...100 {
+                let x=end*Double(step)/100
+                let a=ScrollLandmarks.alignmentOffset(at:x,sourceHeight:height,viewportHeight:viewport)
+                XCTAssertEqual(ScrollLandmarks.viewportOrigin(for:x+a,sourceHeight:height,viewportHeight:viewport),x,accuracy:1e-8)
+            }
+            XCTAssertEqual(ScrollLandmarks.alignmentOffset(at:0,sourceHeight:height,viewportHeight:viewport),0,accuracy:1e-8)
+            if end>0 {
+                XCTAssertEqual(ScrollLandmarks.alignmentOffset(at:end/2,sourceHeight:height,viewportHeight:viewport),viewport/2,accuracy:1e-8)
+                XCTAssertEqual(ScrollLandmarks.alignmentOffset(at:end,sourceHeight:height,viewportHeight:viewport),viewport,accuracy:1e-8)
+            }
+        }
     }
+    func testDirectBoundaryInverseAgainstIndependentNumericalSolution() {
+        for viewport in [1.0,380,760,1190] {
+            for height in [0.0,viewport,viewport+0.01,viewport*1.5,viewport*3,80000] {
+                let end=max(0,height-viewport)
+                for step in -5...105 {
+                    let passage=height*Double(step)/100
+                    var low=0.0,high=end
+                    for _ in 0..<60 {
+                        let middle=(low+high)/2
+                        let readingPosition=middle+ScrollLandmarks.alignmentOffset(at:middle,sourceHeight:height,viewportHeight:viewport)
+                        if readingPosition<passage {low=middle}else{high=middle}
+                    }
+                    XCTAssertEqual(ScrollLandmarks.viewportOrigin(for:passage,sourceHeight:height,viewportHeight:viewport),(low+high)/2,accuracy:1e-8)
+                }
+            }
+        }
+    }
+
 }

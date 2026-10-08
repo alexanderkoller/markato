@@ -23,6 +23,7 @@ import UniformTypeIdentifiers
     @objc func saveDocument(_ sender:Any?) { (currentEditor?.document as? NSDocument)?.save(sender) }
     @objc func saveDocumentAs(_ sender:Any?) { (currentEditor?.document as? NSDocument)?.saveAs(sender) }
     @objc func revertDocumentToSaved(_ sender:Any?) { (currentEditor?.document as? NSDocument)?.revertToSaved(sender) }
+    #if DEBUG
     @objc func toggleTimingDiagnostics(_ sender:Any?) {
         if TimingDiagnostics.shared.isRecording {TimingDiagnostics.shared.stop()}
         else {TimingDiagnostics.shared.start()}
@@ -41,7 +42,7 @@ import UniformTypeIdentifiers
             if let editor,let document=editor.document as? MarkdownDocument {
                 metadata["documentCharacters"]=String(document.source.count)
                 metadata["documentRevision"]=String(document.revision)
-                metadata["sourceWindowCharacters"]=String(editor.source.windowRange.length)
+                metadata["sourceDocumentCharacters"]=String(editor.source.documentRange.length)
                 metadata["previewWidth"]=String(Double(editor.preview.bounds.width))
                 metadata["previewHeight"]=String(Double(editor.preview.bounds.height))
                 metadata["mountedFragments"]=String(editor.preview.preparedFragmentCount)
@@ -57,24 +58,32 @@ import UniformTypeIdentifiers
         if let window=currentEditor?.window {panel.beginSheetModal(for:window,completionHandler:complete)}
         else {panel.begin(completionHandler:complete)}
     }
+    #endif
     func validateMenuItem(_ menuItem:NSMenuItem)->Bool {
+        #if DEBUG
         if menuItem.action == #selector(toggleTimingDiagnostics(_:)) {
             menuItem.title=TimingDiagnostics.shared.isRecording ? "Stop Timing Diagnostics":"Start Timing Diagnostics"
             return true
         }
         if menuItem.action == #selector(saveTimingReport(_:)) {return TimingDiagnostics.shared.hasEvents}
+        #endif
         return currentEditor?.validateMenuItem(menuItem) ?? false
     }
     func applicationDidFinishLaunching(_ notification:Notification) {
+        #if DEBUG
         if CommandLine.arguments.contains("--diagnostics") {TimingDiagnostics.shared.start()}
+        let checking=CommandLine.arguments.contains("--integration-test") || CommandLine.arguments.contains("--smoke-test")
+        #else
+        let checking=false
+        #endif
         NSWindow.allowsAutomaticWindowTabbing = true
         buildMenus()
-        if NSDocumentController.shared.documents.isEmpty || CommandLine.arguments.contains("--sample") || CommandLine.arguments.contains("--smoke-test") || CommandLine.arguments.contains("--integration-test") {
+        if NSDocumentController.shared.documents.isEmpty || CommandLine.arguments.contains("--sample") || checking {
             let document = MarkdownDocument(); document.setInitialText(Self.sample)
             NSDocumentController.shared.addDocument(document); document.makeWindowControllers()
-            let checking=CommandLine.arguments.contains("--integration-test") || CommandLine.arguments.contains("--smoke-test")
-            if checking {document.windowControllers.first?.window?.setFrameOrigin(NSPoint(x:-10000,y:0));document.windowControllers.first?.window?.orderBack(nil)}
-            else {document.showWindows()}
+            #if DEBUG
+            if checking {document.windowControllers.first?.window?.setFrameOrigin(NSPoint(x:-10000,y:0))}
+            document.showWindows()
             if CommandLine.arguments.contains("--integration-test") { DispatchQueue.main.asyncAfter(deadline:.now()+1) { IntegrationCheck.run(document) } }
             if CommandLine.arguments.contains("--smoke-test") {
                 DispatchQueue.main.asyncAfter(deadline:.now()+3) {
@@ -82,13 +91,16 @@ import UniformTypeIdentifiers
                           let bitmap = view.bitmapImageRepForCachingDisplay(in:view.bounds) else { exit(2) }
                     view.cacheDisplay(in:view.bounds,to:bitmap)
                     try? bitmap.representation(using:.png,properties:[:])?.write(to:URL(fileURLWithPath:"/private/tmp/astra-smoke.png"))
-                    print("SMOKE: windows=\(NSApp.windows.count), TextKit2=\((document.windowControllers.first as? EditorWindowController)?.source.textView.textLayoutManager != nil), previewRevision=\((document.windowControllers.first as? EditorWindowController)?.preview.lastRevision ?? -1)")
+                    print("SMOKE: windows=\(NSApp.windows.count), nativeGlyphLayout=\((document.windowControllers.first as? EditorWindowController)?.source.textView.layoutManager != nil), previewRevision=\((document.windowControllers.first as? EditorWindowController)?.preview.lastRevision ?? -1)")
                     print((document.windowControllers.first as? EditorWindowController)?.preview.debugGeometry() ?? "No preview")
                     exit(EXIT_SUCCESS)
                 }
             }
+            #else
+            document.showWindows()
+            #endif
         }
-        if !CommandLine.arguments.contains("--integration-test") && !CommandLine.arguments.contains("--smoke-test") {NSApp.activate(ignoringOtherApps:true)}
+        if !checking {NSApp.activate(ignoringOtherApps:true)}
     }
     func applicationShouldOpenUntitledFile(_ sender:NSApplication) -> Bool { false }
     func applicationShouldTerminateAfterLastWindowClosed(_ sender:NSApplication) -> Bool { false }
@@ -120,11 +132,13 @@ import UniformTypeIdentifiers
         add(view,"Enter Full Screen",#selector(NSWindow.toggleFullScreen(_:)),"f",[.command,.control])
         let window=submenu("Window");NSApp.windowsMenu=window
         add(window,"Minimize",#selector(NSWindow.performMiniaturize(_:)),"m");add(window,"Zoom",#selector(NSWindow.performZoom(_:)));window.addItem(.separator());add(window,"Bring All to Front",#selector(NSApplication.arrangeInFront(_:)))
+        #if DEBUG
         let help=submenu("Help");NSApp.helpMenu=help
         add(help,"Start Timing Diagnostics",#selector(toggleTimingDiagnostics(_:)))
         help.items.last?.target=self
         add(help,"Save Timing Report…",#selector(saveTimingReport(_:)))
         help.items.last?.target=self
+        #endif
     }
     static var sample:String {
         guard let url = Bundle.main.url(forResource:"Example",withExtension:"md"),
@@ -141,7 +155,7 @@ import UniformTypeIdentifiers
 
     | Feature | Implementation |
     | :--- | :--- |
-    | Editing | AppKit and TextKit 2 |
+    | Editing | AppKit and TextKit |
     | Preview | WebKit |
     | Syntax | Lezer |
 
@@ -176,5 +190,9 @@ import UniformTypeIdentifiers
 let application = NSApplication.shared
 let delegate = MainActor.assumeIsolated {AppDelegate()}
 application.delegate = delegate
+#if DEBUG
 application.setActivationPolicy(CommandLine.arguments.contains("--integration-test") || CommandLine.arguments.contains("--smoke-test") ? .accessory:.regular)
+#else
+application.setActivationPolicy(.regular)
+#endif
 application.run()

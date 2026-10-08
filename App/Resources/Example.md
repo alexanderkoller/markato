@@ -1222,7 +1222,7 @@ $$
 
 ## Large table
 
-This table has 800 rows. Scroll through its middle, resize the preview pane, and try editing a cell. The preview uses markdown-it with a header and the selected rows.
+This table has 800 rows. Scroll through its middle, resize the preview pane, and try editing a cell. The preview uses markdown-it with a header and all rows.
 
 | Row | Station | Value | Comment |
 | ---: | :--- | ---: | :--- |

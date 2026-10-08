@@ -1,3 +1,4 @@
+#if DEBUG
 import Foundation
 import Testing
 @testable import MarkdownCore
@@ -36,3 +37,5 @@ import Testing
     #expect(events.first?.measurement=="reported-duration")
     #expect(events.first?.durationMs==2.5)
 }
+
+#endif

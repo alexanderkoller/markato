@@ -40,37 +40,27 @@ const references=new Map();
 const leafKinds=/^(Paragraph|ATXHeading[1-6]|SetextHeading[12]|FencedCode|CodeBlock|Table|MathBlock|HorizontalRule|HTMLBlock|BulletList|OrderedList|Blockquote)$/;
 
 function read(input,a,b){return input.read(a,b);}
+// One immutable JS string per revision keeps parser reads inside JavaScript.
+// Calling a native rope proxy for every line and token dominates cold parsing.
+export function documentInput(text) {
+  return {length:text.length,lineChunks:true,read:(a,b)=>text.slice(a,b),chunk(position){
+    const newline=text.indexOf('\n',position);
+    return text.slice(position,newline<0?text.length:newline===position?newline+1:newline);
+  }};
+}
 function referencedDefinitions(markdown) {
   const used=new Set();const re=/\[([^\]\n]+)\](?:\[([^\]\n]*)\])?/g;let m;
   while((m=re.exec(markdown)))used.add((m[2]||m[1]).trim().replace(/\s+/g,' ').toLowerCase());
   return [...used].filter(id=>references.has(id)).map(id=>references.get(id)).join('\n');
 }
-function fragment(input,node,from,to,includeHTML=true) {
-  let a=node.from,b=node.to,text,anchorFrom=a,anchorTo=b;
-  if(node.name==='Table') {
-    const firstLine=input.lineAt(a), headerEnd=input.lineStart(firstLine+2);
-    const rowStart=Math.max(firstLine+2,input.lineAt(Math.max(from,a)));
-    const rowEnd=Math.max(rowStart+1,input.lineAt(Math.min(Math.max(from,to-1),b))+1);
-    const sa=input.lineStart(rowStart),sb=Math.min(b,input.lineStart(rowEnd));
-    text=read(input,a,Math.min(headerEnd,b)) + read(input,sa,sb);
-    a=sa;b=sb;anchorFrom=sa;anchorTo=sb;
-  } else if(node.name==='FencedCode'||node.name==='CodeBlock') {
-    const startLine=input.lineAt(node.from), endLine=input.lineAt(node.to);
-    const isFence=node.name==='FencedCode';
-    const sa=input.lineStart(Math.max(startLine+(isFence?1:0),input.lineAt(Math.max(from,node.from))));
-    const sb=Math.min(node.to,input.lineStart(Math.min(endLine,input.lineAt(Math.min(Math.max(from,to-1),node.to)))+1));
-    let body=read(input,sa,sb);
-    if(isFence)body=body.replace(/\n[ \t]*(`{3,}|~{3,})[ \t]*$/,'');
-    else body=body.replace(/^ {4}/gm,'');
-    const opening=read(input,node.from,Math.min(input.lineStart(startLine+1),node.to));
-    const language=isFence?(opening.match(/(?:`{3,}|~{3,})[ \t]*(\S*)/)?.[1]||''):'';
-    const runs=[...body.matchAll(/`+/g)].map(m=>m[0].length), fence='`'.repeat(Math.max(3,...runs.map(n=>n+1)));
-    text=fence+language+'\n'+body+'\n'+fence;a=sa;b=sb;anchorFrom=sa;anchorTo=sb;
-  } else {
-    text=read(input,a,b);
-  }
+function fragment(input,node,includeHTML) {
+  const a=node.from,b=node.to;
+  let text;
+  // Render complete semantic blocks. A table's column widths and a code
+  // block's layout must not depend on which source rows are currently visible.
+  text=read(input,a,b);
   const defs=referencedDefinitions(text);if(defs)text+='\n\n'+defs;
-  return {kind:node.name,from:a,to:b,anchorFrom,anchorTo,markdown:text,html:includeHTML?renderHTML(text,node.name):undefined,containerFrom:node.from,containerTo:node.to};
+  return {kind:node.name,from:a,to:b,markdown:text,html:includeHTML?renderHTML(text,node.name):undefined};
 }
 
 export function parseViewport(input,revision,from,to,changes=[],previousRevision=-1,includeSpans=true,includeHTML=true) {
@@ -95,7 +85,7 @@ export function parseViewport(input,revision,from,to,changes=[],previousRevision
   const selected=[];
   tree.iterate({from,to,enter(n){
     if(n.to<=from||n.from>=to)return false;
-    if(leafKinds.test(n.name)){selected.push(fragment(input,n.node,from,to,includeHTML));return false;}
+    if(leafKinds.test(n.name)){selected.push(fragment(input,n.node,includeHTML));return false;}
   }});
   const spans=[];
   // Every fragment's highlighting range includes the viewport. Walk their
@@ -110,3 +100,4 @@ export function parseViewport(input,revision,from,to,changes=[],previousRevision
   return JSON.stringify({revision,spans,fragments:selected});
 }
 globalThis.astraParse=parseViewport;
+globalThis.astraInput=documentInput;

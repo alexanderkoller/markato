@@ -2,7 +2,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "esbuild lezer.mjs --bundle --format=iife --target=es2020 --outfile=../Sources/MarkdownCore/Resources/lezer.js && esbuild html.mjs --bundle --format=iife --target=es2020 --outfile=../Sources/MarkdownCore/Resources/html.js",
+    "build": "esbuild lezer.mjs --bundle --format=iife --target=es2020 --outfile=../Sources/MarkdownCore/Resources/lezer.js",
     "test": "node test.mjs"
   },
   "dependencies": {

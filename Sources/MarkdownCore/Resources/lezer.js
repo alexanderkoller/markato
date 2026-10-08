@@ -24145,27 +24145,6 @@
   function renderHTML(markdown, kind = "") {
     return kind === "Literal" || kind === "HTMLBlock" ? "<pre>" + md.utils.escapeHtml(markdown) + "</pre>" : md.render(markdown);
   }
-  function localPreview(text3, from, revision) {
-    const starts = [0];
-    for (let i3 = 0; i3 < text3.length; i3++) if (text3[i3] === "\n") starts.push(i3 + 1);
-    const env = {}, tokens = md.parse(text3, env), fragments = [];
-    for (let i3 = 0; i3 < tokens.length; ) {
-      const first = tokens[i3];
-      if (!first.map) {
-        i3++;
-        continue;
-      }
-      let end = i3 + 1;
-      if (first.nesting === 1) while (end < tokens.length) {
-        if (tokens[end++].level === 0) break;
-      }
-      const a2 = from + (starts[first.map[0]] ?? text3.length), b = from + (starts[first.map[1]] ?? text3.length);
-      fragments.push({ kind: first.type, from: a2, to: b, anchorFrom: a2, anchorTo: b, markdown: text3.slice(a2 - from, b - from), html: md.renderer.render(tokens.slice(i3, end), md.options, env) });
-      i3 = end;
-    }
-    return JSON.stringify({ revision, spans: [], fragments });
-  }
-  globalThis.astraLocal = localPreview;
 
   // lezer.mjs
   var math2 = {
@@ -24220,6 +24199,12 @@
   function read(input, a2, b) {
     return input.read(a2, b);
   }
+  function documentInput(text3) {
+    return { length: text3.length, lineChunks: true, read: (a2, b) => text3.slice(a2, b), chunk(position) {
+      const newline2 = text3.indexOf("\n", position);
+      return text3.slice(position, newline2 < 0 ? text3.length : newline2 === position ? newline2 + 1 : newline2);
+    } };
+  }
   function referencedDefinitions(markdown) {
     const used = /* @__PURE__ */ new Set();
     const re = /\[([^\]\n]+)\](?:\[([^\]\n]*)\])?/g;
@@ -24227,40 +24212,13 @@
     while (m = re.exec(markdown)) used.add((m[2] || m[1]).trim().replace(/\s+/g, " ").toLowerCase());
     return [...used].filter((id) => references.has(id)).map((id) => references.get(id)).join("\n");
   }
-  function fragment(input, node, from, to, includeHTML = true) {
-    let a2 = node.from, b = node.to, text3, anchorFrom = a2, anchorTo = b;
-    if (node.name === "Table") {
-      const firstLine = input.lineAt(a2), headerEnd = input.lineStart(firstLine + 2);
-      const rowStart = Math.max(firstLine + 2, input.lineAt(Math.max(from, a2)));
-      const rowEnd = Math.max(rowStart + 1, input.lineAt(Math.min(Math.max(from, to - 1), b)) + 1);
-      const sa = input.lineStart(rowStart), sb = Math.min(b, input.lineStart(rowEnd));
-      text3 = read(input, a2, Math.min(headerEnd, b)) + read(input, sa, sb);
-      a2 = sa;
-      b = sb;
-      anchorFrom = sa;
-      anchorTo = sb;
-    } else if (node.name === "FencedCode" || node.name === "CodeBlock") {
-      const startLine = input.lineAt(node.from), endLine = input.lineAt(node.to);
-      const isFence = node.name === "FencedCode";
-      const sa = input.lineStart(Math.max(startLine + (isFence ? 1 : 0), input.lineAt(Math.max(from, node.from))));
-      const sb = Math.min(node.to, input.lineStart(Math.min(endLine, input.lineAt(Math.min(Math.max(from, to - 1), node.to))) + 1));
-      let body = read(input, sa, sb);
-      if (isFence) body = body.replace(/\n[ \t]*(`{3,}|~{3,})[ \t]*$/, "");
-      else body = body.replace(/^ {4}/gm, "");
-      const opening = read(input, node.from, Math.min(input.lineStart(startLine + 1), node.to));
-      const language = isFence ? opening.match(/(?:`{3,}|~{3,})[ \t]*(\S*)/)?.[1] || "" : "";
-      const runs = [...body.matchAll(/`+/g)].map((m) => m[0].length), fence2 = "`".repeat(Math.max(3, ...runs.map((n2) => n2 + 1)));
-      text3 = fence2 + language + "\n" + body + "\n" + fence2;
-      a2 = sa;
-      b = sb;
-      anchorFrom = sa;
-      anchorTo = sb;
-    } else {
-      text3 = read(input, a2, b);
-    }
+  function fragment(input, node, includeHTML) {
+    const a2 = node.from, b = node.to;
+    let text3;
+    text3 = read(input, a2, b);
     const defs = referencedDefinitions(text3);
     if (defs) text3 += "\n\n" + defs;
-    return { kind: node.name, from: a2, to: b, anchorFrom, anchorTo, markdown: text3, html: includeHTML ? renderHTML(text3, node.name) : void 0, containerFrom: node.from, containerTo: node.to };
+    return { kind: node.name, from: a2, to: b, markdown: text3, html: includeHTML ? renderHTML(text3, node.name) : void 0 };
   }
   function parseViewport(input, revision, from, to, changes = [], previousRevision = -1, includeSpans = true, includeHTML = true) {
     if (!tree || treeRevision !== revision) {
@@ -24292,7 +24250,7 @@
     tree.iterate({ from, to, enter(n2) {
       if (n2.to <= from || n2.from >= to) return false;
       if (leafKinds.test(n2.name)) {
-        selected.push(fragment(input, n2.node, from, to, includeHTML));
+        selected.push(fragment(input, n2.node, includeHTML));
         return false;
       }
     } });
@@ -24307,6 +24265,7 @@
     return JSON.stringify({ revision, spans, fragments: selected });
   }
   globalThis.astraParse = parseViewport;
+  globalThis.astraInput = documentInput;
 })();
 /*! Bundled license information:
 

@@ -1,6 +1,6 @@
 import Foundation
 
-public struct RenderedEntry: Sendable {
+public struct RenderedEntry: Equatable, Sendable {
     public let id:String
     public let fragment:PreviewFragment
     public init(id:String,fragment:PreviewFragment) { self.id=id;self.fragment=fragment }
@@ -16,19 +16,21 @@ public final class RenderedCache {
     private final class Node {
         var page:RenderedPage
         var left:Node?,right:Node?
-        var height=1,shift=0,bytes:Int
+        var height=1,shift=0
         var first:Int,last:Int,continuous=true
         init(_ page:RenderedPage) {
             self.page=page;first=page.range.location;last=NSMaxRange(page.range)
-            bytes=page.entries.reduce(0){$0+$1.fragment.markdown.utf8.count+($1.fragment.html?.utf8.count ?? 0)}
         }
-        var totalBytes=0
     }
     private var root:Node?
     public private(set) var count=0
-    private let byteLimit:Int
-    public var byteCost:Int {root?.totalBytes ?? 0}
-    public init(byteLimit:Int=64*1024*1024) {self.byteLimit=byteLimit}
+    #if DEBUG
+    public var byteCost:Int {allPages.flatMap(\.entries).reduce(0){$0+$1.fragment.markdown.utf8.count+($1.fragment.html?.utf8.count ?? 0)}}
+    #endif
+    public var allPages:[RenderedPage] {
+        pages(in:NSRange(location:0,length:Int.max))
+    }
+    public init() {}
     public func clear() {
         let old=root;root=nil;count=0
         DispatchQueue.global(qos:.utility).async { _ = old?.height }
@@ -36,7 +38,7 @@ public final class RenderedCache {
     private func height(_ n:Node?)->Int { n?.height ?? 0 }
     private func shift(_ n:Node?,_ delta:Int) { guard let n else{return};n.page.range.location += delta;n.first += delta;n.last += delta;n.shift += delta }
     private func shifted(_ f:PreviewFragment,_ delta:Int)->PreviewFragment {
-        PreviewFragment(kind:f.kind,from:f.from+delta,to:f.to+delta,anchorFrom:f.anchorFrom+delta,anchorTo:f.anchorTo+delta,markdown:f.markdown,html:f.html,containerFrom:f.containerFrom.map{$0+delta},containerTo:f.containerTo.map{$0+delta})
+        PreviewFragment(kind:f.kind,from:f.from+delta,to:f.to+delta,markdown:f.markdown,html:f.html)
     }
     private func push(_ n:Node) {
         if n.shift != 0 {
@@ -51,7 +53,6 @@ public final class RenderedCache {
         n.continuous=(n.left?.continuous ?? true) && (n.right?.continuous ?? true)
             && (n.left?.last ?? n.page.range.location)>=n.page.range.location
             && (n.right?.first ?? NSMaxRange(n.page.range))<=NSMaxRange(n.page.range)
-        n.totalBytes=n.bytes+(n.left?.totalBytes ?? 0)+(n.right?.totalBytes ?? 0)
     }
     private func balance(_ n:Node)->Node {
         update(n)
@@ -111,8 +112,10 @@ public final class RenderedCache {
         return selected.flatMap{$0.entries}
     }
     @discardableResult public func store(_ result:ParseResult,range:NSRange)->[RenderedEntry] {
+        #if DEBUG
         let work=TimingDiagnostics.shared.begin("cache.store")
         defer {TimingDiagnostics.shared.end(work,values:["pages":Double(count),"bytes":Double(byteCost),"fragments":Double(result.fragments.count)])}
+        #endif
         let start=min(range.location,result.fragments.first?.from ?? range.location)
         let end=max(NSMaxRange(range),result.fragments.last?.to ?? NSMaxRange(range))
         let pages=pages(in:NSRange(location:start,length:end-start)),old=pages.flatMap{$0.entries}
@@ -124,25 +127,34 @@ public final class RenderedCache {
         // its prepared prefix/suffix instead of discarding the rest of that page.
         for page in pages {
             if page.range.location<start {
-                insert(RenderedPage(range:NSRange(location:page.range.location,length:start-page.range.location),entries:page.entries.filter{$0.fragment.to<=start}))
+                // A semantic block that crosses the batch edge cannot be
+                // preserved as a partly prepared block.
+                let prefixEnd=page.entries.filter{$0.fragment.from<start && $0.fragment.to>start}
+                    .map{$0.fragment.from}.min() ?? start
+                if prefixEnd>page.range.location {
+                    insert(RenderedPage(range:NSRange(location:page.range.location,length:prefixEnd-page.range.location),entries:page.entries.filter{$0.fragment.to<=prefixEnd}))
+                }
             }
             if NSMaxRange(page.range)>end {
-                insert(RenderedPage(range:NSRange(location:end,length:NSMaxRange(page.range)-end),entries:page.entries.filter{$0.fragment.from>=end}))
+                let suffixStart=page.entries.filter{$0.fragment.from<end && $0.fragment.to>end}
+                    .map{$0.fragment.to}.max() ?? end
+                if suffixStart<NSMaxRange(page.range) {
+                    insert(RenderedPage(range:NSRange(location:suffixStart,length:NSMaxRange(page.range)-suffixStart),entries:page.entries.filter{$0.fragment.from>=suffixStart}))
+                }
             }
         }
         insert(RenderedPage(range:NSRange(location:start,length:end-start),entries:entries))
-        while byteCost>byteLimit,let current=root {
-            let first=minimum(current).page.range.location
-            let (_,rest)=split(root,at:first+1);root=rest;count -= 1
-        }
+
         return entries
     }
     private func insert(_ page:RenderedPage) {
         let (a,b)=split(root,at:page.range.location);root=join(a,Node(page),b);count += 1
     }
     public func invalidate(_ edit:SourceEdit) {
+        #if DEBUG
         let work=TimingDiagnostics.shared.begin("cache.invalidate")
         defer {TimingDiagnostics.shared.end(work,values:["pages":Double(count),"bytes":Double(byteCost)])}
+        #endif
         remove(edit.range,delta:edit.insertedLength-edit.range.length)
     }
     /// Cached contiguous subtrees are skipped as a unit. An ordinary edit repairs

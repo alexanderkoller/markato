@@ -38,8 +38,10 @@ actor ImageCache {
         entries[url] = (loaded,Date()); cost += loaded.cost; return loaded
     }
     func png(_ url:URL) async throws -> Data {
+        #if DEBUG
         let work=TimingDiagnostics.shared.begin("image.prepare")
         defer {TimingDiagnostics.shared.end(work)}
+        #endif
         let loaded=try await load(url)
         guard let data=NSBitmapImageRep(cgImage:loaded.image).representation(using:.png,properties:[:]) else {throw URLError(.cannotDecodeContentData)}
         return data

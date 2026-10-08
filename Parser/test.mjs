@@ -1,20 +1,17 @@
 import assert from 'node:assert/strict';
-import {parseViewport} from './lezer.mjs';
-import {renderHTML,localPreview} from './html.mjs';
-function input(text){const starts=[0];for(let i=0;i<text.length;i++)if(text[i]==='\n')starts.push(i+1);
-return {length:text.length,lineChunks:true,read:(a,b)=>text.slice(a,b),chunk(p){const n=text.indexOf('\n',p);return text.slice(p,n<0?text.length:n===p?n+1:n);},lineAt(p){let a=0,b=starts.length;while(a+1<b){const m=(a+b)>>1;if(starts[m]<=p)a=m;else b=m;}return a;},lineStart(l){return starts[l]??text.length;}};}
+import {parseViewport,documentInput as input} from './lezer.mjs';
+import {renderHTML} from './html.mjs';
 let revision=0;
 function parse(text,a=0,b=text.length){return JSON.parse(parseViewport(input(text),++revision,a,b));}
 const source='# Heading\n\n**Bold** and *italic* with $x_1$ and \\(y^2\\).\n\n| A | B |\n|---|---|\n'+Array.from({length:1000},(_,i)=>`| ${i} | cell |`).join('\n')+'\n\n```swift\nlet x = 2\n```\n\n$$\n\\begin{matrix}1&2\\\\3&4\\end{matrix}\n$$\n';
 const result=parse(source,0,50);assert(result.spans.some(s=>s.kind==='StrongEmphasis'));assert(result.spans.some(s=>s.kind==='MathInline'));
 assert.equal(new Set(result.spans.map(s=>`${s.kind}:${s.from}:${s.to}`)).size,result.spans.length,'Overlapping block highlight ranges must not repeat syntax spans');
 const at=source.indexOf('| 500 |'),table=parse(source,at,at+80);
-assert.equal(table.fragments.length,1);assert.match(table.fragments[0].markdown,/\| A \| B \|/);assert.match(table.fragments[0].markdown,/500/);assert(table.fragments[0].markdown.length<400);
+assert.equal(table.fragments.length,1);assert.match(table.fragments[0].markdown,/\| A \| B \|/);assert.match(table.fragments[0].markdown,/500/);assert.equal(table.fragments[0].from,source.indexOf('| A | B |'));assert.match(table.fragments[0].markdown,/999/);
 const codeAt=source.indexOf('let x');assert.match(parse(source,codeAt,codeAt+8).fragments[0].markdown,/```swift/);
-const tracked=input(source),reads=[];const originalRead=tracked.read;
-tracked.read=(a,b)=>{reads.push(b-a);return originalRead(a,b);};
-JSON.parse(parseViewport(tracked,revision,at,at+80));
-assert(Math.max(...reads)<400,'A warm table viewport must not copy the complete table');
+const tracked=input(source);
+assert.equal((table.fragments[0].html.match(/<tr>/g)||[]).length,1001,'A prepared table contains its header and every body row');
+assert.equal(JSON.parse(parseViewport(tracked,revision,at+1000,at+1080)).fragments[0].html,table.fragments[0].html,'Table layout must not depend on source viewport');
 const nested='> 1. First\n>    - Nested **bold**\n>\n>       continuation\n> 2. Second\n';
 const nestedAt=nested.indexOf('Nested');const quoted=parse(nested,nestedAt,nestedAt+8);
 assert.equal(quoted.fragments.length,1);assert.equal(quoted.fragments[0].markdown,nested.trimEnd());
@@ -25,12 +22,12 @@ const initial='First **bold**.\n\nSecond paragraph.\n';let before=JSON.parse(par
 const edited=initial.replace('bold','boldly');const after=JSON.parse(parseViewport(input(edited),++revision,0,edited.length,[{from:8,to:12,inserted:6}],revision-1));
 assert(after.fragments.some(f=>f.markdown.includes('boldly')));
 assert(after.fragments[1].from===before.fragments[1].from+2);
-console.log('Lezer viewport, table slicing, code context, math, reference and edit tests passed.');
+console.log('Lezer viewport, whole-table layout, code context, math, reference and edit tests passed.');
 assert.match(renderHTML('![local](file:///tmp/test.png)'),/src="astra-asset:\/\/image\//);
 assert.match(renderHTML('![relative](images/test.png)'),/source=images%2Ftest.png/);
 assert(!renderHTML('[bad](javascript:alert(1))').includes('href="javascript:'));
 assert.match(renderHTML('`$literal$` and $x^2$'),/<code>\$literal\$<\/code>/);
 assert.match(renderHTML('$$\\begin{pmatrix}1&2\\\\3&4\\end{pmatrix}$$'),/class="katex/);
-const local=JSON.parse(localPreview('1. First\n   - Nested **bold**\n2. Second\n',10,5));
-assert.equal(local.fragments.length,1);assert.match(local.fragments[0].html,/<ol>/);assert.match(local.fragments[0].html,/<ul>/);
+const nestedHTML=renderHTML('1. First\n   - Nested **bold**\n2. Second\n');
+assert.match(nestedHTML,/<ol>/);assert.match(nestedHTML,/<ul>/);
 console.log('HTML library math, code, local images, safe links and nested list tests passed.');

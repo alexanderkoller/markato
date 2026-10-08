@@ -9,13 +9,17 @@ final class MarkdownDocument: NSDocument {
     private var encoding: String.Encoding = .utf8
     private var hasBOM = false
     private(set) var newline = "\n"
-    private(set) var lastEditChangesStructure = false
     private(set) var lastEditInvalidatesContext = false
     let parser = LezerWorker()
     var edited: ((NSRange, String, SourceEdit) -> Void)?
     override class var autosavesInPlace: Bool { true }
     override init() { super.init(); hasUndoManager = true; fileType = "Markdown" }
     override func makeWindowControllers() {
+        // Parse syntax on its worker while AppKit and WebKit create the window.
+        // The measured viewport request will reuse this revision's tree.
+        parser.request(rope:source,revision:revision,visible:NSRange(location:0,length:0),renderHTML:false) {result in
+            if case .failure(let error)=result {NSLog("Initial syntax preparation failed: %@",error.localizedDescription)}
+        }
         let controller = EditorWindowController(document: self)
         addWindowController(controller)
     }
@@ -23,9 +27,6 @@ final class MarkdownDocument: NSDocument {
         let previous = source.string(in: range)
         let line = source.line(at:range.location)
         let lineText = source.string(in:source.lines(line,line+1))
-        lastEditChangesStructure = previous.contains("\n") || text.contains("\n") || previous.contains("`") || text.contains("`")
-            || previous.contains("~") || text.contains("~") || previous.contains("$") || text.contains("$")
-            || lineText.range(of:#"^\s*\[[^\]]+\]:"#,options:.regularExpression) != nil
         lastEditInvalidatesContext = ["`","~","$","\\[","\\]"].contains {previous.contains($0) || text.contains($0)}
             || lineText.range(of:#"^\s*\[[^\]]+\]:"#,options:.regularExpression) != nil
         let inverse = NSRange(location:range.location,length:text.utf16.count)
@@ -44,7 +45,6 @@ final class MarkdownDocument: NSDocument {
         let oldCount = source.count
         sourceLock.lock(); storedSource = TextRope(text); sourceLock.unlock(); revision += 1
         parser.reset()
-        lastEditChangesStructure = true
         lastEditInvalidatesContext = true
         edited?(NSRange(location:0,length:0),text,SourceEdit(range:NSRange(location:0,length:oldCount),insertedLength:text.utf16.count))
     }

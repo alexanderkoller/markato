@@ -6,20 +6,15 @@ public struct SyntaxSpan: Codable, Sendable {
     public let to: Int
     public var range: NSRange { NSRange(location: from, length: to - from) }
 }
-public struct PreviewFragment: Codable, Sendable {
+public struct PreviewFragment: Codable, Equatable, Sendable {
     public let kind: String
     public let from: Int
     public let to: Int
-    public let anchorFrom: Int
-    public let anchorTo: Int
     public let markdown: String
     public let html: String?
-    public let containerFrom: Int?
-    public let containerTo: Int?
     public var range: NSRange { NSRange(location: from, length: to - from) }
-    public init(kind:String,from:Int,to:Int,anchorFrom:Int,anchorTo:Int,markdown:String,html:String? = nil,containerFrom:Int? = nil,containerTo:Int? = nil) {
-        self.kind=kind; self.from=from; self.to=to; self.anchorFrom=anchorFrom; self.anchorTo=anchorTo; self.markdown=markdown
-        self.containerFrom=containerFrom; self.containerTo=containerTo
+    public init(kind:String,from:Int,to:Int,markdown:String,html:String? = nil) {
+        self.kind=kind; self.from=from; self.to=to; self.markdown=markdown
         self.html=html
     }
 }

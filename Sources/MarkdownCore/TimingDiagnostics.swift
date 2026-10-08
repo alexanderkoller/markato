@@ -1,3 +1,4 @@
+#if DEBUG
 import Foundation
 
 /// Opt-in, bounded in-memory recording. No logging or file I/O occurs on scroll callbacks.
@@ -86,3 +87,5 @@ public final class TimingDiagnostics: @unchecked Sendable {
         return Snapshot(events:events,dropped:max(0,total-capacity),started:started,elapsedMs:epoch==0 ? 0:Double(end-epoch)/1e6,recording:enabled)
     }
 }
+
+#endif

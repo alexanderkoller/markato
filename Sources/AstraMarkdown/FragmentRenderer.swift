@@ -5,280 +5,578 @@ import MarkdownCore
 private final class PreviewWebView:WKWebView {
     var wheel:((NSEvent)->Void)?
     var itemMenu:((NSEvent)->NSMenu?)?
+    private var horizontalGesture:Bool?
+    private var axisReset:DispatchWorkItem?
     override func menu(for event:NSEvent)->NSMenu? {itemMenu?(event) ?? super.menu(for:event)}
     override func scrollWheel(with event:NSEvent) {
-        if abs(event.scrollingDeltaX)>abs(event.scrollingDeltaY) {super.scrollWheel(with:event)}
+        axisReset?.cancel();axisReset=nil
+        if event.phase.contains(.began) {horizontalGesture=nil}
+        let phased = !event.phase.isEmpty || !event.momentumPhase.isEmpty
+        if phased,horizontalGesture==nil,event.scrollingDeltaX != 0 || event.scrollingDeltaY != 0 {
+            horizontalGesture=abs(event.scrollingDeltaX)>abs(event.scrollingDeltaY)
+        }
+        if horizontalGesture ?? (abs(event.scrollingDeltaX)>abs(event.scrollingDeltaY)) {super.scrollWheel(with:event)}
         else {wheel?(event)}
+        if event.momentumPhase.contains(.ended) || event.momentumPhase.contains(.cancelled) || event.phase.contains(.cancelled) || !phased {
+            horizontalGesture=nil
+        } else if event.phase.contains(.ended) {
+            let reset=DispatchWorkItem { [weak self] in self?.horizontalGesture=nil }
+            axisReset=reset;DispatchQueue.main.asyncAfter(deadline:.now()+0.15,execute:reset)
+        }
     }
 }
 
-/// Only the source viewport and overscan enter the DOM. Cached scrolling moves
-/// AppKit geometry synchronously, without JavaScript calls or Markdown rendering.
+/// One presentation surface owns all of its native and WebKit coordinates.
+/// The inactive surface stays hidden until its complete presentation is ready.
+private final class PreviewSurface {
+    let clip=NSClipView()
+    let canvas=FlippedView()
+    let web:PreviewWebView
+    let assets:PreviewAssets
+    var ready=false
+    var navigation:WKNavigation?
+    var request:PreviewRequest?
+    var observed:PreviewGeometry?
+    init(web:PreviewWebView,assets:PreviewAssets) {
+        self.web=web;self.assets=assets
+        clip.drawsBackground=true;clip.backgroundColor = .textBackgroundColor
+        clip.documentView=canvas;canvas.addSubview(web)
+        setVisible(false)
+    }
+    func setVisible(_ visible:Bool) {
+        clip.isHidden = !visible;web.isHidden = !visible
+        web.setAccessibilityHidden(!visible)
+    }
+    func size(contentHeight:CGFloat,width:CGFloat,viewportHeight:CGFloat) {
+        let margin=max(1,viewportHeight)
+        web.frame=NSRect(x:0,y:margin,width:max(1,width),height:max(margin*3,contentHeight+margin))
+        canvas.frame.size=NSSize(width:max(1,width),height:web.frame.maxY+margin)
+    }
+}
+
+@MainActor protocol ScrollSource:AnyObject {
+    var contentRevision:Int {get}
+    var hasMeasuredLayout:Bool {get}
+    var geometryRevision:Int {get}
+    var viewportOrigin:CGFloat {get}
+    var contentHeight:CGFloat {get}
+    var sourceLength:Int {get}
+    var visibleSourceRange:NSRange {get}
+    var alignmentAnchor:Int {get}
+    func verticalPosition(for offset:Int)->CGFloat?
+    func scrollWheel(with event:NSEvent)
+}
+@MainActor enum PreviewScrolling {
+    case independent
+    case synchronized(ScrollSource)
+}
+private struct PreviewContent:Equatable {
+    let revision:Int
+    let entries:[RenderedEntry]
+    let sourceLength:Int
+}
+private struct PreviewRequest {
+    let id:Int
+    let content:PreviewContent
+    let fontSize:CGFloat
+    let baseURL:URL?
+    let width:CGFloat
+    var revision:Int {content.revision}
+    var entries:[RenderedEntry] {content.entries}
+}
+private struct PreviewGeometry:Equatable {
+    struct Item:Equatable {
+        let id:String
+        let y:CGFloat
+        let height:CGFloat
+        let landmark:CGFloat?
+    }
+    let requestID:Int
+    let measurement:Int
+    let width:CGFloat
+    let height:CGFloat
+    let items:[Item]
+    init?(_ value:Any?,request:PreviewRequest) {
+        guard let object=value as? [String:Any],let id=object["revision"] as? Int,id==request.id,
+              let measurement=object["measurement"] as? Int,measurement>=0,
+              let width=object["width"] as? Double,width.isFinite,abs(width-Double(request.width))<=1,
+              let height=object["height"] as? Double,height.isFinite,height>=0,
+              let raw=object["items"] as? [[String:Any]],raw.count==request.entries.count else{return nil}
+        var items=[Item]()
+        for (object,entry) in zip(raw,request.entries) {
+            guard let id=object["id"] as? String,id==entry.id,
+                  let y=object["y"] as? Double,y.isFinite,
+                  let h=object["height"] as? Double,h.isFinite,h>=0 else{return nil}
+            let reference=object["landmarkY"] as? Double
+            guard reference?.isFinite != false else{return nil}
+            items.append(Item(id:id,y:CGFloat(y),height:CGFloat(h),landmark:reference.map{CGFloat($0)}))
+        }
+        requestID=id;self.measurement=measurement;self.width=CGFloat(width);self.height=CGFloat(height);self.items=items
+    }
+    func sameLayout(as other:PreviewGeometry)->Bool {
+        requestID==other.requestID && width==other.width && height==other.height && items==other.items
+    }
+}
+
+private final class PreviewLoadingView:NSView {
+    override func hitTest(_ point:NSPoint)->NSView? {nil}
+}
+
+private struct CommittedPresentation {
+    let request:PreviewRequest
+    let geometry:PreviewGeometry
+    let surface:PreviewSurface
+    let map:ScrollLandmarks?
+    let sourceGeometryRevision:Int?
+    let viewportHeight:CGFloat
+    let metrics:[String:(CGFloat,CGFloat)]
+    init(request:PreviewRequest,geometry:PreviewGeometry,surface:PreviewSurface,map:ScrollLandmarks?,sourceGeometryRevision:Int?,viewportHeight:CGFloat) {
+        self.request=request;self.geometry=geometry;self.surface=surface
+        self.map=map;self.sourceGeometryRevision=sourceGeometryRevision;self.viewportHeight=viewportHeight
+        metrics=Dictionary(uniqueKeysWithValues:geometry.items.map{($0.id,($0.y,$0.height))})
+    }
+}
+
+/// Prepared scrolling reads one committed presentation and moves its native clip.
 @MainActor final class PreviewPane:NSView,WKNavigationDelegate {
     override var isFlipped:Bool {true}
-    var wheel:((NSEvent)->Void)? {didSet{web.wheel=wheel}}
+    var scrolling:PreviewScrolling = .independent {didSet {sourceLayoutChanged()}}
     var openAnchor:((String)->Void)?
-    var sourceFraction:((NSRange,Int)->CGFloat?)?
-    var sourcePosition:((Int)->CGFloat)?
-    var sourceViewportY:(()->CGFloat)?
-    var sourceAlignmentOffset:(()->CGFloat)?
-    var sourceBottomDistance:(()->CGFloat)?
-    var sourceGeometryRevision:(()->Int)?
-    var sourceContentHeight:(()->CGFloat)?
-    var inspectItem:((PreviewFragment)->Void)?
-    var fontSize:CGFloat=14 {didSet{flush()}}
-    var baseURL:URL? {didSet{assets.baseURL=baseURL}}
-    private let clip=NSClipView()
-    private let canvas=FlippedView()
-    private let web:PreviewWebView
-    private let assets=PreviewAssets()
-    private var entries=[RenderedEntry]()
-    private var sentHTML=[String:String]()
-    private var metrics=[String:(CGFloat,CGFloat)]()
-    private var landmarkYs=[String:CGFloat]()
-    private var positionedEntries=[RenderedEntry]()
-    private var landmarks=ScrollLandmarks([])
-    private var frozenLandmarks:ScrollLandmarks?
-    private var frozenSourceHeight:CGFloat?
-    private var previewCoordinateShift:Double=0
-    private var positionedVersion = -1
-    private(set) var isScrollMappingFrozen=false
-    var scrollLandmarkCount:Int {(frozenLandmarks ?? landmarks).points.filter{!$0.boundary}.count}
-    private var cachedGeometryRevision = -1
-    private var anchor=0,version=0
-    private var anchorFraction:CGFloat=0
-    private var loaded=false,inFlight=false,dirty=false
-    private var contentHeight:CGFloat=0,measuredWidth:CGFloat=0
+    var fontSize:CGFloat=14 {didSet {if fontSize != oldValue {endScrollGesture();requestPresentation()}}}
+    var baseURL:URL? {didSet {if baseURL != oldValue {endScrollGesture();requestPresentation()}}}
+    private let surfaces:[PreviewSurface]
+    private var displayed:PreviewSurface {committed?.surface ?? surfaces[0]}
+    private var web:PreviewWebView {displayed.web}
+    private var clip:NSClipView {displayed.clip}
+    private let loadingView=PreviewLoadingView()
+    private let loadingLabel=NSTextField(labelWithString:"Loading preview…")
+    #if DEBUG
+    private var loadingWait:TimingDiagnostics.Interval?
+    #endif
+    private var committed:CommittedPresentation?
+    private var content:PreviewContent?
+    private var desired:PreviewRequest?
+    private var rendering:PreviewRequest?
+    private var independentOrigin:CGFloat=0
+    private var version=0,measuredWidth:CGFloat=0
+    private var bootstrapHTML=""
     private var inspector:NSWindowController?
-    private var pendingRevision = -1
-    private(set) var lastRevision = -1
-    private(set) var patchCount=0
-    var preparedFragmentCount:Int {entries.count}
-    var mountedIDs:[String] {entries.map{$0.id}}
+    private(set) var isScrollMappingFrozen=false
+    var presentationSettled:(()->Void)?
+    private var source:ScrollSource? {
+        switch scrolling {case .independent:return nil;case .synchronized(let source):return source}
+    }
+    var lastRevision:Int {
+        guard let committed,committed.surface.ready,desired==nil,content?.revision==committed.request.revision else{return -1}
+        return committed.request.revision
+    }
+    var preparedFragmentCount:Int {committed?.request.entries.count ?? 0}
+    var hasPendingContent:Bool {committed?.request.entries.contains{$0.fragment.kind=="Pending"} == true}
+    var displayedDocumentRevision:Int {committed?.request.revision ?? -1}
+    var isPreparingPresentation:Bool {desired != nil}
+    var displayedSourceRange:NSRange? {
+        guard let content=committed?.request.content,let first=content.entries.first else{return nil}
+        return NSRange(location:first.fragment.from,length:max(0,content.sourceLength-first.fragment.from))
+    }
+    private func covers(_ content:PreviewContent,visible:NSRange)->Bool {
+        let start=content.entries.first?.fragment.from ?? 0
+        guard start<=visible.location,content.sourceLength>=NSMaxRange(visible) else{return false}
+        return !content.entries.contains {entry in
+            entry.fragment.kind=="Pending" && (NSIntersectionRange(entry.fragment.range,visible).length>0 ||
+                (visible.length==0 && entry.fragment.from<=visible.location && entry.fragment.to>visible.location))
+        }
+    }
+    var coversSourceViewport:Bool {
+        guard let committed else{return false}
+        guard let source else{return true}
+        guard source.hasMeasuredLayout else{return false}
+        return covers(committed.request.content,visible:source.visibleSourceRange)
+    }
+    var isShowingLoadingState:Bool {!loadingView.isHidden}
     var clipOrigin:CGFloat {clip.bounds.minY}
     var webView:WKWebView {web}
     var visibleWebRange:ClosedRange<CGFloat> {
-        (clip.bounds.minY-web.frame.minY)...(clip.bounds.maxY-web.frame.minY)
+        let top=clip.bounds.minY-web.frame.minY
+        return top...(top+bounds.height)
     }
+    #if DEBUG
+    private(set) var patchCount=0
+    var scrollLandmarkCount:Int {committed?.map?.points.count ?? 0}
+    var semanticLandmarkOffsets:[Int] {committed?.map?.points.filter{!$0.boundary}.map(\.offset) ?? []}
+    var debugScrollLandmarks:[ScrollLandmark] {committed?.map?.points ?? []}
+    #endif
     override init(frame:NSRect) {
-        let config=WKWebViewConfiguration();config.websiteDataStore = .nonPersistent()
-        config.setURLSchemeHandler(assets,forURLScheme:"astra-asset")
-        web=PreviewWebView(frame:.zero,configuration:config)
+        func makeSurface()->PreviewSurface {
+            let assets=PreviewAssets()
+            let config=WKWebViewConfiguration();config.websiteDataStore = .nonPersistent()
+            config.setURLSchemeHandler(assets,forURLScheme:"astra-asset")
+            return PreviewSurface(web:PreviewWebView(frame:.zero,configuration:config),assets:assets)
+        }
+        surfaces=[makeSurface(),makeSurface()]
         super.init(frame:frame)
         wantsLayer=true;layer?.masksToBounds=true
-        clip.drawsBackground=true;clip.backgroundColor = .textBackgroundColor
-        clip.documentView=canvas;canvas.addSubview(web);addSubview(clip)
-        web.navigationDelegate=self
-        web.itemMenu={ [weak self] event in
+        for surface in surfaces {addSubview(surface.clip)}
+        loadingView.wantsLayer=true;loadingView.layer?.backgroundColor=NSColor.textBackgroundColor.cgColor
+        loadingLabel.textColor = .secondaryLabelColor;loadingLabel.alignment = .center
+        loadingView.addSubview(loadingLabel);addSubview(loadingView);loadingView.isHidden=true
+        let itemMenu:(NSEvent)->NSMenu? = { [weak self] event in
             let menu=self?.menu(for:event) ?? NSMenu()
             let copy=NSMenuItem(title:"Copy",action:#selector(NSText.copy(_:)),keyEquivalent:"");copy.target=self?.web
             menu.insertItem(copy,at:0);return menu
         }
-        config.userContentController.add(GeometryProxy(self),name:"geometry")
-        web.setAccessibilityLabel("Markdown preview")
         func resource(_ name:String,_ ext:String)->String {
-            guard let url=Bundle.main.url(forResource:name,withExtension:ext) else{return ""}
-            return (try? String(contentsOf:url,encoding:.utf8)) ?? ""
+            guard let url=Bundle.main.url(forResource:name,withExtension:ext),let text=try? String(contentsOf:url,encoding:.utf8) else{preconditionFailure("Missing bundled preview resource: \(name).\(ext)")}
+            return text
         }
-        web.loadHTMLString("<!doctype html><html><head><meta charset='utf-8'><meta http-equiv='Content-Security-Policy' content=\"default-src 'none'; img-src astra-asset: data:; font-src data:; style-src 'unsafe-inline'; script-src 'unsafe-inline'\"><style>\(resource("KaTeX","css"))\(resource("Preview","css"))</style></head><body><main id='preview'></main><script>\(resource("Preview","js"))</script></body></html>",baseURL:nil)
+        let html="<!doctype html><html><head><meta charset='utf-8'><meta http-equiv='Content-Security-Policy' content=\"default-src 'none'; img-src astra-asset: data:; font-src data:; style-src 'unsafe-inline'; script-src 'unsafe-inline'\"><style>\(resource("KaTeX","css"))\(resource("Preview","css"))</style></head><body><main id='preview'></main><script>\(resource("Preview","js"))</script></body></html>"
+        bootstrapHTML=html
+        for surface in surfaces {
+            let view=surface.web
+            view.navigationDelegate=self;view.itemMenu=itemMenu
+            view.wheel={ [weak self] event in self?.handleVerticalScroll(event) }
+            view.configuration.userContentController.add(GeometryProxy(self,view:view),name:"geometry")
+            view.setAccessibilityLabel("Markdown preview")
+        }
+        // The first viewport needs one browser document. Bootstrap the spare
+        // only after publication, so its fonts/CSS do not compete at startup.
+        surfaces[0].navigation=surfaces[0].web.loadHTMLString(bootstrapHTML,baseURL:nil)
     }
     required init?(coder:NSCoder) {fatalError()}
     override func draw(_ dirtyRect:NSRect) {NSColor.textBackgroundColor.setFill();dirtyRect.fill()}
-    func overlaps(_ range:NSRange)->Bool {entries.contains{NSIntersectionRange($0.fragment.range,range).length>0}}
-    func setAnchor(_ position:Int,fraction:CGFloat=0) {anchor=position;anchorFraction=fraction;place()}
+    func moveViewport() {place();updateLoadingState()}
+    private var hasCurrentMap:Bool {
+        guard let committed else{return false}
+        guard let source else{return true}
+        return source.hasMeasuredLayout && source.contentRevision==committed.request.revision &&
+            (isScrollMappingFrozen || (source.geometryRevision==committed.sourceGeometryRevision && committed.viewportHeight==bounds.height))
+    }
+    private func updateLoadingState() {
+        // Edits retain the previous complete presentation while its replacement
+        // prepares. Movement still requires a map for the current revision.
+        let hidden:Bool
+        if let source,!source.hasMeasuredLayout {hidden=committed?.surface.ready==true}
+        else {
+        let replacingContent=source.map{$0.contentRevision != committed?.request.revision} == true
+        hidden=committed?.surface.ready==true && coversSourceViewport && (replacingContent || hasCurrentMap)
+        }
+        #if DEBUG
+        if !hidden,loadingWait==nil {loadingWait=TimingDiagnostics.shared.begin("preview.loading")}
+        if hidden {TimingDiagnostics.shared.end(loadingWait);loadingWait=nil}
+        #endif
+        loadingView.isHidden=hidden
+    }
+    private func handleVerticalScroll(_ event:NSEvent) {
+        switch scrolling {
+        case .synchronized(let source):source.scrollWheel(with:event)
+        case .independent:independentOrigin=max(0,independentOrigin-event.scrollingDeltaY);place()
+        }
+    }
+    func scrollOverflow(_ event:NSEvent)->Bool {
+        guard let source,source.contentHeight<=bounds.height+0.001,
+              let committed,committed.geometry.height>bounds.height,
+              abs(event.scrollingDeltaY)>=abs(event.scrollingDeltaX) else{return false}
+        independentOrigin=max(0,visibleWebRange.lowerBound-event.scrollingDeltaY);place();return true
+    }
+    func navigatePreview(toEnd:Bool) {
+        guard let committed else{return}
+        independentOrigin=toEnd ? max(0,committed.geometry.height-bounds.height):0;place()
+    }
     func beginScrollGesture() {
         guard !isScrollMappingFrozen else{return}
-        refreshLandmarks()
-        frozenLandmarks=landmarks;frozenSourceHeight=sourceContentHeight?()
-        previewCoordinateShift=0;isScrollMappingFrozen=true
+        refreshMap()
+        guard hasCurrentMap else{updateLoadingState();return}
+        isScrollMappingFrozen=true
     }
     func endScrollGesture() {
-        isScrollMappingFrozen=false;frozenLandmarks=nil;frozenSourceHeight=nil
-        previewCoordinateShift=0;cachedGeometryRevision = -1
-        // Reconcile on the next navigation/layout event, not as a corrective
-        // jump at the end of otherwise unchanged scrolling.
+        isScrollMappingFrozen=false;moveViewport();preparePresentation()
     }
-    func rebaseSource(by delta:CGFloat) {
-        frozenLandmarks?.rebaseSource(by:Double(delta))
-        if let height=frozenSourceHeight {frozenSourceHeight=height+delta}
-        cachedGeometryRevision = -1
+    func sourceLayoutChanged() {
+        if !isScrollMappingFrozen {moveViewport()}
+        preparePresentation()
     }
-    func invalidate(_ edit:SourceEdit,source:TextRope,revision:Int,structural:Bool) {
-        endScrollGesture()
-        cachedGeometryRevision = -1
-        let delta=edit.insertedLength-edit.range.length
-        entries=entries.map { entry in
-            let f=entry.fragment
-            let after=f.from>=NSMaxRange(edit.range) && f.from != edit.range.location
-            let touched=f.to>=edit.range.location && f.from<=NSMaxRange(edit.range)
-            let from=after ? f.from+delta:f.from,to=after||touched ? f.to+delta:f.to
-            return RenderedEntry(id:entry.id,fragment:PreviewFragment(kind:f.kind,from:max(0,from),to:max(from,to),anchorFrom:after ? f.anchorFrom+delta:f.anchorFrom,anchorTo:after||touched ? f.anchorTo+delta:f.anchorTo,markdown:f.markdown,html:f.html,containerFrom:f.containerFrom.map{after ? $0+delta:$0},containerTo:f.containerTo.map{after||touched ? $0+delta:$0}))
-        }
-        lastRevision = -1
-    }
+    func invalidate() {endScrollGesture();version += 1;content=nil;desired=nil;updateLoadingState()}
     func show(_ result:ParseResult) {
-        show(result.fragments.map{f in RenderedEntry(id:entries.first{$0.fragment.from==f.from}?.id ?? UUID().uuidString,fragment:f)},revision:result.revision)
+        show(result.fragments.map{RenderedEntry(id:UUID().uuidString,fragment:$0)},revision:result.revision)
     }
-    func show(_ next:[RenderedEntry],revision:Int) {
-        let next=next.map{entry in RenderedEntry(id:entries.first{$0.fragment.from==entry.fragment.from}?.id ?? entry.id,fragment:entry.fragment)}
-        let changed=entries.count != next.count || zip(entries,next).contains{$0.id != $1.id || $0.fragment.html != $1.fragment.html}
-        entries=next
-        cachedGeometryRevision = -1
-        if changed || pendingRevision != revision {version += 1;lastRevision = -1;pendingRevision=revision;flush()}
-        else {place()}
+    func show(_ entries:[RenderedEntry],revision:Int) {
+        let ids=Dictionary((content?.entries ?? []).map{($0.fragment.from,$0.id)},uniquingKeysWith:{first,_ in first})
+        let entries=entries.map{RenderedEntry(id:ids[$0.fragment.from] ?? $0.id,fragment:$0.fragment)}
+        let extent=source?.sourceLength ?? entries.last?.fragment.to ?? 0
+        let next=PreviewContent(revision:revision,entries:entries,sourceLength:extent)
+        guard content != next || committed?.request.content != next else{updateLoadingState();return}
+        if let committed,committed.request.revision != revision {endScrollGesture()}
+        content=next;requestPresentation();updateLoadingState()
     }
-    private func flush() {
-        dirty=true
-        guard loaded,!inFlight else{return}
-        dirty=false;inFlight=true
-        let encode=TimingDiagnostics.shared.begin("web.patch.encode")
-        let sentVersion=version,sentRevision=pendingRevision
-        let actual=Dictionary(uniqueKeysWithValues:entries.map{($0.id,$0.fragment.html ?? "")})
-        let items=entries.map { entry -> [String:String] in
-            var item=["id":entry.id,"kind":entry.fragment.kind,"container":String(entry.fragment.containerFrom ?? entry.fragment.from),"from":String(entry.fragment.from),"to":String(entry.fragment.to)]
-            if sentHTML[entry.id] != actual[entry.id] {item["html"]=actual[entry.id]}
-            return item
-        }
-        guard let data=try? JSONSerialization.data(withJSONObject:items),let json=String(data:data,encoding:.utf8) else {inFlight=false;return}
-        TimingDiagnostics.shared.end(encode,values:["mounted":Double(entries.count),"payloadBytes":Double(data.count),"changedHTML":Double(items.filter{$0["html"] != nil}.count)])
-        patchCount += 1
-        let roundtrip=TimingDiagnostics.shared.begin("web.patch.roundtrip")
-        web.evaluateJavaScript("astraUpdate(\(json),\(sentVersion),\(fontSize),\(roundtrip == nil ? "false":"true"))") { [weak self] result,error in
-            TimingDiagnostics.shared.end(roundtrip,values:["version":Double(sentVersion),"revision":Double(sentRevision),"failed":error==nil ? 0:1])
-            guard let self else{return};self.inFlight=false
-            if let error {NSLog("Preview update failed: %@",error.localizedDescription)}
-            else {
-                self.sentHTML=actual
-                if sentVersion==self.version {self.receive(result);self.lastRevision=sentRevision}
-            }
-            if self.dirty {self.flush()}
-        }
+    private func requestPresentation() {
+        guard let content else{return}
+        version += 1
+        desired=PreviewRequest(id:version,content:content,fontSize:fontSize,baseURL:baseURL,width:bounds.width)
+        preparePresentation()
     }
-    func webView(_ webView:WKWebView,didFinish navigation:WKNavigation!) {loaded=true;flush()}
-    fileprivate func receive(_ value:Any?) {
-        guard let object=value as? [String:Any],let v=object["revision"] as? Int,v==version,let items=object["items"] as? [[String:Any]] else{return}
-        let work=TimingDiagnostics.shared.begin("web.geometry.apply")
-        defer {TimingDiagnostics.shared.end(work,values:["mounted":Double(items.count),"version":Double(v)])}
-        if let timing=object["timing"] as? [String:Double] {
-            let values=["mounted":timing["mounted"] ?? 0,"changedHTML":timing["changedHTML"] ?? 0]
-            TimingDiagnostics.shared.reported("web.dom.patch",milliseconds:timing["patchMs"] ?? 0,values:values)
-            TimingDiagnostics.shared.reported("web.dom.layout",milliseconds:timing["layoutMs"] ?? 0,values:values)
-            TimingDiagnostics.shared.reported("web.dom.total",milliseconds:timing["totalMs"] ?? 0,values:values)
+    private func canExtendDisplayedDocument(_ request:PreviewRequest)->Bool {
+        guard let committed,committed.surface.ready,committed.request.revision==request.revision else{return false}
+        let previous=committed.request
+        let covered=coversSourceViewport
+        guard previous.width==request.width,previous.fontSize==request.fontSize,
+              previous.baseURL?.absoluteString==request.baseURL?.absoluteString,
+              previous.content.sourceLength==request.content.sourceLength,
+              !isScrollMappingFrozen || !covered else{return false}
+        let next=Dictionary(request.entries.map{($0.id,$0)},uniquingKeysWith:{first,_ in first})
+        var fillsPendingContent=false
+        for entry in committed.request.entries {
+            if entry.fragment.kind=="Pending",next[entry.id] != entry {
+                // A covered viewport is immutable. An uncovered viewport is
+                // already masked; fill its pending content on the retained DOM.
+                if covered {guard let (y,_)=committed.metrics[entry.id],y>=visibleWebRange.upperBound else{return false}}
+                fillsPendingContent=true
+            } else if next[entry.id] != entry {return false}
         }
-        var nextMetrics=[String:(CGFloat,CGFloat)](),nextLandmarks=[String:CGFloat]()
-        for item in items {
-            if let id=item["id"] as? String,let y=item["y"] as? Double,let height=item["height"] as? Double {
-                nextMetrics[id]=(y,height)
-                if let landmark=item["landmarkY"] as? Double {nextLandmarks[id]=landmark}
-            }
-        }
-        // A remount changes the local DOM origin. Translate that origin using a
-        // retained passage, while keeping the frozen landmark distances intact.
-        // Font/image geometry reports for the same DOM version do not rebase it.
-        let remounted=v != positionedVersion
-        var rebased=false
-        if isScrollMappingFrozen,remounted {
-            let shared=entries.filter{nextMetrics[$0.id] != nil && metrics[$0.id] != nil}
-            let reference=shared.min{abs($0.fragment.from-anchor)<abs($1.fragment.from-anchor)}
-            if let reference,let old=metrics[reference.id],let next=nextMetrics[reference.id] {
-                previewCoordinateShift += Double(next.0-old.0);rebased=true
-            }
-        }
-        let hadFrozenPoints=frozenLandmarks?.points.isEmpty == false
-        let sourceReference=sourceViewportY.map{Double($0()+alignmentOffset)}
-        let oldReference=sourceReference.flatMap{frozenLandmarks?.previewY(for:$0)}
-        positionedEntries=entries;positionedVersion=v
-        metrics=nextMetrics;landmarkYs=nextLandmarks
-        cachedGeometryRevision = -1
-        refreshLandmarks()
-        if isScrollMappingFrozen {
-            if !hadFrozenPoints {
-                frozenLandmarks=landmarks;previewCoordinateShift=0
-            } else {
-                if remounted,!rebased,let y=sourceReference {
-                    // A cold jump can outrun all overlap. Give the new local
-                    // window the old mapping's coordinate at this passage.
-                    if let old=oldReference,let next=landmarks.previewY(for:y) {previewCoordinateShift=next-old}
-                }
-                frozenLandmarks?.extend(with:landmarks,previewShift:previewCoordinateShift)
-            }
-        }
-        contentHeight=CGFloat(object["height"] as? Double ?? 0);sizeCanvas();place()
+        return fillsPendingContent
     }
-    override func layout() {
-        let work=TimingDiagnostics.shared.begin("preview.layout")
-        defer {TimingDiagnostics.shared.end(work,values:["width":Double(bounds.width),"height":Double(bounds.height)])}
-        super.layout();clip.frame=bounds
-        let changed=abs(measuredWidth-bounds.width)>0.5;measuredWidth=bounds.width
-        if changed {endScrollGesture()}
-        sizeCanvas();place()
-        // WebKit reflows only the mounted region; ResizeObserver reports geometry.
-        if changed {needsDisplay=true}
-    }
-    private func sizeCanvas() {
-        let margin=max(1,bounds.height)
-        web.frame=NSRect(x:0,y:margin,width:max(1,bounds.width),height:max(margin*3,contentHeight+margin))
-        canvas.frame.size=NSSize(width:max(1,bounds.width),height:web.frame.maxY+margin)
-    }
-    private var alignmentOffset:CGFloat {
-        guard let height=frozenSourceHeight,let y=sourceViewportY?() else{return sourceAlignmentOffset?() ?? 0}
-        let viewport=max(1,bounds.height)
-        return min(1,max(0,y/viewport))*min(1,max(0,(height-viewport-y)/viewport))*viewport/2
-    }
-    private func refreshLandmarks() {
-        guard let sourcePosition else{return}
-        let revision=sourceGeometryRevision?() ?? -1
-        guard revision != cachedGeometryRevision || sourceGeometryRevision==nil else{return}
-        var points=positionedEntries.compactMap {entry -> ScrollLandmark? in
-            guard let y=landmarkYs[entry.id] else{return nil}
-            return ScrollLandmark(offset:entry.fragment.anchorFrom,sourceY:Double(sourcePosition(entry.fragment.anchorFrom)),previewY:Double(y))
-        }
-        // Bounded previews may contain no heading or image (e.g. the middle of
-        // an 800-row table). Use the region edges, never every block, as fallback.
-        if let first=positionedEntries.first,let metric=metrics[first.id] {
-            points.append(ScrollLandmark(offset:first.fragment.anchorFrom,sourceY:Double(sourcePosition(first.fragment.anchorFrom)),previewY:Double(metric.0),boundary:true))
-        }
-        if let last=positionedEntries.last,let metric=metrics[last.id] {
-            points.append(ScrollLandmark(offset:last.fragment.anchorTo,sourceY:Double(sourcePosition(last.fragment.anchorTo)),previewY:Double(metric.0+metric.1),boundary:true))
-        }
-        landmarks=ScrollLandmarks(points);cachedGeometryRevision=revision
-    }
-    private func place() {
-        let work=TimingDiagnostics.shared.begin("preview.position")
-        defer {TimingDiagnostics.shared.end(work,values:["clipY":Double(clip.bounds.minY),"mounted":Double(entries.count),"sourceY":Double(sourceViewportY?() ?? 0)])}
-        let entries=positionedEntries
-        guard !entries.isEmpty else{return}
-        if sourcePosition != nil,let sourceViewportY {
-            let adjustment=alignmentOffset
-            let viewportY=sourceViewportY()+adjustment
-            if !isScrollMappingFrozen {refreshLandmarks()}
-            let map=frozenLandmarks ?? landmarks
-            guard let y=map.previewY(for:Double(viewportY)) else{return}
-            var target=web.frame.minY+CGFloat(y+(isScrollMappingFrozen ? previewCoordinateShift:0))-adjustment
-            let bottom=frozenSourceHeight.map{max(0,$0-sourceViewportY()-bounds.height)} ?? sourceBottomDistance?()
-            if let bottom,bottom<bounds.height {
-                let weight=max(0,1-bottom/max(1,bounds.height))
-                let endTarget=web.frame.minY+contentHeight-bounds.height+16
-                target=target*(1-weight)+endTarget*weight
-            }
-            moveClip(to:target)
+    private func preparePresentation() {
+        guard rendering==nil,let request=desired,
+              request.width>0.5,bounds.height>0.5 else{return}
+        guard request.entries.allSatisfy({$0.fragment.html != nil}),Set(request.entries.map(\.id)).count==request.entries.count else {
+            NSLog("Preview request contains incomplete or duplicate fragments")
             return
         }
-        let entry=entries.first{anchor >= $0.fragment.from && anchor < $0.fragment.to}
-            ?? entries.first{$0.fragment.from>=anchor} ?? entries.last!
-        guard let (y,height)=metrics[entry.id] else{return}
-        let f=entry.fragment
-        let fraction=sourceFraction?(NSRange(location:f.anchorFrom,length:max(0,f.anchorTo-f.anchorFrom)),anchor)
-            ?? max(0,min(1,CGFloat(anchor-f.anchorFrom)/CGFloat(max(1,f.anchorTo-f.anchorFrom))))
-        let target=web.frame.minY+y+height*fraction-anchorFraction
-        moveClip(to:target)
+        let surface:PreviewSurface
+        if canExtendDisplayedDocument(request) {surface=displayed}
+        else {
+            guard let ready=surfaces.first(where:{$0.ready && $0 !== committed?.surface}) else{return}
+            surface=ready
+        }
+        rendering=request
+        if surface !== committed?.surface {surface.setVisible(false)}
+        surface.request=request;surface.observed=nil;surface.assets.baseURL=request.baseURL
+        surface.size(contentHeight:max(1,committed?.geometry.height ?? 0),width:request.width,viewportHeight:bounds.height)
+        #if DEBUG
+        let encode=TimingDiagnostics.shared.begin("web.patch.encode")
+        #endif
+        let items=request.entries.map {entry -> [String:String] in
+            let fragment=entry.fragment
+            return ["id":entry.id,
+                    "from":String(fragment.from),"to":String(fragment.to),"html":fragment.html!]
+        }
+        guard let data=try? JSONSerialization.data(withJSONObject:items),let json=String(data:data,encoding:.utf8) else {
+            finishPreparation(request);return
+        }
+        #if DEBUG
+        TimingDiagnostics.shared.end(encode,values:["mounted":Double(items.count),"payloadBytes":Double(data.count)])
+        patchCount += 1
+        let roundtrip=TimingDiagnostics.shared.begin("web.patch.roundtrip")
+        #endif
+        let patch:(Any?)->Void = { [weak self] state in
+            guard let self,self.isCurrent(request,surface:surface) else {self?.finishPreparation(request);return}
+            if surface === self.committed?.surface,self.isScrollMappingFrozen,self.coversSourceViewport {
+                self.finishPreparation(request);return
+            }
+            let baseKeyData=try? JSONSerialization.data(withJSONObject:[request.baseURL?.absoluteString ?? ""])
+            let baseKey=baseKeyData.flatMap{String(data:$0,encoding:.utf8)} ?? "[\"\"]"
+            // Appending below the viewport retains the actual selection and
+            // horizontal state. Restoring an earlier snapshot would overwrite
+            // interaction that happened while the new resources were settling.
+            let restoreState=surface === self.committed?.surface ? "":"astraRestoreViewState(\(state as? String ?? "null"));"
+            #if DEBUG
+            let script="const patched=astraUpdate(\(json),\(request.id),\(request.fontSize),\(baseKey)[0],\(roundtrip == nil ? "false":"true"));await astraReady(\(request.width));\(restoreState)const measured=geometry();if(patched.timing)measured.timing=patched.timing;return JSON.stringify(measured);"
+            #else
+            let script="astraUpdate(\(json),\(request.id),\(request.fontSize),\(baseKey)[0]);await astraReady(\(request.width));\(restoreState)return JSON.stringify(geometry());"
+            #endif
+            surface.web.callAsyncJavaScript(script,arguments:[:],in:nil,in:.page) { [weak self] outcome in
+                guard let self else{return}
+                let value:Any?
+                switch outcome {
+                case .success(let result):
+                    value=(result as? String).flatMap{$0.data(using:.utf8)}.flatMap{try? JSONSerialization.jsonObject(with:$0)}
+                case .failure(let error):
+                    let detail=(error as NSError).userInfo["WKJavaScriptExceptionMessage"] as? String ?? error.localizedDescription
+                    NSLog("Preview presentation %ld failed (%@ %ld): %@",request.id,(error as NSError).domain,(error as NSError).code,detail)
+                    #if DEBUG
+                    TimingDiagnostics.shared.end(roundtrip,values:["failed":1])
+                    #endif
+                    self.finishPreparation(request);return
+                }
+                #if DEBUG
+                TimingDiagnostics.shared.end(roundtrip,values:["version":Double(request.id),"revision":Double(request.revision),"failed":0])
+                #endif
+                guard self.isCurrent(request,surface:surface),let geometry=PreviewGeometry(value,request:request) else {
+                    self.finishPreparation(request);return
+                }
+                #if DEBUG
+                self.recordGeometry(value)
+                #endif
+                if let observed=surface.observed,observed.measurement>geometry.measurement,!observed.sameLayout(as:geometry) {
+                    self.finishPreparation(request,retry:true);return
+                }
+                surface.observed=geometry
+                surface.size(contentHeight:geometry.height,width:request.width,viewportHeight:self.bounds.height)
+                let snapshot=WKSnapshotConfiguration()
+                guard let position=self.presentationPosition(request,geometry:geometry) else{self.finishPreparation(request);return}
+                let top=position.origin
+                // Fence the destination plus one viewport on either side, not
+                // an unbounded document texture. The whole DOM stays mounted.
+                let paintTop=max(0,top-self.bounds.height)
+                snapshot.rect=NSRect(x:0,y:paintTop,width:request.width,
+                    height:min(surface.web.bounds.height-paintTop,self.bounds.height*3))
+                snapshot.snapshotWidth=1;snapshot.afterScreenUpdates=true
+                #if DEBUG
+                let paintWait=TimingDiagnostics.shared.begin("web.paint.wait")
+                #endif
+                surface.web.takeSnapshot(with:snapshot) { [weak self] image,error in
+                    #if DEBUG
+                    TimingDiagnostics.shared.end(paintWait)
+                    #endif
+                    guard let self else{return}
+                    if let error {NSLog("Preview paint fence failed: %@",error.localizedDescription)}
+                    guard self.isCurrent(request,surface:surface),image != nil,error==nil,
+                          surface.observed?.sameLayout(as:geometry)==true else {
+                        self.finishPreparation(request,retry:error==nil);return
+                    }
+                    guard let position=self.presentationPosition(request,geometry:geometry) else{self.finishPreparation(request);return}
+                    let currentTop=position.origin
+                    guard currentTop>=snapshot.rect.minY-0.001,
+                          currentTop+self.bounds.height<=snapshot.rect.maxY+0.001 else {
+                        self.finishPreparation(request,retry:true);return
+                    }
+                    self.commit(request,geometry:geometry,surface:surface,position:position)
+                    self.finishPreparation(request)
+                }
+            }
+        }
+        if let committed {
+            committed.surface.web.evaluateJavaScript("JSON.stringify(astraViewState())") {state,_ in patch(state)}
+        } else {
+            // The initial document has no selection or horizontal state to
+            // transfer. Publish it without an empty state-capture round trip.
+            patch(nil)
+        }
     }
-    private func moveClip(to target:CGFloat) {
-        let work=TimingDiagnostics.shared.begin("preview.clip.move")
-        let before=clip.bounds.minY
-        defer {TimingDiagnostics.shared.end(work,values:["targetY":Double(target),"clipY":Double(clip.bounds.minY),"deltaY":Double(clip.bounds.minY-before)])}
+    private func isCurrent(_ request:PreviewRequest,surface:PreviewSurface)->Bool {
+        desired?.id==request.id && rendering?.id==request.id && surfaces.contains(where:{$0 === surface}) && surface.ready
+            && surface.request?.id==request.id && bounds.width==request.width && bounds.height>0.5
+    }
+    private func finishPreparation(_ request:PreviewRequest,retry:Bool=false) {
+        guard rendering?.id==request.id else{return}
+        rendering=nil
+        presentationSettled?()
+        if desired?.id != request.id || retry {preparePresentation()}
+    }
+    #if DEBUG
+    private func recordGeometry(_ value:Any?) {
+        guard let object=value as? [String:Any],let timing=object["timing"] as? [String:Double] else{return}
+        let values=["mounted":timing["mounted"] ?? 0,"changedHTML":timing["changedHTML"] ?? 0]
+        for (name,key) in [("web.dom.patch","patchMs"),("web.dom.layout","layoutMs"),("web.dom.total","totalMs")] {
+            TimingDiagnostics.shared.reported(name,milliseconds:timing[key] ?? 0,values:values)
+        }
+    }
+    #endif
+    private struct PresentationPosition {
+        let map:ScrollLandmarks?
+        let sourceGeometryRevision:Int?
+        let origin:CGFloat
+    }
+    private func targetOrigin(height:CGFloat,map:ScrollLandmarks?)->CGFloat? {
+        let target:CGFloat
+        switch scrolling {
+        case .independent:target=independentOrigin
+        case .synchronized(let source):
+            if source.contentHeight<=bounds.height+0.001 {target=independentOrigin}
+            else {
+                guard let map,let y=map.previewY(for:Double(source.viewportOrigin)) else{return nil}
+                target=CGFloat(y)
+            }
+        }
+        return min(max(0,height-bounds.height),max(0,target))
+    }
+    private func makeMap(_ request:PreviewRequest,geometry:PreviewGeometry)->ScrollLandmarks? {
+        guard let source,source.hasMeasuredLayout,source.contentRevision==request.revision,source.sourceLength==request.content.sourceLength else{return nil}
+        let revision=source.geometryRevision
+        var points=[ScrollLandmark]()
+        for (item,entry) in zip(geometry.items,request.entries) {
+            guard let previewY=item.landmark,entry.fragment.from != 0 else{continue}
+            guard let y=source.verticalPosition(for:entry.fragment.from),y.isFinite else{return nil}
+            points.append(ScrollLandmark(offset:entry.fragment.from,sourceY:Double(y),previewY:Double(previewY)))
+        }
+        guard revision==source.geometryRevision else{return nil}
+        return ScrollLandmarks(points).viewportMap(sourceHeight:Double(source.contentHeight),viewportHeight:Double(bounds.height),previewHeight:Double(geometry.height))
+    }
+    private func presentationPosition(_ request:PreviewRequest,geometry:PreviewGeometry)->PresentationPosition? {
+        switch scrolling {
+        case .independent:
+            guard let origin=targetOrigin(height:geometry.height,map:nil) else{return nil}
+            return PresentationPosition(map:nil,sourceGeometryRevision:nil,origin:origin)
+        case .synchronized(let source):
+            guard covers(request.content,visible:source.visibleSourceRange) else{return nil}
+            guard let map=makeMap(request,geometry:geometry),let origin=targetOrigin(height:geometry.height,map:map) else{return nil}
+            return PresentationPosition(map:map,sourceGeometryRevision:source.geometryRevision,origin:origin)
+        }
+    }
+    fileprivate func observe(_ value:Any?,from view:WKWebView) {
+        guard let surface=surfaces.first(where:{$0.web === view}),surface.ready,let request=surface.request,
+              let geometry=PreviewGeometry(value,request:request),geometry.measurement>(surface.observed?.measurement ?? -1) else{return}
+        let changed=surface.observed.map{!$0.sameLayout(as:geometry)} == true
+        surface.observed=geometry
+        if surface === committed?.surface,changed,rendering==nil,desired==nil,committed?.request.id==request.id {requestPresentation()}
+    }
+    private func commit(_ request:PreviewRequest,geometry:PreviewGeometry,surface:PreviewSurface,position:PresentationPosition) {
+        guard isCurrent(request,surface:surface) else{return}
+        if isScrollMappingFrozen,coversSourceViewport,committed?.request.revision==request.revision {return}
+        if let source {
+            guard source.contentRevision==request.revision,position.sourceGeometryRevision==source.geometryRevision,
+                  covers(request.content,visible:source.visibleSourceRange) else{return}
+        }
+        let previous=committed?.surface
+        let hadFocus=previous.map{(window?.firstResponder as? NSView)?.isDescendant(of:$0.web)==true} == true
         CATransaction.begin();CATransaction.setDisableActions(true)
-        clip.scroll(to:NSPoint(x:0,y:max(0,target)))
+        committed=CommittedPresentation(request:request,geometry:geometry,surface:surface,map:position.map,sourceGeometryRevision:position.sourceGeometryRevision,viewportHeight:bounds.height)
+        desired=nil
+        surface.size(contentHeight:geometry.height,width:request.width,viewportHeight:bounds.height)
+        moveClip(to:position.origin)
+        if surface !== previous {previous?.setVisible(false);surface.setVisible(true)}
+        updateLoadingState()
+        for spare in surfaces where spare.navigation==nil && !spare.ready {
+            spare.navigation=spare.web.loadHTMLString(bootstrapHTML,baseURL:nil)
+        }
+        if hadFocus {window?.makeFirstResponder(surface.web)}
+        assert(surfaces.filter{!$0.clip.isHidden}.count==1 && !surface.web.isHidden)
+        CATransaction.commit()
+    }
+    func webView(_ webView:WKWebView,didFinish navigation:WKNavigation!) {
+        guard let surface=surfaces.first(where:{$0.web === webView}),surface.navigation === navigation else{return}
+        surface.ready=true;preparePresentation()
+    }
+    override func setFrameSize(_ size:NSSize) {
+        if size != frame.size {endScrollGesture()}
+        super.setFrameSize(size);needsLayout=true
+    }
+    override func layout() {
+        super.layout()
+        for surface in surfaces {surface.clip.frame=bounds}
+        loadingView.frame=bounds
+        loadingLabel.frame=NSRect(x:16,y:max(0,(bounds.height-24)/2),width:max(0,bounds.width-32),height:24)
+        loadingView.layer?.backgroundColor=NSColor.textBackgroundColor.cgColor
+        let changed=measuredWidth != bounds.width;measuredWidth=bounds.width
+        if changed {endScrollGesture();requestPresentation()}
+        if let committed {committed.surface.size(contentHeight:committed.geometry.height,width:committed.request.width,viewportHeight:bounds.height)}
+        place();preparePresentation()
+    }
+    private func refreshMap() {
+        guard let committed,let source,(committed.sourceGeometryRevision != source.geometryRevision || committed.viewportHeight != bounds.height) else{return}
+        guard let map=makeMap(committed.request,geometry:committed.geometry) else{return}
+        self.committed=CommittedPresentation(request:committed.request,geometry:committed.geometry,surface:committed.surface,map:map,sourceGeometryRevision:source.geometryRevision,viewportHeight:bounds.height)
+    }
+    private func place() {
+        guard let committed else{return}
+        if let source,source.contentRevision != committed.request.revision {return}
+        if !isScrollMappingFrozen {refreshMap()}
+        guard hasCurrentMap,let current=self.committed,let origin=targetOrigin(height:current.geometry.height,map:current.map) else{return}
+        moveClip(to:origin)
+    }
+    private func moveClip(to origin:CGFloat) {
+        guard let committed else{return}
+        CATransaction.begin();CATransaction.setDisableActions(true)
+        committed.surface.clip.scroll(to:NSPoint(x:0,y:committed.surface.web.frame.minY+origin))
+        independentOrigin=origin
         CATransaction.commit()
     }
     func webView(_ webView:WKWebView,decidePolicyFor navigationAction:WKNavigationAction,decisionHandler:@escaping(WKNavigationActionPolicy)->Void) {
@@ -287,25 +585,47 @@ private final class PreviewWebView:WKWebView {
         if let fragment=url.fragment {openAnchor?(fragment)}
         else if ["http","https","mailto"].contains(url.scheme?.lowercased() ?? "") {NSWorkspace.shared.open(url)}
     }
-    func webViewWebContentProcessDidTerminate(_ webView:WKWebView) {loaded=false;sentHTML.removeAll();metrics.removeAll();web.reload()}
-    func debugGeometry()->String {"mounted=\(entries.count), height=\(contentHeight), clip=\(clip.bounds.minY), patches=\(patchCount)"}
+    func webViewWebContentProcessDidTerminate(_ webView:WKWebView) {
+        guard let surface=surfaces.first(where:{$0.web === webView}) else{return}
+        surface.ready=false;surface.observed=nil;surface.setVisible(false)
+        if rendering?.id==surface.request?.id {rendering=nil}
+        if surface === committed?.surface {committed=nil}
+        surface.request=nil
+        surface.navigation=webView.loadHTMLString(bootstrapHTML,baseURL:nil)
+        updateLoadingState();requestPresentation()
+    }
+    #if DEBUG
+    var debugAlignmentDrift:Double {
+        guard let committed,let source,let target=committed.map?.previewY(for:Double(source.viewportOrigin)) else{return 0}
+        return Double(visibleWebRange.lowerBound)-target
+    }
+    func debugGeometry()->String {"mounted=\(preparedFragmentCount), height=\(committed?.geometry.height ?? 0), desired=\(String(describing:desired?.id)), rendering=\(String(describing:rendering?.id)), measuredSource=\(source?.hasMeasuredLayout == true), mapCurrent=\(hasCurrentMap), clip=\(clipOrigin), patches=\(patchCount), displayed=\(String(describing:displayedSourceRange)), visible=\(String(describing:source?.visibleSourceRange))"}
+    #endif
     override func menu(for event:NSEvent)->NSMenu? {
         let menu=NSMenu();menu.addItem(withTitle:"Inspect Item",action:#selector(inspect(_:)),keyEquivalent:"").target=self;return menu
     }
     @objc private func inspect(_ sender:Any?) {
-        guard let f=entries.first(where:{$0.fragment.from<=anchor && $0.fragment.to>=anchor})?.fragment else{return}
-        if f.kind=="Table",let inspectItem {inspectItem(f);return}
+        guard let source,let f=committed?.request.entries.first(where:{$0.fragment.from<=source.alignmentAnchor && $0.fragment.to>=source.alignmentAnchor})?.fragment,f.kind != "Pending" else{return}
+        _ = showInspector(for:f)
+    }
+    func showInspector(for fragment:PreviewFragment)->NSWindowController {
+        precondition(fragment.html != nil && fragment.kind != "Pending")
         let panel=NSPanel(contentRect:NSRect(x:0,y:0,width:760,height:600),styleMask:[.titled,.closable,.resizable],backing:.buffered,defer:false)
-        panel.title="Inspect Item"
+        panel.title=fragment.kind=="Table" ? "Inspect Table":"Inspect Item"
         let pane=PreviewPane(frame:panel.contentRect(forFrameRect:panel.frame));pane.baseURL=baseURL;pane.fontSize=fontSize
-        pane.show(ParseResult(revision:0,spans:[],fragments:[f]));pane.setAnchor(f.from)
-        pane.wheel={ [weak pane] event in guard let pane else{return};pane.clip.scroll(to:NSPoint(x:0,y:max(0,pane.clip.bounds.minY-event.scrollingDeltaY))) }
-        panel.contentView=pane;panel.center();inspector=NSWindowController(window:panel);inspector?.showWindow(nil)
+        pane.show(ParseResult(revision:0,spans:[],fragments:[fragment]))
+        panel.contentView=pane;panel.center()
+        let controller=NSWindowController(window:panel);inspector=controller;controller.showWindow(nil)
+        return controller
     }
 }
 
 private final class GeometryProxy:NSObject,WKScriptMessageHandler {
     weak var pane:PreviewPane?
-    init(_ pane:PreviewPane) {self.pane=pane}
-    func userContentController(_ userContentController:WKUserContentController,didReceive message:WKScriptMessage) {pane?.receive(message.body)}
+    weak var view:WKWebView?
+    init(_ pane:PreviewPane,view:WKWebView) {self.pane=pane;self.view=view}
+    func userContentController(_ userContentController:WKUserContentController,didReceive message:WKScriptMessage) {
+        guard let pane,let view else{return}
+        pane.observe(message.body,from:view)
+    }
 }

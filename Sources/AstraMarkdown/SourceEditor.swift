@@ -1,401 +1,332 @@
 import AppKit
 import MarkdownCore
 
-final class FlippedView: NSView { override var isFlipped: Bool { true } }
+final class FlippedView:NSView {override var isFlipped:Bool {true}}
 private final class SourceScrollView:NSScrollView {
-    // Observing wheel phases does not change AppKit's scrolling or drawing.
-    // A scrollWheel override otherwise opts the view out of responsive scrolling.
     override class var isCompatibleWithResponsiveScrolling:Bool {true}
-    var willScroll:((NSEvent)->Void)?
-    var didScroll:((NSEvent)->Void)?
+    var consumeScroll:((NSEvent)->Bool)?
     override func scrollWheel(with event:NSEvent) {
-        willScroll?(event);super.scrollWheel(with:event);didScroll?(event)
+        if consumeScroll?(event) != true {super.scrollWheel(with:event)}
     }
 }
-final class SourceTextView: NSTextView {
-    weak var owner: SourceEditor?
-    override var shouldDrawInsertionPoint:Bool {
-        guard let owner else { return super.shouldDrawInsertionPoint }
-        return super.shouldDrawInsertionPoint && owner.selection.location>=owner.windowRange.location && owner.selection.location<=NSMaxRange(owner.windowRange)
-    }
-    override func selectAll(_ sender: Any?) { owner?.selectEntireDocument() }
-    override func copy(_ sender: Any?) { owner?.copySelection() }
-    override func cut(_ sender: Any?) { owner?.copySelection(); owner?.replaceSelection("") }
-    override func paste(_ sender: Any?) {
-        if let text = NSPasteboard.general.string(forType:.string) { owner?.replaceSelection(text) }
-    }
+final class SourceTextView:NSTextView {
+    weak var owner:SourceEditor?
     override func insertText(_ insertString:Any,replacementRange:NSRange) {
-        if let text = insertString as? String, owner?.document.newline == "\r\n" {
+        if let text=insertString as? String,owner?.document.newline=="\r\n" {
             super.insertText(text.replacingOccurrences(of:"\r\n",with:"\n").replacingOccurrences(of:"\n",with:"\r\n"),replacementRange:replacementRange)
-        } else { super.insertText(insertString,replacementRange:replacementRange) }
+        } else {super.insertText(insertString,replacementRange:replacementRange)}
     }
-    override func mouseDown(with event:NSEvent) { owner?.clearGlobalSelection(); super.mouseDown(with:event) }
-    override func scrollToEndOfDocument(_ sender:Any?) { if let owner { owner.reveal(owner.document.source.count) } }
-    override func scrollToBeginningOfDocument(_ sender:Any?) { owner?.reveal(0) }
-    override func moveToBeginningOfDocument(_ sender:Any?) { owner?.reveal(0) }
-    override func moveToEndOfDocument(_ sender:Any?) { if let owner { owner.reveal(owner.document.source.count) } }
-    override func keyDown(with event: NSEvent) {
-        if owner?.entireDocumentSelected == true, [123,124,125,126].contains(event.keyCode), !event.modifierFlags.contains(.shift) {
-            owner?.collapseSelection(toEnd:event.keyCode == 124 || event.keyCode == 125); return
+    override func paste(_ sender:Any?) {
+        if let text=NSPasteboard.general.string(forType:.string) {insertText(text,replacementRange:selectedRange())}
+    }
+    override func scrollToEndOfDocument(_ sender:Any?) {if let owner {owner.reveal(owner.document.source.count)}}
+    override func scrollToBeginningOfDocument(_ sender:Any?) {owner?.reveal(0)}
+    override func moveToBeginningOfDocument(_ sender:Any?) {owner?.reveal(0)}
+    override func moveToEndOfDocument(_ sender:Any?) {if let owner {owner.reveal(owner.document.source.count)}}
+    override func keyDown(with event:NSEvent) {
+        if event.modifierFlags.contains(.command),!event.modifierFlags.contains(.shift) {
+            if event.keyCode==125,let owner {owner.reveal(owner.document.source.count);return}
+            if event.keyCode==126 {owner?.reveal(0);return}
         }
-        if owner?.entireDocumentSelected == true, event.charactersIgnoringModifiers != nil,
-           !event.modifierFlags.contains(.command), !event.modifierFlags.contains(.control) {
-            if event.keyCode == 51 || event.keyCode == 117 { owner?.replaceSelection(""); return }
-            if let characters = event.characters, characters.unicodeScalars.allSatisfy({!($0.value>=0xf700 && $0.value<=0xf8ff)}) {
-                owner?.replaceSelection(characters); return
-            }
-        }
-        if event.modifierFlags.contains(.command), !event.modifierFlags.contains(.shift), event.keyCode == 125 {
-            owner?.reveal(owner?.document.source.count ?? 0); return
-        }
-        if event.modifierFlags.contains(.command), !event.modifierFlags.contains(.shift), event.keyCode == 126 {
-            owner?.reveal(0); return
-        }
-        owner?.ensureSelectionVisible()
         super.keyDown(with:event)
     }
 }
 
-/// TextKit 2 sees a local working set; global coordinates live in the persistent source model.
-final class SourceEditor: NSView, NSTextViewDelegate {
-    let scroll:NSScrollView = SourceScrollView()
-    let canvas = FlippedView()
-    let textView = SourceTextView(usingTextLayoutManager:true)
-    unowned let document: MarkdownDocument
-    var viewportChanged: ((NSRange, Int, CGFloat) -> Void)?
+/// One retained native document. Navigation never reloads text or invents geometry.
+final class SourceEditor:NSView,NSTextViewDelegate,NSTextStorageDelegate,ScrollSource {
+    let scroll:NSScrollView=SourceScrollView()
+    let canvas=FlippedView()
+    let textView=SourceTextView(usingTextLayoutManager:false)
+    unowned let document:MarkdownDocument
+    var viewportChanged:((NSRange)->Void)?
     var scrollGestureChanged:((Bool)->Void)?
-    var geometryRebased:((CGFloat)->Void)?
+    var geometryChanged:(()->Void)?
+    var scrollOverflow:((NSEvent)->Bool)?
+    var navigationRequested:((Int)->Void)?
     private(set) var isScrolling=false
-    private var scrollEnd:DispatchWorkItem?
-    private var liveScrollObservations=[NSObjectProtocol]()
-    private(set) var windowRange = NSRange(location:0,length:0)
-    private var loading = false
-    private var localEdit = false
-    private var changingBounds = false
-    private var resizeAnchor:Int?
-    private var pendingEdit: (NSRange,String)?
-    private var observation: NSObjectProtocol?
     private(set) var geometryRevision=0
-    private(set) var entireDocumentSelected = false
-    private var storedSelection = NSRange(location:0,length:0)
-    var viewportAnchor:Int { currentAnchor() ?? windowRange.location }
-    var fontSize: CGFloat = 13 { didSet { endScrollGesture();refresh(preserving: selection) } }
-    var selection: NSRange {
-        if entireDocumentSelected { return NSRange(location:0,length:document.source.count) }
-        return storedSelection
+    private var changingLayout=false,localEdit=false
+    private var nativeLayoutRevision:Int?
+    private var observations=[NSObjectProtocol]()
+    private var resizeAnchor:(Int,CGFloat)?
+    private var highlightedRanges=[NSRange]()
+    private var highlightRevision = -1
+    private var deferredHighlights=[(Int,[SyntaxSpan],NSRange)]()
+    private var loadedRevision = -1
+    private struct MeasuredLine {
+        let range:NSRange,rect:NSRect
     }
-    func clearGlobalSelection() { entireDocumentSelected = false }
-    func collapseSelection(toEnd:Bool) {
-        let position = toEnd ? NSMaxRange(selection) : selection.location
-        entireDocumentSelected = false; storedSelection = NSRange(location:position,length:0); reveal(position)
+    private var measuredLines=[MeasuredLine]()
+    #if DEBUG
+    private(set) var highlightApplications=0
+    #endif
+    var contentRevision:Int {document.revision}
+    var hasMeasuredLayout:Bool {nativeLayoutRevision==nil && !localEdit && !changingLayout && loadedRevision==document.revision}
+    var viewportOrigin:CGFloat {scroll.contentView.bounds.minY}
+    var contentHeight:CGFloat {canvas.bounds.height}
+    var sourceLength:Int {document.source.count}
+    var selection:NSRange {textView.selectedRange()}
+    var documentRange:NSRange {NSRange(location:0,length:document.source.count)}
+    var viewportAnchor:Int {offset(atCanvasY:scroll.contentView.bounds.minY+3)}
+    var alignmentAnchor:Int {offset(atCanvasY:scroll.contentView.bounds.minY+alignmentOffset)}
+    var visibleSourceRange:NSRange {
+        let top=scroll.contentView.bounds.minY,bottom=top+scroll.contentSize.height
+        let start=offset(atCanvasY:top+2),end=max(start,offset(atCanvasY:bottom-2,endOfLine:true))
+        return NSRange(location:start,length:end-start)
     }
-    func ensureSelectionVisible() {
-        let selected = selection
-        if selected.location<windowRange.location || NSMaxRange(selected)>NSMaxRange(windowRange) {
-            load(around:selected.location,preserving:selected); reveal(selected.location)
-        }
-    }
-    private var lineHeight: CGFloat { fontSize * 1.4 }
-    private var columns: CGFloat { max(12,(scroll.contentSize.width-32)/(fontSize*0.61)) }
-    init(document: MarkdownDocument) {
-        self.document = document; super.init(frame:.zero)
-        scroll.hasVerticalScroller = true; scroll.autohidesScrollers = true
-        scroll.drawsBackground = true; scroll.backgroundColor = .textBackgroundColor
-        scroll.documentView = canvas; addSubview(scroll); canvas.addSubview(textView)
-        textView.owner = self; textView.delegate = self
-        textView.isRichText = false; textView.isEditable = true; textView.isSelectable = true
-        textView.allowsUndo = false; textView.isAutomaticQuoteSubstitutionEnabled = false
-        textView.isAutomaticDashSubstitutionEnabled = false; textView.isAutomaticTextReplacementEnabled = false
-        textView.isAutomaticSpellingCorrectionEnabled = false; textView.isContinuousSpellCheckingEnabled = false
-        textView.textContainerInset = NSSize(width:16,height:16)
-        textView.isVerticallyResizable = true; textView.isHorizontallyResizable = false
-        textView.textContainer?.widthTracksTextView = true
-        textView.textContainer?.heightTracksTextView = false
-        textView.autoresizingMask = []; textView.backgroundColor = .textBackgroundColor
-        textView.setAccessibilityLabel("Markdown source")
-        scroll.contentView.postsBoundsChangedNotifications = true
-        observation = NotificationCenter.default.addObserver(forName:NSView.boundsDidChangeNotification,object:scroll.contentView,queue:.main) { [weak self] _ in self?.scrolled() }
-        let wheelScroll=scroll as! SourceScrollView
-        wheelScroll.willScroll={ [weak self] event in
-            guard abs(event.scrollingDeltaY)>=abs(event.scrollingDeltaX) else{return}
-            self?.beginScrollGesture()
-        }
-        wheelScroll.didScroll={ [weak self] event in
-            if event.momentumPhase.contains(.ended) || event.momentumPhase.contains(.cancelled) || event.phase.contains(.cancelled) {
-                self?.endScrollGesture()
-            } else if event.phase.contains(.ended) || (event.phase.isEmpty && event.momentumPhase.isEmpty) {
-                self?.scheduleScrollEnd()
+    var fontSize:CGFloat=13 {
+        didSet {
+            guard fontSize != oldValue else{return}
+            endScrollGesture()
+            relayoutPreservingViewport {
+                let storage=self.textView.textStorage!
+                storage.beginEditing()
+                storage.enumerateAttribute(.font,in:self.documentRange) {value,range,_ in
+                    guard let font=value as? NSFont else{return}
+                    storage.addAttribute(.font,value:NSFontManager.shared.convert(font,toSize:font.pointSize*self.fontSize/oldValue),range:range)
+                }
+                storage.endEditing()
             }
         }
+    }
+    init(document:MarkdownDocument) {
+        self.document=document;super.init(frame:.zero)
+        scroll.hasVerticalScroller=true;scroll.autohidesScrollers=true
+        scroll.backgroundColor = .textBackgroundColor;scroll.documentView=canvas
+        addSubview(scroll);canvas.addSubview(textView)
+        textView.owner=self;textView.delegate=self;textView.textStorage!.delegate=self
+        textView.isRichText=false;textView.allowsUndo=false
+        textView.isAutomaticQuoteSubstitutionEnabled=false;textView.isAutomaticDashSubstitutionEnabled=false
+        textView.isAutomaticTextReplacementEnabled=false;textView.isAutomaticSpellingCorrectionEnabled=false
+        textView.isContinuousSpellCheckingEnabled=false
+        textView.textContainerInset=NSSize(width:16,height:16)
+        textView.isVerticallyResizable=false;textView.isHorizontallyResizable=false
+        textView.textContainer!.widthTracksTextView=true;textView.textContainer!.heightTracksTextView=false
+        // This editor prepares a complete, contiguous native layout. Scrolling
+        // only exposes its glyphs; no viewport layout can replace its geometry.
+        textView.layoutManager!.allowsNonContiguousLayout=false
+        textView.layoutManager!.backgroundLayoutEnabled=false
+        textView.autoresizingMask=[];textView.backgroundColor = .textBackgroundColor
+        textView.setAccessibilityLabel("Markdown source")
+        scroll.contentView.postsBoundsChangedNotifications=true
+        (scroll as! SourceScrollView).consumeScroll={ [weak self] event in self?.scrollOverflow?(event) ?? false }
         let center=NotificationCenter.default
-        liveScrollObservations.append(center.addObserver(forName:NSScrollView.willStartLiveScrollNotification,object:scroll,queue:.main) { [weak self] _ in self?.beginScrollGesture() })
-        liveScrollObservations.append(center.addObserver(forName:NSScrollView.didEndLiveScrollNotification,object:scroll,queue:.main) { [weak self] _ in self?.scheduleScrollEnd() })
+        observations.append(center.addObserver(forName:NSView.boundsDidChangeNotification,object:scroll.contentView,queue:.main) { [weak self] _ in self?.notifyViewport() })
+        observations.append(center.addObserver(forName:NSScrollView.willStartLiveScrollNotification,object:scroll,queue:.main) { [weak self] _ in self?.beginScrollGesture() })
+        observations.append(center.addObserver(forName:NSScrollView.didEndLiveScrollNotification,object:scroll,queue:.main) { [weak self] _ in self?.endScrollGesture() })
     }
-    required init?(coder:NSCoder) { fatalError() }
-    deinit {
-        scrollEnd?.cancel()
-        if let observation { NotificationCenter.default.removeObserver(observation) }
-        for observer in liveScrollObservations {NotificationCenter.default.removeObserver(observer)}
-    }
+    required init?(coder:NSCoder) {fatalError()}
+    deinit {for observation in observations {NotificationCenter.default.removeObserver(observation)}}
     func beginScrollGesture() {
-        scrollEnd?.cancel();scrollEnd=nil
         guard !isScrolling else{return}
         isScrolling=true;scrollGestureChanged?(true)
     }
     func endScrollGesture() {
-        scrollEnd?.cancel();scrollEnd=nil
         guard isScrolling else{return}
-        isScrolling=false;scrollGestureChanged?(false)
+        isScrolling=false;applyDeferredHighlights();scrollGestureChanged?(false)
     }
-    private func scheduleScrollEnd() {
-        scrollEnd?.cancel()
-        // A trackpad's finger phase ends just before momentum begins. Also
-        // group phase-less mouse-wheel ticks into one gesture.
-        let end=DispatchWorkItem { [weak self] in self?.endScrollGesture() }
-        scrollEnd=end;DispatchQueue.main.asyncAfter(deadline:.now()+0.15,execute:end)
-    }
-    override func setFrameSize(_ newSize:NSSize) {
-        if newSize != frame.size {endScrollGesture()}
-        if abs(newSize.width-frame.width)>0.5, resizeAnchor == nil { resizeAnchor = currentAnchor() }
-        super.setFrameSize(newSize)
-        needsLayout = true
+    override func setFrameSize(_ size:NSSize) {
+        if size != frame.size {endScrollGesture()}
+        if loadedRevision>=0,nativeLayoutRevision==nil,abs(size.width-frame.width)>0.5,resizeAnchor==nil,let y=verticalPosition(for:viewportAnchor) {
+            resizeAnchor=(viewportAnchor,scroll.contentView.bounds.minY-y)
+        }
+        super.setFrameSize(size);needsLayout=true
     }
     override func layout() {
-        let previousBoundsChange = changingBounds
-        changingBounds = true
-        defer { changingBounds = previousBoundsChange }
-        super.layout(); let oldSize = scroll.frame.size
-        let anchor = resizeAnchor ?? currentAnchor()
-        let restoringResize = resizeAnchor != nil
-        resizeAnchor = nil
-        scroll.frame = bounds
-        if restoringResize || abs(oldSize.width-scroll.frame.width)>0.5 || abs(oldSize.height-scroll.frame.height)>0.5 || windowRange.length == 0 {
-            updateDimensions()
-            if windowRange.length == 0 { load(around:0) }
-            if let anchor { reveal(anchor,alignTop:true) }
-        }
-        notifyViewport()
-    }
-    private func estimate(_ offset: Int) -> CGFloat {
-        let source = document.source
-        return CGFloat(source.line(at:offset))*lineHeight + CGFloat(offset)*lineHeight/columns
-    }
-    private func updateDimensions() {
-        let work=TimingDiagnostics.shared.begin("source.layout")
-        defer {TimingDiagnostics.shared.end(work,values:["windowCharacters":Double(windowRange.length),"width":Double(scroll.contentSize.width)])}
-        geometryRevision += 1
-        textView.typingAttributes = [.font:NSFont.monospacedSystemFont(ofSize:fontSize,weight:.regular),.foregroundColor:NSColor.textColor]
-        textView.frame.size.width = max(1,scroll.contentSize.width)
-        textView.textContainer?.containerSize = NSSize(width:max(1,scroll.contentSize.width-32),height:CGFloat.greatestFiniteMagnitude)
-        textView.textLayoutManager?.ensureLayout(for:textView.textLayoutManager!.documentRange)
-        let height = max(lineHeight+32,textView.textLayoutManager?.usageBoundsForTextContainer.height ?? lineHeight)+32
-        textView.frame = NSRect(x:0,y:estimate(windowRange.location),width:scroll.contentSize.width,height:height)
-        let estimatedWindow = estimate(NSMaxRange(windowRange))-estimate(windowRange.location)
-        let totalHeight = NSMaxRange(windowRange)==document.source.count
-            ? textView.frame.maxY+32 : estimate(document.source.count)+height-estimatedWindow+32
-        canvas.frame.size = NSSize(width:scroll.contentSize.width,height:max(scroll.contentSize.height,totalHeight))
-    }
-    func load(around offset: Int, preserving globalSelection: NSRange? = nil) {
-        guard !textView.hasMarkedText() else { return }
-        loading = true; defer { loading = false }
-        let globalSelection = globalSelection ?? storedSelection
-        let source = document.source, line = source.line(at:offset)
-        // A viewport-sized working set also covers tall windows at small fonts.
-        let visibleLines = Int(ceil(scroll.contentSize.height / max(1,fontSize)))
-        var first = max(0,line-60), end = min(source.lineCount,line+max(121,visibleLines+61))
-        if globalSelection.length>0, !entireDocumentSelected {
-            first = min(first,source.line(at:globalSelection.location))
-            end = max(end,min(source.lineCount,source.line(at:NSMaxRange(globalSelection))+2))
-        }
-        windowRange = source.lines(first,end)
-        textView.string = source.string(in:windowRange)
-        textView.textStorage?.setAttributes([.font:NSFont.monospacedSystemFont(ofSize:fontSize,weight:.regular),.foregroundColor:NSColor.textColor],range:NSRange(location:0,length:windowRange.length))
-        let selection = globalSelection
-        if selection.location >= windowRange.location, NSMaxRange(selection) <= NSMaxRange(windowRange) {
-            textView.setSelectedRange(NSRange(location:selection.location-windowRange.location,length:selection.length))
-        } else if entireDocumentSelected {
-            textView.setSelectedRange(NSRange(location:0,length:windowRange.length))
-        } else {
-            textView.setSelectedRange(NSRange(location:0,length:0))
-        }
-        updateDimensions()
-    }
-    private func currentAnchor() -> Int? {
-        guard windowRange.length > 0 else { return nil }
-        return windowRange.location + offset(atCanvasY:scroll.contentView.bounds.minY+3)
-    }
-    private func offset(atCanvasY y:CGFloat, endOfLine:Bool = false)->Int {
-        guard let manager = textView.textLayoutManager,let content = manager.textContentManager else { return 0 }
-        let localY = y-textView.frame.minY-textView.textContainerInset.height
-        var result = windowRange.length
-        manager.enumerateTextLayoutFragments(from:content.documentRange.location,options:[.ensuresLayout]) { fragment in
-            let start = content.offset(from:content.documentRange.location,to:fragment.rangeInElement.location)
-            for line in fragment.textLineFragments {
-                if fragment.layoutFragmentFrame.minY+line.typographicBounds.maxY>localY {
-                    result = start+(endOfLine ? NSMaxRange(line.characterRange) : line.characterRange.location)
-                    return false
-                }
-            }
-            return true
-        }
-        return max(0,min(windowRange.length,result))
-    }
-    private func scrolled() {
-        let work=TimingDiagnostics.shared.begin("source.scroll")
-        defer {TimingDiagnostics.shared.end(work,values:["sourceY":Double(scroll.contentView.bounds.minY)])}
-        guard !loading && !changingBounds && resizeAnchor == nil else { return }
-        let top = scroll.contentView.bounds.minY
-        let bottom = top+scroll.contentSize.height
-        if top < textView.frame.minY || bottom > textView.frame.maxY-30 {
-            // Preserve actual TextKit coordinates while replenishing a known passage.
-            // Estimates are only for jumps outside the currently laid-out text.
-            let known = top >= textView.frame.minY && top < textView.frame.maxY
-            let offset = known ? (currentAnchor() ?? windowRange.location)
-                : document.source.estimatedOffset(at:Double(top),lineHeight:Double(lineHeight),columns:Double(columns))
-            let displacement = known ? top-verticalPosition(for:offset) : 0
-            let selected = selection
-            if selected.length == 0 || NSMaxRange(selected) <= NSMaxRange(windowRange) {
-                changingBounds = true
-                let oldPosition=verticalPosition(for:offset)
-                load(around:offset,preserving:selected)
-                geometryRebased?(verticalPosition(for:offset)-oldPosition)
-                scroll.contentView.scroll(to:NSPoint(x:0,y:max(0,verticalPosition(for:offset)+displacement)))
-                scroll.reflectScrolledClipView(scroll.contentView)
-                changingBounds = false
-            }
-        }
-        notifyViewport()
-    }
-    func scrollWheel(_ event: NSEvent, fromPreview: Bool) { scroll.scrollWheel(with:event) }
-    override func scrollWheel(with event:NSEvent) { scroll.scrollWheel(with:event) }
-    private func notifyViewport() {
-        let work=TimingDiagnostics.shared.begin("viewport.sync")
-        defer {TimingDiagnostics.shared.end(work,values:["sourceY":Double(scroll.contentView.bounds.minY)])}
-        guard !loading, windowRange.length > 0 else { viewportChanged?(windowRange,windowRange.location,0); return }
-        let top = scroll.contentView.bounds.minY, bottom = top+scroll.contentSize.height
-        let start = offset(atCanvasY:top+2)
-        let end = max(start,offset(atCanvasY:bottom-2,endOfLine:true))
-        let global = windowRange.location+start
-        let offset = rect(for:global)?.minY ?? top
-        viewportChanged?(NSRange(location:global,length:end-start),global,offset-top)
-    }
-    private func rect(for global:Int)->NSRect? {
-        guard global>=windowRange.location,global<=NSMaxRange(windowRange),
-              let manager = textView.textLayoutManager,let content = manager.textContentManager,
-              let location = content.location(content.documentRange.location,offsetBy:global-windowRange.location),
-              let fragment = manager.textLayoutFragment(for:location) else { return nil }
-        let offset = content.offset(from:fragment.rangeInElement.location,to:location)
-        let line = fragment.textLineFragments.first { offset >= $0.characterRange.location && offset < NSMaxRange($0.characterRange) }
-            ?? fragment.textLineFragments.last
-        guard let line else { return nil }
-        return NSRect(x:textView.frame.minX+textView.textContainerInset.width,
-                      y:textView.frame.minY+textView.textContainerInset.height+fragment.layoutFragmentFrame.minY+line.typographicBounds.minY,
-                      width:1,height:line.typographicBounds.height)
-    }
-    func fraction(through range:NSRange,at anchor:Int)->CGFloat? {
-        guard let start = rect(for:range.location),let end = rect(for:NSMaxRange(range)),let position = rect(for:anchor) else { return nil }
-        return min(1,max(0,(position.minY-start.minY)/max(lineHeight,end.maxY-start.minY)))
-    }
-    /// Exact local TextKit geometry, with the same estimate used by the source
-    /// canvas for anchors outside its working set.
-    func verticalPosition(for offset:Int)->CGFloat {
-        rect(for:offset)?.minY ?? estimate(offset)
-    }
-    /// MacDown's midpoint alignment, tapered to the document edges.
-    var alignmentOffset:CGFloat {
-        let height=max(1,scroll.contentSize.height), y=scroll.contentView.bounds.minY
-        let top=min(1,max(0,y/height))
-        let bottom=min(1,max(0,(canvas.bounds.height-height-y)/height))
-        return top*bottom*height/2
-    }
-    func refresh(preserving selection: NSRange? = nil) {
-        let anchor = currentAnchor() ?? selection?.location ?? 0
-        load(around:anchor,preserving:selection); notifyViewport()
-    }
-    func documentEdited(selection:NSRange, edit:SourceEdit) {
-        entireDocumentSelected = false
-        storedSelection = selection
-        if localEdit {
-            windowRange.length += edit.insertedLength-edit.range.length
-            updateDimensions(); notifyViewport()
-        } else {
-            load(around:selection.location,preserving:selection); reveal(selection.location); notifyViewport()
-        }
-    }
-    func reveal(_ offset:Int, alignTop:Bool = false) {
-        endScrollGesture()
-        let position = min(max(0,offset),document.source.count)
-        if position < windowRange.location || position > NSMaxRange(windowRange) { load(around:position,preserving:alignTop ? selection : NSRange(location:position,length:0)) }
-        let local = NSRange(location:position-windowRange.location,length:0)
-        if !alignTop { textView.setSelectedRange(local) }
-        guard let rect = rect(for:position) ?? (position==document.source.count ? rect(for:max(windowRange.location,position-1)) : nil) else { return }
-        changingBounds = true
-        if alignTop { scroll.contentView.scroll(to:NSPoint(x:0,y:max(0,rect.minY))) }
-        else if position == document.source.count {
-            scroll.contentView.scroll(to:NSPoint(x:0,y:max(0,canvas.bounds.height-scroll.contentSize.height)))
-        } else { canvas.scrollToVisible(rect.insetBy(dx:0,dy:-30)) }
-        scroll.reflectScrolledClipView(scroll.contentView); changingBounds = false; scrolled()
-    }
-    func selectEntireDocument() { entireDocumentSelected = true; textView.setSelectedRange(NSRange(location:0,length:windowRange.length)) }
-    func copySelection() {
-        let value = document.source.string(in:selection)
-        NSPasteboard.general.clearContents(); NSPasteboard.general.setString(value,forType:.string)
-    }
-    func replaceSelection(_ text:String) {
-        if entireDocumentSelected { document.replace(selection,with:text,name:"Replace"); return }
-        ensureSelectionVisible()
-        textView.insertText(text,replacementRange:textView.selectedRange())
-    }
-    func textView(_ textView:NSTextView, shouldChangeTextIn affectedCharRange:NSRange, replacementString:String?) -> Bool {
-        guard !loading else { return true }
-        entireDocumentSelected = false
-        pendingEdit = (NSRange(location:windowRange.location+affectedCharRange.location,length:affectedCharRange.length),replacementString ?? "")
-        return true
-    }
-    func textDidChange(_ notification:Notification) {
-        guard !loading, let (range,text) = pendingEdit else { return }; pendingEdit = nil
-        localEdit = true; document.replace(range,with:text); localEdit = false
-    }
-    func textViewDidChangeSelection(_ notification:Notification) {
-        if !loading && !entireDocumentSelected {
-            let range = textView.selectedRange()
-            storedSelection = NSRange(location:windowRange.location+range.location,length:range.length)
-            notifyViewport()
-        }
-    }
-    func applyHighlights(_ spans:[SyntaxSpan]) {
-        let work=TimingDiagnostics.shared.begin("source.highlight")
-        defer {TimingDiagnostics.shared.end(work,values:["spans":Double(spans.count)])}
-        guard !textView.hasMarkedText(), let storage = textView.textStorage else { return }
-        let anchor=currentAnchor()
-        let oldPosition=anchor.map{verticalPosition(for:$0)}
-        let displacement=anchor.map {scroll.contentView.bounds.minY-verticalPosition(for:$0)} ?? 0
-        loading = true
-        storage.beginEditing()
-        storage.setAttributes([.font:NSFont.monospacedSystemFont(ofSize:fontSize,weight:.regular),.foregroundColor:NSColor.textColor],range:NSRange(location:0,length:storage.length))
-        for span in spans {
-            let overlap = NSIntersectionRange(windowRange,span.range); guard overlap.length>0 else { continue }
-            let r = NSRange(location:overlap.location-windowRange.location,length:overlap.length)
-            var attrs = [NSAttributedString.Key:Any]()
-            if span.kind.contains("Heading") {
-                let level = Int(span.kind.suffix(1)) ?? 2
-                attrs[.font] = NSFont.monospacedSystemFont(ofSize:level==1 ? fontSize*18/13 : level==2 ? fontSize*16/13 : fontSize*14/13,weight:.bold)
-            } else if span.kind == "StrongEmphasis" || span.kind == "Emphasis" {
-                let existing = storage.attribute(.font,at:r.location,effectiveRange:nil) as? NSFont ?? .monospacedSystemFont(ofSize:fontSize,weight:.regular)
-                attrs[.font] = NSFontManager.shared.convert(existing,toHaveTrait:span.kind == "StrongEmphasis" ? .boldFontMask : .italicFontMask)
-            }
-            else if span.kind.contains("Mark") { attrs[.foregroundColor] = NSColor.secondaryLabelColor }
-            else if span.kind == "Link" || span.kind == "URL" { attrs[.foregroundColor] = NSColor.linkColor }
-            else if span.kind.hasPrefix("Math") { attrs[.foregroundColor] = NSColor.systemPurple }
-            if !attrs.isEmpty { storage.addAttributes(attrs,range:r) }
-        }
-        storage.endEditing()
-        updateDimensions()
-        if let anchor {
-            if let oldPosition {geometryRebased?(verticalPosition(for:anchor)-oldPosition)}
-            scroll.contentView.scroll(to:NSPoint(x:0,y:max(0,verticalPosition(for:anchor)+displacement)))
+        super.layout()
+        // Updating the document's edited state can synchronously redraw its
+        // window title inside a native character transaction. Defer geometry
+        // until that transaction has closed, including pending pane resizing.
+        guard nativeLayoutRevision==nil,!localEdit,!changingLayout else{return}
+        let changed=scroll.frame.size != bounds.size
+        guard changed || loadedRevision<0 else{return}
+        changingLayout=true
+        let anchor=resizeAnchor;resizeAnchor=nil
+        scroll.frame=bounds
+        if loadedRevision<0 {reload(preserving:NSRange(location:0,length:0))}else{updateDimensions()}
+        if let (offset,displacement)=anchor,let y=verticalPosition(for:offset) {
+            scroll.contentView.scroll(to:NSPoint(x:0,y:max(0,y+displacement)))
             scroll.reflectScrolledClipView(scroll.contentView)
         }
-        loading = false
+        changingLayout=false;geometryChanged?();notifyViewport()
+    }
+    private var baseAttributes:[NSAttributedString.Key:Any] {
+        [.font:NSFont.monospacedSystemFont(ofSize:fontSize,weight:.regular),.foregroundColor:NSColor.textColor]
+    }
+    private func updateDimensions() {
+        #if DEBUG
+        let work=TimingDiagnostics.shared.begin("source.layout")
+        defer {TimingDiagnostics.shared.end(work,values:["documentCharacters":Double(document.source.count),"width":Double(scroll.contentSize.width)])}
+        #endif
+        geometryRevision += 1
+        textView.typingAttributes=baseAttributes
+        textView.frame.size.width=max(1,scroll.contentSize.width)
+        textView.textContainer!.containerSize=NSSize(width:max(1,scroll.contentSize.width-32),height:.greatestFiniteMagnitude)
+        let manager=textView.layoutManager!,container=textView.textContainer!
+        manager.ensureLayout(for:container)
+        measuredLines.removeAll(keepingCapacity:true)
+        manager.enumerateLineFragments(forGlyphRange:manager.glyphRange(for:container)) {_,used,_,glyphs,_ in
+            let characters=manager.characterRange(forGlyphRange:glyphs,actualGlyphRange:nil)
+            self.measuredLines.append(MeasuredLine(range:characters,rect:used.offsetBy(dx:self.textView.textContainerInset.width,dy:self.textView.textContainerInset.height)))
+        }
+        let height=max(manager.usedRect(for:container).maxY,manager.extraLineFragmentRect.maxY)
+        textView.frame=NSRect(x:0,y:0,width:scroll.contentSize.width,height:height+textView.textContainerInset.height*2+32)
+        canvas.frame.size=NSSize(width:scroll.contentSize.width,height:max(scroll.contentSize.height,textView.frame.maxY+32))
+    }
+    func reload(preserving selection:NSRange) {
+        guard !textView.hasMarkedText() else{return}
+        let previousChanging=changingLayout;changingLayout=true
+        if loadedRevision != document.revision {
+            textView.string=document.source.string
+            textView.textStorage!.setAttributes(baseAttributes,range:documentRange)
+            highlightedRanges.removeAll();deferredHighlights.removeAll();highlightRevision=document.revision
+        }
+        loadedRevision=document.revision
+        precondition(selection.location>=0 && NSMaxRange(selection)<=document.source.count)
+        textView.setSelectedRange(selection)
+        updateDimensions();changingLayout=previousChanging
+    }
+    private func offset(atCanvasY y:CGFloat,endOfLine:Bool=false)->Int {
+        var low=0,high=measuredLines.count
+        while low<high {
+            let middle=(low+high)/2
+            if measuredLines[middle].rect.maxY<=y {low=middle+1}else{high=middle}
+        }
+        guard low<measuredLines.count else{return document.source.count}
+        let range=measuredLines[low].range
+        return endOfLine ? NSMaxRange(range):range.location
+    }
+    private func rect(for offset:Int)->NSRect? {
+        guard offset>=0,offset<document.source.count else{return nil}
+        var low=0,high=measuredLines.count
+        while low<high {
+            let middle=(low+high)/2
+            if NSMaxRange(measuredLines[middle].range)<=offset {low=middle+1}else{high=middle}
+        }
+        guard low<measuredLines.count,NSLocationInRange(offset,measuredLines[low].range) else{return nil}
+        let rect=measuredLines[low].rect
+        return NSRect(x:textView.textContainerInset.width,y:rect.minY,width:1,height:rect.height)
+    }
+    func verticalPosition(for offset:Int)->CGFloat? {
+        // EOF has no glyph. Its coordinate is the explicit document boundary.
+        if offset==document.source.count {return canvas.bounds.height}
+        return rect(for:offset)?.minY
+    }
+    #if DEBUG
+    func debugMeasuredPosition(for offset:Int)->CGFloat {
+        guard let y=verticalPosition(for:offset) else{preconditionFailure("Missing native position at \(offset)")}
+        return y
+    }
+    #endif
+    var alignmentOffset:CGFloat {
+        CGFloat(ScrollLandmarks.alignmentOffset(at:Double(scroll.contentView.bounds.minY),sourceHeight:Double(canvas.bounds.height),viewportHeight:Double(scroll.contentSize.height)))
+    }
+    private func relayoutPreservingViewport(_ change:()->Void) {
+        let anchor=viewportAnchor,oldOrigin=scroll.contentView.bounds.minY,oldPosition=verticalPosition(for:anchor)
+        changingLayout=true;change();updateDimensions()
+        if oldOrigin<=0.001 {scroll.contentView.scroll(to:.zero)}
+        else if let before=oldPosition,let after=verticalPosition(for:anchor) {scroll.contentView.scroll(to:NSPoint(x:0,y:max(0,after+oldOrigin-before)))}
+        scroll.reflectScrolledClipView(scroll.contentView)
+        changingLayout=false;geometryChanged?();notifyViewport()
+    }
+    func documentEdited(selection:NSRange) {
+        highlightRevision=document.revision;highlightedRanges.removeAll();deferredHighlights.removeAll()
+        if localEdit {loadedRevision=document.revision}
+        else {nativeLayoutRevision=nil;reload(preserving:selection);reveal(selection.location);textView.setSelectedRange(selection);notifyViewport()}
+    }
+    func reveal(_ offset:Int,alignTop:Bool=false) {
+        endScrollGesture()
+        let position=min(max(0,offset),document.source.count)
+        if !alignTop {textView.setSelectedRange(NSRange(location:position,length:0))}
+        changingLayout=true
+        if position==0 {scroll.contentView.scroll(to:.zero)}
+        else if position==document.source.count {
+            scroll.contentView.scroll(to:NSPoint(x:0,y:max(0,canvas.bounds.height-scroll.contentSize.height)))
+        } else if let target=rect(for:position) {
+            if alignTop {scroll.contentView.scroll(to:NSPoint(x:0,y:target.minY))}
+            else {canvas.scrollToVisible(target.insetBy(dx:0,dy:-30))}
+        }
+        scroll.reflectScrolledClipView(scroll.contentView);changingLayout=false
+        navigationRequested?(position)
+        notifyViewport()
+    }
+    override func scrollWheel(with event:NSEvent) {scroll.scrollWheel(with:event)}
+    private func notifyViewport() {
+        guard !changingLayout,!localEdit,nativeLayoutRevision==nil else{return}
+        viewportChanged?(visibleSourceRange)
+    }
+    func textView(_ textView:NSTextView,shouldChangeTextIn range:NSRange,replacementString:String?)->Bool {
+        // Mark geometry unavailable before AppKit begins its character batch.
+        if !changingLayout {nativeLayoutRevision=document.revision}
+        return true
+    }
+    func textStorage(_ storage:NSTextStorage,didProcessEditing mask:NSTextStorageEditActions,range editedRange:NSRange,changeInLength delta:Int) {
+        guard !changingLayout,mask.contains(.editedCharacters) else{return}
+        // Observe actual native character transactions, including provisional
+        // marked text. Delegate proposals can refer to an uncommitted IME range
+        // and are not a reliable edit against the document model.
+        precondition(document.source.count==storage.length-delta)
+        let original=NSRange(location:editedRange.location,length:editedRange.length-delta)
+        let replacement=(storage.string as NSString).substring(with:editedRange)
+        nativeLayoutRevision=document.revision+1
+        localEdit=true;document.replace(original,with:replacement);localEdit=false
+        DispatchQueue.main.async { [weak self] in self?.finishNativeLayout()}
+    }
+    private func finishNativeLayout() {
+        guard let revision=nativeLayoutRevision,revision==document.revision,!changingLayout else{return}
+        changingLayout=true;scroll.frame=bounds;updateDimensions();changingLayout=false
+        nativeLayoutRevision=nil
+        resizeAnchor=nil;needsLayout=true
+        geometryChanged?();notifyViewport();applyDeferredHighlights()
+    }
+    func textViewDidChangeSelection(_ notification:Notification) {
+        // AppKit can announce selection inside a still-open native text batch.
+        DispatchQueue.main.async { [weak self] in self?.notifyViewport() }
+    }
+    func hasAppliedHighlights(in range:NSRange)->Bool {
+        highlightRevision==document.revision && highlightedRanges.contains{ $0.location<=range.location && NSMaxRange($0)>=NSMaxRange(range) }
+    }
+    private func recordHighlightCoverage(_ range:NSRange) {
+        var union=range,result=[NSRange]()
+        for existing in highlightedRanges {
+            if NSMaxRange(existing)<union.location || existing.location>NSMaxRange(union) {result.append(existing)}
+            else {union=NSUnionRange(union,existing)}
+        }
+        result.append(union);highlightedRanges=result.sorted{$0.location<$1.location}
+    }
+    private func applyDeferredHighlights() {
+        guard !isScrolling,!localEdit,!textView.hasMarkedText() else{return}
+        let pending=deferredHighlights;deferredHighlights.removeAll()
+        for (revision,spans,range) in pending where revision==document.revision {applyHighlights(spans,in:range)}
+    }
+    func applyHighlights(_ spans:[SyntaxSpan],in requestedRange:NSRange) {
+        let covered=NSIntersectionRange(documentRange,spans.reduce(requestedRange){NSUnionRange($0,$1.range)})
+        guard covered.length>0,!hasAppliedHighlights(in:covered) else{return}
+        if isScrolling || textView.hasMarkedText() {deferredHighlights.append((document.revision,spans,requestedRange));return}
+        #if DEBUG
+        highlightApplications += 1
+        let work=TimingDiagnostics.shared.begin("source.highlight")
+        defer {TimingDiagnostics.shared.end(work,values:["spans":Double(spans.count)])}
+        #endif
+        relayoutPreservingViewport {
+            let storage=self.textView.textStorage!
+            storage.beginEditing();storage.setAttributes(self.baseAttributes,range:covered)
+            for span in spans {
+                let range=NSIntersectionRange(self.documentRange,span.range)
+                guard range.length>0 else{continue}
+                var attrs=[NSAttributedString.Key:Any]()
+                if (span.kind.hasPrefix("ATXHeading") || span.kind.hasPrefix("SetextHeading")),let level=Int(span.kind.suffix(1)),(1...6).contains(level) {
+                    attrs[.font]=NSFont.monospacedSystemFont(ofSize:level==1 ? self.fontSize*18/13:level==2 ? self.fontSize*16/13:self.fontSize*14/13,weight:.bold)
+                } else if span.kind=="StrongEmphasis" || span.kind=="Emphasis" {
+                    let font=storage.attribute(.font,at:range.location,effectiveRange:nil) as! NSFont
+                    attrs[.font]=NSFontManager.shared.convert(font,toHaveTrait:span.kind=="StrongEmphasis" ? .boldFontMask:.italicFontMask)
+                } else if span.kind.contains("Mark") {attrs[.foregroundColor]=NSColor.secondaryLabelColor}
+                else if span.kind=="Link" || span.kind=="URL" {attrs[.foregroundColor]=NSColor.linkColor}
+                else if span.kind.hasPrefix("Math") {attrs[.foregroundColor]=NSColor.systemPurple}
+                storage.addAttributes(attrs,range:range)
+            }
+            storage.endEditing()
+            self.recordHighlightCoverage(covered)
+        }
     }
 }
