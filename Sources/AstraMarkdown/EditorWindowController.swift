@@ -17,7 +17,7 @@ final class EditorWindowController: NSWindowController, NSSplitViewDelegate, NSS
     private var sourceFontSize: CGFloat = 13
     private var savedDivider: CGFloat = 0.5
     // Prepared document content is retained. Viewport movement never evicts it.
-    private let renderCache=RenderedCache()
+    private let preparedDocument=PreparedDocument()
     private var backgroundRevision = -1
     private var presentationPending=false
     private var isClosed=false
@@ -29,13 +29,13 @@ final class EditorWindowController: NSWindowController, NSSplitViewDelegate, NSS
         DispatchQueue.main.asyncAfter(deadline:.now()+0.005,execute:work)
     }
     private(set) var parserRequests=0
-    var cachedPageCount:Int {renderCache.count}
-    var cachedByteCost:Int {renderCache.byteCost}
+    var cachedPageCount:Int {preparedDocument.count}
+    var cachedByteCost:Int {preparedDocument.byteCost}
     var hasPreparedViewport:Bool {
         guard source.hasMeasuredLayout else{return false}
         let visible=source.visibleSourceRange
         return preview.lastRevision==markdownDocument.revision && preview.coversSourceViewport
-            && renderCache.entries(covering:visible) != nil
+            && preparedDocument.entries(covering:visible) != nil
     }
     #endif
     private func enqueueBackgroundPreparation(_ work:@escaping ()->Void) {
@@ -45,10 +45,10 @@ final class EditorWindowController: NSWindowController, NSSplitViewDelegate, NSS
         DispatchQueue.main.asyncAfter(deadline:.now()+0.005,execute:work)
         #endif
     }
-    var hasPreparedDocument:Bool {renderCache.firstUnpreparedOffset(from:0)>=markdownDocument.source.count}
+    var hasPreparedDocument:Bool {preparedDocument.revision==markdownDocument.revision && preparedDocument.firstUnpreparedOffset(from:0)>=markdownDocument.source.count}
     private var markdownDocument: MarkdownDocument { document as! MarkdownDocument }
     init(document:MarkdownDocument) {
-        source = SourceEditor(document:document)
+        source = SourceEditor(document:document,prepared:preparedDocument)
         var initialSize=NSSize(width:1120,height:760)
         #if DEBUG
         if let option=CommandLine.arguments.first(where:{$0.hasPrefix("--integration-window=")}) {
@@ -89,6 +89,7 @@ final class EditorWindowController: NSWindowController, NSSplitViewDelegate, NSS
                 if let self,self.presentationPending {self.showPreparedDocument(revision:self.markdownDocument.revision)}
             }
         }
+        preview.preparedDocument=preparedDocument
         preview.presentationSettled = { [weak self] in
             guard let self,!self.isClosed,let document=self.document as? MarkdownDocument else{return}
             if self.openingRequested {self.showWindow(nil)}
@@ -103,15 +104,12 @@ final class EditorWindowController: NSWindowController, NSSplitViewDelegate, NSS
         }
         preview.scrolling = .synchronized(source)
         preview.baseURL = document.fileURL?.deletingLastPathComponent()
-        document.edited = { [weak self,weak document] selection,_,edit in
-            guard let self,!self.isClosed,let document else { return }; self.lastRequest = nil
+        document.edited = { [weak self] selection,_,edit in
+            guard let self,!self.isClosed else { return }; self.lastRequest = nil
             self.source.endScrollGesture()
             self.presentationPending=false
-            // Fences, math delimiters and reference definitions can change distant semantics.
-            if document.lastEditInvalidatesContext {self.renderCache.clear()}
-            else {self.renderCache.invalidate(edit)}
             self.preview.invalidate()
-            self.source.documentEdited(selection:selection)
+            self.source.documentEdited(selection:selection,edit:edit)
         }
         layoutContent(); split.setPosition(window.frame.width*0.5,ofDividerAt:0)
         // Materialize TextKit only after the pane and its scroll view have
@@ -163,13 +161,14 @@ final class EditorWindowController: NSWindowController, NSSplitViewDelegate, NSS
         guard !isClosed else{return}
         #if DEBUG
         let work=TimingDiagnostics.shared.begin("viewport.prepare")
-        defer {TimingDiagnostics.shared.end(work,values:["revision":Double(markdownDocument.revision),"cachePages":Double(renderCache.count)])}
+        defer {TimingDiagnostics.shared.end(work,values:["revision":Double(markdownDocument.revision),"cachePages":Double(preparedDocument.count)])}
         #endif
         viewportScheduled = false
         guard let visible = pendingViewport else { return }; pendingViewport = nil
         let doc = markdownDocument, rope = doc.source
         let margin=rope.lines(max(0,rope.line(at:visible.location)-5),min(rope.lineCount,rope.line(at:NSMaxRange(visible))+6))
-        if source.hasAppliedHighlights(in:margin),renderCache.entries(covering:margin) != nil {
+        if preparedDocument.revision==doc.revision, let styles=preparedDocument.styles(in:margin),preparedDocument.entries(covering:margin) != nil {
+                if !source.hasAppliedHighlights(in:margin) {applyingHighlights=true;source.applyHighlights(styles,in:margin);applyingHighlights=false}
                 // Cached preparation and displayed coverage are separate. A
                 // new destination must publish even if no parsing is needed.
                 if !preview.coversSourceViewport {showPreparedDocument(revision:doc.revision)}
@@ -184,18 +183,22 @@ final class EditorWindowController: NSWindowController, NSSplitViewDelegate, NSS
         let range = rope.lines(startLine,endLine)
         if let lastRequest, lastRequest.0 == doc.revision, NSEqualRanges(lastRequest.1,range) { return }
         lastRequest = (doc.revision,range)
-        let cached=renderCache.entries(covering:range)
+        let cached=preparedDocument.revision==doc.revision ? preparedDocument.entries(covering:range):nil
         let revision = doc.revision
         #if DEBUG
         parserRequests += 1
         #endif
-        doc.parser.request(rope:rope,revision:revision,visible:range,renderHTML:cached==nil) { [weak self] result in
+        doc.parser.request(rope:rope,revision:revision,visible:range,renderHTML:cached==nil,includeFragments:cached==nil) { [weak self] result in
             guard let self,!self.isClosed, self.markdownDocument.revision == revision, self.lastRequest?.0 == revision, self.lastRequest?.1 == range else { return }
             switch result {
             case .success(let parsed):
+                if self.preparedDocument.revision != revision,let blocks=parsed.blocks {
+                    self.preparedDocument.adopt(blocks,revision:revision,length:rope.count)
+                    self.source.reconcilePreparedHighlights()
+                }
+                self.preparedDocument.store(parsed,range:range)
                 self.applyingHighlights = true; self.source.applyHighlights(parsed.spans,in:range); self.applyingHighlights = false
                 self.preview.baseURL = self.markdownDocument.fileURL?.deletingLastPathComponent()
-                if cached==nil {self.renderCache.store(parsed,range:range)}
                 self.showPreparedDocument(revision:revision)
                 self.source.needsLayout = true
                 self.prepareDocument(rope:rope,revision:revision)
@@ -212,7 +215,7 @@ final class EditorWindowController: NSWindowController, NSSplitViewDelegate, NSS
             return
         }
         let rope=markdownDocument.source
-        let pages=renderCache.allPages
+        let pages=preparedDocument.allPages
         var entries=[RenderedEntry](),position=0
         // Unprepared intervals occupy their document position. Foreground
         // rendering fills the destination rather than replacing a moving window.
@@ -243,29 +246,31 @@ final class EditorWindowController: NSWindowController, NSSplitViewDelegate, NSS
         guard !isClosed else{return}
         // Catch-up must not compete with the first visible viewport for native
         // styling/layout or WebKit publication. Readiness wakes this admission.
-        guard backgroundRevision != revision,preview.displayedDocumentRevision==revision,
+        guard preparedDocument.revision==revision,backgroundRevision != revision,preview.displayedDocumentRevision==revision,
               !preview.isShowingLoadingState else{return}
         backgroundRevision=revision
         enqueueBackgroundPreparation { [weak self] in self?.prepareBatch(rope:rope,revision:revision,from:0) }
     }
     private func prepareBatch(rope:TextRope,revision:Int,from:Int) {
         guard !isClosed else{return}
-        let from=renderCache.firstUnpreparedOffset(from:from)
+        let from=preparedDocument.firstUnpreparedOffset(from:from)
         guard markdownDocument.revision==revision else{return}
         guard from<rope.count else {
             showPreparedDocument(revision:revision,background:true)
             return
         }
-        markdownDocument.parser.prepare(rope:rope,revision:revision,from:from) { [weak self] result in
+        let line=rope.line(at:from),batchRange=rope.lines(line,min(rope.lineCount,line+100))
+        let includeFragments=preparedDocument.entries(covering:batchRange)==nil
+        markdownDocument.parser.prepare(rope:rope,revision:revision,from:from,includeFragments:includeFragments) { [weak self] result in
             guard let self,!self.isClosed,self.markdownDocument.revision==revision else{return}
             switch result {
             case .success(let (parsed,range)):
                 self.applyingHighlights=true
-                self.source.applyHighlights(parsed.spans,in:range)
+                self.source.queueHighlights(parsed.spans,in:range)
                 self.applyingHighlights=false
-                self.renderCache.store(parsed,range:range)
-                self.showPreparedDocument(revision:revision,background:true)
-                let next=max(NSMaxRange(range),parsed.fragments.last?.to ?? 0)
+                self.preparedDocument.store(parsed,range:range)
+                if includeFragments {self.showPreparedDocument(revision:revision,background:true)}
+                let next=NSMaxRange(range)
                 // Yield between batches. A new viewport request can take priority on the worker.
                 self.enqueueBackgroundPreparation { [weak self] in self?.prepareBatch(rope:rope,revision:revision,from:max(from+1,next)) }
             case .failure(let error):NSLog("Background preview preparation failed: %@",error.localizedDescription)

@@ -37,6 +37,8 @@ private final class PreviewSurface {
     var navigation:WKNavigation?
     var request:PreviewRequest?
     var observed:PreviewGeometry?
+    var preparedContent:PreviewContent?
+    var preparedAssetBase:String?
     init(web:PreviewWebView,assets:PreviewAssets) {
         self.web=web;self.assets=assets
         clip.drawsBackground=true;clip.backgroundColor = .textBackgroundColor
@@ -139,6 +141,7 @@ private struct CommittedPresentation {
 
 /// Prepared scrolling reads one committed presentation and moves its native clip.
 @MainActor final class PreviewPane:NSView,WKNavigationDelegate {
+    var preparedDocument:PreparedDocument?
     override var isFlipped:Bool {true}
     var scrolling:PreviewScrolling = .independent {didSet {sourceLayoutChanged()}}
     var openAnchor:((String)->Void)?
@@ -296,11 +299,10 @@ private struct CommittedPresentation {
     }
     func invalidate() {endScrollGesture();version += 1;content=nil;desired=nil;updateLoadingState()}
     func show(_ result:ParseResult) {
-        show(result.fragments.map{RenderedEntry(id:UUID().uuidString,fragment:$0)},revision:result.revision)
+        let existing=Dictionary((content?.entries ?? []).map{($0.fragment.from,$0.id)},uniquingKeysWith:{first,_ in first})
+        show(result.fragments.map{RenderedEntry(id:$0.id ?? existing[$0.from] ?? UUID().uuidString,fragment:$0)},revision:result.revision)
     }
     func show(_ entries:[RenderedEntry],revision:Int) {
-        let ids=Dictionary((content?.entries ?? []).map{($0.fragment.from,$0.id)},uniquingKeysWith:{first,_ in first})
-        let entries=entries.map{RenderedEntry(id:ids[$0.fragment.from] ?? $0.id,fragment:$0.fragment)}
         let extent=source?.sourceLength ?? entries.last?.fragment.to ?? 0
         let next=PreviewContent(revision:revision,entries:entries,sourceLength:extent)
         guard content != next || committed?.request.content != next else{updateLoadingState();return}
@@ -353,16 +355,19 @@ private struct CommittedPresentation {
         #if DEBUG
         let encode=TimingDiagnostics.shared.begin("web.patch.encode")
         #endif
+        let baseKey=request.baseURL?.absoluteString ?? ""
+        let previous=surface.preparedAssetBase==baseKey ? Dictionary((surface.preparedContent?.entries ?? []).map{($0.id,$0.fragment.html!)},uniquingKeysWith:{first,_ in first}):[:]
         let items=request.entries.map {entry -> [String:String] in
             let fragment=entry.fragment
-            return ["id":entry.id,
-                    "from":String(fragment.from),"to":String(fragment.to),"html":fragment.html!]
+            var item=["id":entry.id,"from":String(fragment.from),"to":String(fragment.to)]
+            if previous[entry.id] != fragment.html {item["html"]=fragment.html!}
+            return item
         }
         guard let data=try? JSONSerialization.data(withJSONObject:items),let json=String(data:data,encoding:.utf8) else {
             finishPreparation(request);return
         }
         #if DEBUG
-        TimingDiagnostics.shared.end(encode,values:["mounted":Double(items.count),"payloadBytes":Double(data.count)])
+        TimingDiagnostics.shared.end(encode,values:["mounted":Double(items.count),"htmlEntries":Double(items.filter{$0["html"] != nil}.count),"payloadBytes":Double(data.count)])
         patchCount += 1
         let roundtrip=TimingDiagnostics.shared.begin("web.patch.roundtrip")
         #endif
@@ -372,18 +377,26 @@ private struct CommittedPresentation {
                 self.finishPreparation(request);return
             }
             let baseKeyData=try? JSONSerialization.data(withJSONObject:[request.baseURL?.absoluteString ?? ""])
-            let baseKey=baseKeyData.flatMap{String(data:$0,encoding:.utf8)} ?? "[\"\"]"
+            let baseJSON=baseKeyData.flatMap{String(data:$0,encoding:.utf8)} ?? "[\"\"]"
             // Appending below the viewport retains the actual selection and
             // horizontal state. Restoring an earlier snapshot would overwrite
             // interaction that happened while the new resources were settling.
             let restoreState=surface === self.committed?.surface ? "":"astraRestoreViewState(\(state as? String ?? "null"));"
             #if DEBUG
-            let script="const patched=astraUpdate(\(json),\(request.id),\(request.fontSize),\(baseKey)[0],\(roundtrip == nil ? "false":"true"));await astraReady(\(request.width));\(restoreState)const measured=geometry();if(patched.timing)measured.timing=patched.timing;return JSON.stringify(measured);"
+            let script="const patched=astraUpdate(\(json),\(request.id),\(request.fontSize),\(baseJSON)[0],\(roundtrip == nil ? "false":"true"));await astraReady(\(request.width));\(restoreState)const measured=geometry();if(patched.timing)measured.timing=patched.timing;return JSON.stringify(measured);"
             #else
-            let script="astraUpdate(\(json),\(request.id),\(request.fontSize),\(baseKey)[0]);await astraReady(\(request.width));\(restoreState)return JSON.stringify(geometry());"
+            let script="astraUpdate(\(json),\(request.id),\(request.fontSize),\(baseJSON)[0]);await astraReady(\(request.width));\(restoreState)return JSON.stringify(geometry());"
             #endif
             surface.web.callAsyncJavaScript(script,arguments:[:],in:nil,in:.page) { [weak self] outcome in
                 guard let self else{return}
+                // A superseded success still describes this surface's DOM.
+                // Navigation or a newer request makes that observation stale.
+                if surface.request?.id==request.id {
+                    switch outcome {
+                    case .success:surface.preparedContent=request.content;surface.preparedAssetBase=baseKey
+                    case .failure:surface.preparedContent=nil;surface.preparedAssetBase=nil
+                    }
+                }
                 let value:Any?
                 switch outcome {
                 case .success(let result):
@@ -529,6 +542,7 @@ private struct CommittedPresentation {
         let hadFocus=previous.map{(window?.firstResponder as? NSView)?.isDescendant(of:$0.web)==true} == true
         CATransaction.begin();CATransaction.setDisableActions(true)
         committed=CommittedPresentation(request:request,geometry:geometry,surface:surface,map:position.map,sourceGeometryRevision:position.sourceGeometryRevision,viewportHeight:bounds.height)
+        preparedDocument?.recordPreviewHeights(Dictionary(uniqueKeysWithValues:geometry.items.map{($0.id,Double($0.height))}),revision:request.revision)
         desired=nil
         surface.size(contentHeight:geometry.height,width:request.width,viewportHeight:bounds.height)
         moveClip(to:position.origin)
@@ -543,6 +557,7 @@ private struct CommittedPresentation {
     }
     func webView(_ webView:WKWebView,didFinish navigation:WKNavigation!) {
         guard let surface=surfaces.first(where:{$0.web === webView}),surface.navigation === navigation else{return}
+        surface.preparedContent=nil;surface.preparedAssetBase=nil
         surface.ready=true;preparePresentation()
     }
     override func setFrameSize(_ size:NSSize) {
@@ -587,6 +602,7 @@ private struct CommittedPresentation {
     }
     func webViewWebContentProcessDidTerminate(_ webView:WKWebView) {
         guard let surface=surfaces.first(where:{$0.web === webView}) else{return}
+        surface.preparedContent=nil;surface.preparedAssetBase=nil
         surface.ready=false;surface.observed=nil;surface.setVisible(false)
         if rendering?.id==surface.request?.id {rendering=nil}
         if surface === committed?.surface {committed=nil}

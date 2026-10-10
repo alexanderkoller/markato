@@ -9,7 +9,6 @@ final class MarkdownDocument: NSDocument {
     private var encoding: String.Encoding = .utf8
     private var hasBOM = false
     private(set) var newline = "\n"
-    private(set) var lastEditInvalidatesContext = false
     let parser = LezerWorker()
     var edited: ((NSRange, String, SourceEdit) -> Void)?
     override class var autosavesInPlace: Bool { true }
@@ -25,10 +24,6 @@ final class MarkdownDocument: NSDocument {
     }
     func replace(_ range: NSRange, with text: String, selection: NSRange? = nil, name: String = "Typing") {
         let previous = source.string(in: range)
-        let line = source.line(at:range.location)
-        let lineText = source.string(in:source.lines(line,line+1))
-        lastEditInvalidatesContext = ["`","~","$","\\[","\\]"].contains {previous.contains($0) || text.contains($0)}
-            || lineText.range(of:#"^\s*\[[^\]]+\]:"#,options:.regularExpression) != nil
         let inverse = NSRange(location:range.location,length:text.utf16.count)
         undoManager?.registerUndo(withTarget:self) { doc in
             doc.replace(inverse, with:previous, selection:range, name:name)
@@ -45,7 +40,6 @@ final class MarkdownDocument: NSDocument {
         let oldCount = source.count
         sourceLock.lock(); storedSource = TextRope(text); sourceLock.unlock(); revision += 1
         parser.reset()
-        lastEditInvalidatesContext = true
         edited?(NSRange(location:0,length:0),text,SourceEdit(range:NSRange(location:0,length:oldCount),insertedLength:text.utf16.count))
     }
     override func read(from data: Data, ofType typeName: String) throws {

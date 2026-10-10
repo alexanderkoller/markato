@@ -14384,9 +14384,9 @@
     return anchor;
   };
   var makeFragment = function makeFragment2(children) {
-    var fragment2 = new DocumentFragment(children);
-    sizeElementFromChildren(fragment2);
-    return fragment2;
+    var fragment = new DocumentFragment(children);
+    sizeElementFromChildren(fragment);
+    return fragment;
   };
   var wrapFragment = function wrapFragment2(group, options) {
     if (group instanceof DocumentFragment) {
@@ -24192,10 +24192,15 @@
     } }]
   };
   var configured = parser.configure([Table, math2]);
+  var documentIdentity = globalThis.nativeDocumentIdentity ?? `js:${Math.random().toString(36).slice(2)}`;
   var tree = null;
   var treeRevision = -1;
+  var blocks = [];
+  var nextID = 0;
+  var documentLength = 0;
+  var blockChange = null;
   var references = /* @__PURE__ */ new Map();
-  var leafKinds = /^(Paragraph|ATXHeading[1-6]|SetextHeading[12]|FencedCode|CodeBlock|Table|MathBlock|HorizontalRule|HTMLBlock|BulletList|OrderedList|Blockquote)$/;
+  var leafKinds = /^(Paragraph|ATXHeading[1-6]|SetextHeading[12]|FencedCode|CodeBlock|Table|MathBlock|HorizontalRule|HTMLBlock|BulletList|OrderedList|Blockquote|LinkReference)$/;
   function read(input, a2, b) {
     return input.read(a2, b);
   }
@@ -24206,25 +24211,116 @@
     } };
   }
   function referencedDefinitions(markdown) {
+    if (!references.size) return "";
     const used = /* @__PURE__ */ new Set();
     const re = /\[([^\]\n]+)\](?:\[([^\]\n]*)\])?/g;
     let m;
     while (m = re.exec(markdown)) used.add((m[2] || m[1]).trim().replace(/\s+/g, " ").toLowerCase());
     return [...used].filter((id) => references.has(id)).map((id) => references.get(id)).join("\n");
   }
-  function fragment(input, node, includeHTML) {
-    const a2 = node.from, b = node.to;
-    let text3;
-    text3 = read(input, a2, b);
-    const defs = referencedDefinitions(text3);
-    if (defs) text3 += "\n\n" + defs;
-    return { kind: node.name, from: a2, to: b, markdown: text3, html: includeHTML ? renderHTML(text3, node.name) : void 0 };
+  function renderingInput(raw) {
+    const defs = referencedDefinitions(raw);
+    return defs ? raw + "\n\n" + defs : raw;
   }
-  function parseViewport(input, revision, from, to, changes = [], previousRevision = -1, includeSpans = true, includeHTML = true) {
+  function prepareContent(block2, input) {
+    if (block2.raw === void 0) block2.raw = read(input, block2.from, block2.to);
+    if (block2.markdown === void 0) block2.markdown = renderingInput(block2.raw);
+  }
+  function prepareDocument(input, changes, reuseCoordinates) {
+    const oldBlocks = blocks;
+    documentLength = input.length;
+    const previous = /* @__PURE__ */ new Map();
+    const positioned = /* @__PURE__ */ new Map();
+    for (const block2 of blocks) {
+      const key = block2.kind + "\0" + block2.markdown;
+      if (block2.markdown !== void 0) {
+        if (!previous.has(key)) previous.set(key, { items: [], next: 0 });
+        previous.get(key).items.push(block2);
+      }
+      if (reuseCoordinates) {
+        let from = block2.from, to = block2.to, valid = true;
+        for (const edit of changes) {
+          const delta = edit.inserted - (edit.to - edit.from);
+          if (edit.to <= from) {
+            from += delta;
+            to += delta;
+          } else if (edit.from < to) {
+            valid = false;
+            break;
+          }
+        }
+        if (valid) positioned.set(from, { block: block2, to });
+      }
+    }
+    const nodes = [];
+    tree.iterate({ enter(n2) {
+      if (leafKinds.test(n2.name)) {
+        nodes.push(n2.node);
+        return false;
+      }
+    } });
+    blocks = nodes.map((node) => {
+      const exact = positioned.get(node.from);
+      if (exact?.to === node.to && exact.block.kind === node.name) {
+        const old2 = exact.block, markdown2 = old2.raw === void 0 ? void 0 : renderingInput(old2.raw);
+        const reusable = markdown2 === void 0 || markdown2 === old2.markdown;
+        return {
+          id: reusable ? old2.id : `${documentIdentity}:${++nextID}`,
+          kind: node.name,
+          from: node.from,
+          to: node.to,
+          raw: old2.raw,
+          markdown: markdown2,
+          html: reusable ? old2.html : void 0
+        };
+      }
+      let raw, markdown, old;
+      if (!reuseCoordinates && previous.size) {
+        raw = read(input, node.from, node.to);
+        markdown = renderingInput(raw);
+        const candidates = previous.get(node.name + "\0" + markdown);
+        old = candidates?.items[candidates.next++];
+      }
+      return { id: old?.id ?? `${documentIdentity}:${++nextID}`, kind: node.name, from: node.from, to: node.to, raw, markdown, html: old?.html };
+    });
+    if (!blocks.length && input.length) blocks = [{ id: `${documentIdentity}:empty`, kind: "Empty", from: 0, to: input.length, raw: "", markdown: "", html: "" }];
+    let prefix = 0, suffix = 0;
+    while (prefix < oldBlocks.length && prefix < blocks.length && oldBlocks[prefix].id === blocks[prefix].id && oldBlocks[prefix].from === blocks[prefix].from && oldBlocks[prefix].to === blocks[prefix].to) prefix++;
+    const shift = blocks.length && oldBlocks.length ? blocks.at(-1).from - oldBlocks.at(-1).from : 0;
+    while (suffix < oldBlocks.length - prefix && suffix < blocks.length - prefix) {
+      const a2 = oldBlocks[oldBlocks.length - 1 - suffix], b = blocks[blocks.length - 1 - suffix];
+      if (a2.id !== b.id || a2.from + shift !== b.from || a2.to + shift !== b.to) break;
+      suffix++;
+    }
+    blockChange = { prefix, suffix, shift };
+  }
+  function visibleStyles(input, from, to) {
+    for (const block2 of selectedBlocks(from, to)) prepareContent(block2, input);
+    const spans = [];
+    tree.iterate({ from, to, enter(n2) {
+      if (n2.to <= from || n2.from >= to) return false;
+      if (/^(ATXHeading[1-6]|SetextHeading[12]|StrongEmphasis|Emphasis|Link|URL|MathInline|MathBlock)$/.test(n2.name) || n2.name.includes("Mark"))
+        spans.push({ kind: n2.name, from: Math.max(from, n2.from), to: Math.min(to, n2.to) });
+    } });
+    return spans;
+  }
+  function selectedBlocks(from, to) {
+    let low = 0, high = blocks.length;
+    while (low < high) {
+      const mid = low + high >> 1;
+      if ((mid === blocks.length - 1 ? documentLength : blocks[mid].to) <= from) low = mid + 1;
+      else high = mid;
+    }
+    const selected = [];
+    for (let i3 = low; i3 < blocks.length && (i3 === 0 ? 0 : blocks[i3 - 1].to) < to; i3++) selected.push(blocks[i3]);
+    return selected;
+  }
+  function parseViewport(input, revision, from, to, changes = [], previousRevision = -1, includeSpans = true, includeHTML = true, includeFragments = true, includeManifest = true) {
     if (!tree || treeRevision !== revision) {
-      let fragments = tree && treeRevision === previousRevision ? TreeFragment.addTree(tree) : [];
-      for (const edit of changes) fragments = TreeFragment.applyChanges(fragments, [{ fromA: edit.from, toA: edit.to, fromB: edit.from, toB: edit.from + edit.inserted }]);
-      const partial = configured.startParse(input, fragments);
+      const reuseCoordinates = !!tree && treeRevision === previousRevision;
+      let fragments2 = reuseCoordinates ? TreeFragment.addTree(tree) : [];
+      for (const edit of changes) fragments2 = TreeFragment.applyChanges(fragments2, [{ fromA: edit.from, toA: edit.to, fromB: edit.from, toB: edit.from + edit.inserted }]);
+      const partial = configured.startParse(input, fragments2);
       let parsed = null, lastSlice = Date.now();
       while (!(parsed = partial.advance())) {
         if (Date.now() - lastSlice >= 4) {
@@ -24244,25 +24340,19 @@
           }
           return false;
         }
+        if (leafKinds.test(n2.name) && !["BulletList", "OrderedList", "Blockquote"].includes(n2.name)) return false;
       } });
+      prepareDocument(input, changes, reuseCoordinates);
     }
-    const selected = [];
-    tree.iterate({ from, to, enter(n2) {
-      if (n2.to <= from || n2.from >= to) return false;
-      if (leafKinds.test(n2.name)) {
-        selected.push(fragment(input, n2.node, includeHTML));
-        return false;
-      }
-    } });
-    const spans = [];
-    if (includeSpans && selected.length) {
-      const spanFrom = Math.min(from, ...selected.map((f2) => f2.from));
-      const spanTo = Math.max(to, ...selected.map((f2) => f2.to));
-      tree.iterate({ from: spanFrom, to: spanTo, enter(n2) {
-        if (!["Document", "Paragraph"].includes(n2.name)) spans.push({ kind: n2.name, from: n2.from, to: n2.to });
-      } });
-    }
-    return JSON.stringify({ revision, spans, fragments: selected });
+    const fragments = includeFragments ? selectedBlocks(from, to).map((block2) => {
+      prepareContent(block2, input);
+      if (includeHTML && block2.html === void 0) block2.html = renderHTML(block2.markdown, block2.kind);
+      const { id, kind, from: from2, to: to2, markdown } = block2;
+      return { id, kind, from: from2, to: to2, markdown, html: includeHTML ? block2.html : void 0 };
+    }) : [];
+    const spans = includeSpans ? visibleStyles(input, from, to) : [];
+    const manifest = includeManifest === true ? blocks.map(({ id, kind, from: from2, to: to2 }) => ({ id, kind, from: from2, to: to2 })) : void 0;
+    return JSON.stringify({ revision, spans, fragments, blocks: manifest, blockChange: includeManifest === "delta" ? { ...blockChange, blocks: blocks.slice(blockChange.prefix, blocks.length - blockChange.suffix).map(({ id, kind, from: from2, to: to2 }) => ({ id, kind, from: from2, to: to2 })) } : void 0 });
   }
   globalThis.astraParse = parseViewport;
   globalThis.astraInput = documentInput;

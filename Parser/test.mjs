@@ -31,3 +31,45 @@ assert.match(renderHTML('$$\\begin{pmatrix}1&2\\\\3&4\\end{pmatrix}$$'),/class="
 const nestedHTML=renderHTML('1. First\n   - Nested **bold**\n2. Second\n');
 assert.match(nestedHTML,/<ol>/);assert.match(nestedHTML,/<ul>/);
 console.log('HTML library math, code, local images, safe links and nested list tests passed.');
+
+// Prepared style queries must equal clipping the complete style index, including
+// ancestors which begin outside the requested viewport.
+const dense='| A | B |\n|---|---|\n'+Array.from({length:5000},(_,i)=>`| ${i} | ***bold italic*** |`).join('\n');
+const whole=parse(dense),middle=dense.indexOf('| 2500 |');
+const visible=JSON.parse(parseViewport(input(dense),revision,middle,middle+150));
+const clipped=whole.spans.filter(s=>s.to>middle&&s.from<middle+150).map(s=>({...s,from:Math.max(middle,s.from),to:Math.min(middle+150,s.to)}));
+assert.deepEqual(visible.spans,clipped);
+assert(visible.spans.length<100,'Visible styles must not expand to the complete table');
+assert.equal(visible.fragments[0].html,whole.fragments[0].html);
+const onlyStyles=JSON.parse(parseViewport(input(dense),revision,middle,middle+150,[],revision,true,true,false,false));
+assert.deepEqual(onlyStyles.spans,clipped);assert.equal(onlyStyles.fragments.length,0);assert.equal(onlyStyles.blocks,undefined);
+const shifted='New introduction.\n\n'+dense;
+const moved=parse(shifted);
+assert.equal(moved.blocks.at(-1).id,whole.blocks[0].id,'Unchanged blocks retain identity after edits above them');
+assert.equal(moved.fragments.at(-1).html,whole.fragments[0].html);
+const referenceBefore=parse('A [reference][r].\n\n[r]: https://one.example\n');
+const referenceAfter=parse('A [reference][r].\n\n[r]: https://two.example\n');
+assert.notEqual(referenceBefore.blocks[0].id,referenceAfter.blocks[0].id,'Distant reference changes invalidate rendering input');
+assert.match(referenceAfter.fragments[0].html,/https:\/\/two.example/);
+const blanks=parse('\n'.repeat(300)+'Paragraph.\n'+'\n'.repeat(300),0,30);
+assert.equal(blanks.fragments[0].markdown,'Paragraph.','Whitespace coverage can prepare the adjacent semantic block');
+console.log('Prepared block identity, reference invalidation, bounded style index and HTML reuse tests passed.');
+
+const deltaBefore=parse('First paragraph.\n\nUnchanged **last** paragraph.\n');
+const deltaText='A changed first paragraph.\n\nUnchanged **last** paragraph.\n';
+const deltaResult=JSON.parse(parseViewport(input(deltaText),++revision,0,deltaText.length,[{from:0,to:16,inserted:26}],revision-1,true,true,true,'delta'));
+const change=deltaResult.blockChange;
+const reconstructed=[...deltaBefore.blocks.slice(0,change.prefix),...change.blocks,...deltaBefore.blocks.slice(deltaBefore.blocks.length-change.suffix).map(b=>({...b,from:b.from+change.shift,to:b.to+change.shift}))];
+const fullManifest=JSON.parse(parseViewport(input(deltaText),revision,0,deltaText.length)).blocks;
+assert.deepEqual(reconstructed,fullManifest);
+assert.equal(change.suffix,1);assert.equal(change.blocks.length,1);
+assert.equal(deltaResult.blocks,undefined,'An edit transfers only the changed manifest interval');
+console.log('Prepared manifest delta matches full document metadata.');
+
+const repeatedText=('Identical **paragraph**.\n\n').repeat(200);
+const repeatedBefore=parse(repeatedText),editAt=repeatedText.indexOf('Identical',repeatedText.length/2);
+const repeatedAfter=repeatedText.slice(0,editAt)+'Changed'+repeatedText.slice(editAt+9);
+const repeatedDelta=JSON.parse(parseViewport(input(repeatedAfter),++revision,0,repeatedAfter.length,[{from:editAt,to:editAt+9,inserted:7}],revision-1,true,true,true,'delta')).blockChange;
+assert.equal(repeatedDelta.blocks.length,1,'Editing one duplicate paragraph must not renumber the retained suffix');
+assert(repeatedDelta.prefix>50&&repeatedDelta.suffix>50);
+console.log('Duplicate paragraphs retain source identity across local edits.');

@@ -41,6 +41,9 @@ import MarkdownCore
     }
     static func run(_ document:MarkdownDocument) {
         guard let controller=document.windowControllers.first as? EditorWindowController else {fail("Missing editor window")}
+        if CommandLine.arguments.contains("--integration-layout-index") {
+            verifyLayoutIndex();return
+        }
         if CommandLine.arguments.contains("--integration-preview-jump") {
             controller.source.reveal(0,alignTop:true)
             controller.source.reveal(document.source.count)
@@ -59,6 +62,51 @@ import MarkdownCore
         }
         if !CommandLine.arguments.contains("--integration-source-paint") {verifyNativeComposition()}
         waitForDemoTop(controller,document:document,remaining:100)
+    }
+    private static func verifyLayoutIndex() {
+        let doc=MarkdownDocument();fixtureDocuments.append(doc)
+        doc.setInitialText((0..<2000).map{"Line \($0): "+String(repeating:"wrapped Unicode 🧮 text ",count:5)+"\r\n"}.joined())
+        let model=PreparedDocument(),source=SourceEditor(document:doc,prepared:model)
+        let window=NSWindow(contentRect:NSRect(x:0,y:0,width:520,height:400),styleMask:[.titled],backing:.buffered,defer:false)
+        window.contentView=source;source.frame=window.contentLayoutRect;source.layoutSubtreeIfNeeded()
+        doc.edited={selection,_,edit in source.documentEdited(selection:selection,edit:edit)}
+        let prefix=source.debugMeasuredPosition(for:500)
+        func validate(_ stage:Int) {
+            check(model.sourceLayout.length==doc.source.count,"Measured index must cover the current source after edit \(stage)")
+            let manager=source.textView.layoutManager!
+            for offset in stride(from:0,to:doc.source.count,by:137) {
+                let glyph=manager.glyphIndexForCharacter(at:offset)
+                let native=manager.lineFragmentUsedRect(forGlyphAt:glyph,effectiveRange:nil)
+                check(abs(source.debugMeasuredPosition(for:offset)-native.minY-source.textView.textContainerInset.height)<0.001,"Local edit \(stage): cached wrapped-line coordinates must equal native geometry at \(offset)")
+            }
+            if stage<4 {check(source.debugMeasuredPosition(for:500)==prefix,"Local edits must retain the measured prefix")}
+        }
+        func step(_ stage:Int) {
+            validate(stage)
+            switch stage {
+            case 0:
+                source.textView.insertText("a long inserted line\r\n**new text**",replacementRange:NSRange(location:doc.source.lineStart(1500)+7,length:4))
+            case 1:
+                source.textView.insertText("joined",replacementRange:doc.source.lines(1800,1803))
+                source.textView.insertText("another\r\nline",replacementRange:NSRange(location:doc.source.lineStart(1000)+3,length:1))
+            case 2:
+                source.textView.insertText("\r\nLast 🧮 paragraph.",replacementRange:NSRange(location:doc.source.count,length:0))
+            case 3:
+                source.applyHighlights([SyntaxSpan(kind:"ATXHeading1",from:doc.source.lineStart(1600),to:doc.source.lineStart(1601))],in:doc.source.lines(1600,1601))
+            case 4:
+                source.frame.size.width=380;source.layoutSubtreeIfNeeded()
+            case 5:
+                doc.replace(NSRange(location:doc.source.lineStart(900)+4,length:3),with:"model edit\r\n")
+            default:
+                print("LAYOUT INDEX PASSED: local multiline edits, deletion, Unicode/CRLF, append, typography and resize match independent native glyph coordinates")
+                if CommandLine.arguments.contains("--diagnostics") {
+                    try? TimingDiagnostics.shared.snapshot().json().write(to:URL(fileURLWithPath:"/private/tmp/astra-layout-index-timings.json"))
+                }
+                exit(EXIT_SUCCESS)
+            }
+            DispatchQueue.main.asyncAfter(deadline:.now()+0.05){step(stage+1)}
+        }
+        step(0)
     }
     private static func waitForDemoTop(_ controller:EditorWindowController,document:MarkdownDocument,remaining:Int) {
         guard remaining>0 else {fail("Startup preview did not reach the demo title")}
@@ -1208,6 +1256,7 @@ import MarkdownCore
                     for name in ["source.layout","source.highlight","web.patch.roundtrip","web.dom.layout","parse.viewport.work","html.background.work"] {
                         check(snapshot.events.contains{$0.name==name},"Diagnostics must record \(name)")
                     }
+                    check(snapshot.events.contains{$0.name=="web.patch.encode" && ($0.values["htmlEntries"] ?? .infinity)<($0.values["mounted"] ?? 0)},"Retained WebKit surfaces must receive a partial HTML payload")
                     do {
                         let url=URL(fileURLWithPath:"/private/tmp/astra-timings.json")
                         try snapshot.json(metadata:["fixture":"integration-test"]).write(to:url,options:.atomic)
