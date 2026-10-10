@@ -7,7 +7,10 @@ let package = Package(
     products: [.executable(name: "AstraMarkdown", targets: ["AstraMarkdown"])],
     dependencies: [],
     targets: [
-        .target(name: "MarkdownCore", resources: [.process("Resources")]),
+        .target(name: "CComrak", linkerSettings: [
+            .unsafeFlags([Context.packageDirectory + "/.build/comrak/release/libastra_comrak.a"])
+        ]),
+        .target(name: "MarkdownCore", dependencies: ["CComrak"], resources: [.process("Resources")]),
         .executableTarget(name: "AstraMarkdown", dependencies: [
             "MarkdownCore"
         ]),

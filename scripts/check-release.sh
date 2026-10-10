@@ -9,7 +9,7 @@ for inspect in symbols strings; do
     else
         captured="$(strings -a "$binary")"
     fi
-    if printf '%s\n' "$captured" | rg 'IntegrationCheck|TimingDiagnostics|INTEGRATION FAILED|SOURCE PAINT|SMOKE:|--integration-test|--integration-source-paint|--integration-preview-jump|--smoke-test|--diagnostics|scheduleBackgroundPreparation|debugGeometry|debugAlignmentDrift|debugScrollLandmarks|patchCount|parserRequests|highlightApplications|debugMeasuredPosition|FixtureScrollSource|HTMLWorker|astraLocal'; then
+    if printf '%s\n' "$captured" | rg 'astra_timing_|IntegrationCheck|TimingDiagnostics|INTEGRATION FAILED|SOURCE PAINT|SMOKE:|--integration-test|--integration-source-paint|--integration-preview-jump|--smoke-test|--diagnostics|scheduleBackgroundPreparation|debugGeometry|debugAlignmentDrift|debugScrollLandmarks|patchCount|parserRequests|highlightApplications|debugMeasuredPosition|FixtureScrollSource|HTMLWorker|astraLocal'; then
         echo "Release contains development $inspect" >&2
         exit 1
     fi
@@ -27,8 +27,8 @@ while IFS= read -r resource; do
     case "$relative" in
         Preview.css|Preview.js|KaTeX.css|Example.md|ExampleImage.png|ThirdPartyNotices/*.txt) ;;
         AstraMarkdown_MarkdownCore.bundle/Contents/Info.plist|AstraMarkdown_MarkdownCore.bundle/Info.plist) ;;
-        AstraMarkdown_MarkdownCore.bundle/Contents/Resources/lezer.js) ;;
-        AstraMarkdown_MarkdownCore.bundle/lezer.js) ;;
+        AstraMarkdown_MarkdownCore.bundle/Contents/Resources/katex.js) ;;
+        AstraMarkdown_MarkdownCore.bundle/katex.js) ;;
         AstraMarkdown_MarkdownCore.bundle/Contents/_CodeSignature/CodeResources) ;;
         *) echo "Unexpected release resource: $relative" >&2; exit 1 ;;
     esac

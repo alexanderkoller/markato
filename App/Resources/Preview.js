@@ -1,63 +1,127 @@
 const root=document.getElementById('preview'),nodes=new Map();
-let revision=0,measurement=0,scheduled=false,assetBase=null;
+let revision=0,measurement=0,scheduled=false,assetBase=null,orderedNodes=[];
+const groups=new Map(),fanout=32;
 function geometry(){
   // The native clip owns vertical scrolling. Browser selection restoration and
   // scroll anchoring must not introduce a second origin inside the web view.
   if(window.scrollX||window.scrollY)window.scrollTo(0,0);
   const frame=root.getBoundingClientRect(),origin=frame.top;
-  return {revision,measurement:++measurement,width:frame.width,height:root.offsetHeight,items:[...root.children].map(n=>{
+  return {revision,measurement:++measurement,width:frame.width,height:root.offsetHeight,items:orderedNodes.map(n=>{
     const box=n.getBoundingClientRect();
-    const heading=n.querySelector(':scope > h1,:scope > h2,:scope > h3,:scope > h4,:scope > h5,:scope > h6');
-    const p=n.querySelector(':scope > p');
-    const image=p && p.children.length===1 && p.firstElementChild.tagName==='IMG' && !p.textContent.trim()
-      ?p.firstElementChild:null;
-    const reference=heading || image;
+    const reference=n._reference;
     return {id:n.dataset.id,y:box.top-origin,height:box.height,
       landmarkY:reference?reference.getBoundingClientRect().top-origin:null};
   })};
 }
 function report(){scheduled=false;window.webkit.messageHandlers.geometry.postMessage(geometry());}
 function changed(){if(!scheduled){scheduled=true;requestAnimationFrame(report);}}
+function fill(n,item,base){
+  n._from=Number(item.from);n._to=Number(item.to);
+  if(item.html!==undefined && n._html!==item.html){
+    const template=document.createElement('template');template.innerHTML=item.html;
+    for(const image of template.content.querySelectorAll('img[src]')){
+      const url=new URL(image.src);
+      if(url.protocol==='astra-asset:'){url.searchParams.set('base',base);image.src=url.href;}
+    }
+    n.replaceChildren(template.content);n._html=item.html;n._reference=null;
+    for(const child of n.children){
+      if(/^H[1-6]$/.test(child.tagName)){n._reference=child;break;}
+      if(child.tagName==='P' && child.children.length===1 &&
+         child.firstElementChild.tagName==='IMG' && !child.textContent.trim()){
+        n._reference=child.firstElementChild;break;
+      }
+    }
+    return true;
+  }
+  return false;
+}
+window.astraPatch=(items,version,points,base,suffixIndex,shift,debugMeasure=false)=>{
+  // BEGIN DEBUG
+  const started=debugMeasure?performance.now():0;let changedHTML=0;
+  // END DEBUG
+  revision=version;document.documentElement.style.fontSize=points+'px';
+  for(const item of items){
+    const old=orderedNodes[item.index];
+    let n=old;
+    if(!old || old.dataset.id!==item.id){
+      n=document.createElement('section');n.dataset.id=item.id;
+      if(old){old.replaceWith(n);nodes.delete(old.dataset.id);}
+      nodes.set(item.id,n);orderedNodes[item.index]=n;
+    }
+    const changedBlock=fill(n,item,base);
+    // BEGIN DEBUG
+    if(changedBlock)changedHTML++;
+    // END DEBUG
+  }
+  if(shift)for(let i=suffixIndex;i<orderedNodes.length;i++){
+    orderedNodes[i]._from+=shift;orderedNodes[i]._to+=shift;
+  }
+  if(root._lastBlock!==orderedNodes.at(-1)){
+    root._lastBlock?.classList.remove('last-block');
+    root._lastBlock=orderedNodes.at(-1);root._lastBlock?.classList.add('last-block');
+  }
+  // BEGIN DEBUG
+  if(debugMeasure)return {timing:{patchMs:performance.now()-started,changedHTML,mounted:orderedNodes.length}};
+  // END DEBUG
+};
 window.astraUpdate=(items,version,points,base="",measure=false)=>{
   // BEGIN DEBUG
   const started=measure?performance.now():0;let changedHTML=0;
   // END DEBUG
   revision=version;document.documentElement.style.fontSize=points+'px';
-  if(assetBase!==base){root.replaceChildren();nodes.clear();assetBase=base;}
+  if(assetBase!==base){root.replaceChildren();nodes.clear();groups.clear();assetBase=base;}
   const retained=new Set(items.map(x=>x.id));
   for(const [id,n] of nodes)if(!retained.has(id)){n.remove();nodes.delete(id);}
-  let previous=null;
+  const ordered=[];
   for(const item of items){
     let n=nodes.get(item.id);
     if(!n){n=document.createElement('section');n.dataset.id=item.id;nodes.set(item.id,n);}
-    n.dataset.from=item.from;n.dataset.to=item.to;
-    if(item.html!==undefined && n._html!==item.html){
-      const template=document.createElement('template');template.innerHTML=item.html;
-      // BEGIN DEBUG
-      changedHTML++;
-      // END DEBUG
-      // Relative assets from different document directories must not share a
-      // WebKit resource-cache key, even when the Markdown markup is identical.
-      // Assign the final resource key while the fragment is inert. Inserting
-      // first and rewriting src afterward starts two image requests.
-      for(const image of template.content.querySelectorAll('img[src]')){
-        const url=new URL(image.src);
-        if(url.protocol==='astra-asset:'){url.searchParams.set('base',base);image.src=url.href;}
-      }
-      n.replaceChildren(template.content);n._html=item.html;
+    // Source offsets are metadata, not CSS attributes. An insertion shifts
+    // every following block; mutating HTML attributes invalidates its style.
+    const changedBlock=fill(n,item,base);
+    // BEGIN DEBUG
+    if(changedBlock)changedHTML++;
+    // END DEBUG
+    ordered.push(n);
+  }
+  orderedNodes=ordered;
+  // The native view spans the complete document. A flat block list makes
+  // each paint tile traverse every sibling. Bound the fanout and contain
+  // paint so a tile can reject whole distant branches.
+  const used=new Set();
+  function arrange(parent,children){
+    let previous=null;
+    for(const child of children){
+      const next=previous?previous.nextSibling:parent.firstChild;
+      if(next!==child)parent.insertBefore(child,next);
+      previous=child;
     }
-    const next=previous?previous.nextSibling:root.firstChild;
-    if(next!==n)root.insertBefore(n,next);
-    previous=n;
+    for(let extra=previous?previous.nextSibling:parent.firstChild;extra;){
+      const next=extra.nextSibling;extra.remove();extra=next;
+    }
+  }
+  let level=ordered,depth=0;
+  while(level.length>fanout){
+    const parents=[];
+    for(let start=0;start<level.length;start+=fanout){
+      const key=depth+':'+start/fanout;used.add(key);
+      let group=groups.get(key);
+      if(!group){group=document.createElement('div');group.className='paint-group';groups.set(key,group);}
+      arrange(group,level.slice(start,start+fanout));parents.push(group);
+    }
+    level=parents;depth++;
+  }
+  arrange(root,level);
+  for(const [key,group] of groups)if(!used.has(key)){group.remove();groups.delete(key);}
+  if(root._lastBlock!==ordered.at(-1)){
+    root._lastBlock?.classList.remove('last-block');
+    root._lastBlock=ordered.at(-1);root._lastBlock?.classList.add('last-block');
   }
   // BEGIN DEBUG
-  if(measure){
-  const patched=performance.now(),result=geometry(),finished=performance.now();
-  result.timing={patchMs:patched-started,layoutMs:finished-patched,totalMs:finished-started,changedHTML,mounted:items.length};
-  return result;
-  }
+  if(measure)return {timing:{patchMs:performance.now()-started,changedHTML,mounted:items.length}};
   // END DEBUG
-  return geometry();
+  // Geometry is measured once, after fonts/assets and viewport size settle.
+
 };
 // All asynchronous layout dependencies are settled on the hidden surface.
 window.astraReady=async width=>{

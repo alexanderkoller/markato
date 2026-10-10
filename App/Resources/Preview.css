@@ -3,7 +3,8 @@ html,body { margin:0; padding:0; overflow:hidden; overflow-anchor:none; backgrou
 body { color:CanvasText; }
 #preview { position:relative; padding:16px; display:flow-root; }
 section { margin:0 0 12px; overflow-wrap:anywhere; display:flow-root; }
-section:last-child { margin-bottom:0; }
+section.last-block { margin-bottom:0; }
+.paint-group { display:flow-root; contain:paint; }
 p { margin:0 0 .65em; line-height:1.5; } p:last-child { margin-bottom:0; }
 h1,h2,h3,h4,h5,h6 { margin:0 0 .5em; line-height:1.2; font-weight:700; }
 h1 { font-size:1.72em; } h2 { font-size:1.43em; } h3 { font-size:1.22em; } h4,h5,h6 {font-size:1em;}

@@ -6,6 +6,7 @@ if [[ "$build_configuration" != release && "$build_configuration" != debug ]]; t
     echo "Usage: bash scripts/build-app.sh [release|debug]" >&2
     exit 2
 fi
+bash scripts/build-native.sh
 swift build -c "$build_configuration" --disable-sandbox --cache-path .build/cache --config-path .build/config --security-path .build/security
 app_parent="$PWD/dist"
 if [[ "$build_configuration" == debug ]]; then app_parent="$app_parent/debug"; fi
@@ -22,7 +23,10 @@ for resource in Preview.css Preview.js KaTeX.css Example.md ExampleImage.png; do
     cp "App/Resources/$resource" "$staged_app/Contents/Resources/"
 done
 cp -R App/Resources/ThirdPartyNotices "$staged_app/Contents/Resources/"
-cp -R ".build/$build_configuration/AstraMarkdown_MarkdownCore.bundle" "$staged_app/Contents/Resources/"
+core_bundle="$staged_app/Contents/Resources/AstraMarkdown_MarkdownCore.bundle"
+mkdir -p "$core_bundle/Contents/Resources"
+cp ".build/$build_configuration/AstraMarkdown_MarkdownCore.bundle/Contents/Info.plist" "$core_bundle/Contents/Info.plist"
+cp "Sources/MarkdownCore/Resources/katex.js" "$core_bundle/Contents/Resources/"
 if [[ "$build_configuration" == release ]]; then
     # The source JS remains directly runnable in debug. Release omits its timing
     # blocks and optional measurement argument, without another JS build tool.

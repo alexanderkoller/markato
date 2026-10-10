@@ -1,0 +1,61 @@
+{
+  "fixture": {
+    "fixture": "prose-8388608.md",
+    "bytes": 8388717,
+    "sha256": "8e8db8d9ee856bec38d3ae32da8c6c8079ae441c72a71f461c8f7ad044e429ab",
+    "sections": 43298
+  },
+  "app": "comrak-viewport-final",
+  "appVersion": "0.1.0",
+  "executableSHA256": "4630928c9e2af73eed13433045f78b779ea51c5f6fc52bd85ae2d305b2b030ea",
+  "protocol": {
+    "freshProcesses": 3,
+    "editsPerProcess": 3,
+    "endpoint": "visible H1 has nonzero preview layout rectangle",
+    "windowMode": "offscreen"
+  },
+  "runIds": [
+    "comrak-viewport-final-1791634037957838000-prose-r1",
+    "comrak-viewport-final-1791634037957838000-prose-r2",
+    "comrak-viewport-final-1791634037957838000-prose-r3"
+  ],
+  "operations": {
+    "open": {
+      "n": 3,
+      "medianMs": 377.9344584941864,
+      "minMs": 357.60758328437805,
+      "maxMs": 415.82562494277954,
+      "samplesMs": [
+        415.82562494277954,
+        377.9344584941864,
+        357.60758328437805
+      ]
+    },
+    "edit": {
+      "n": 9,
+      "medianMs": 621.26016664505,
+      "minMs": 244.1259582042694,
+      "maxMs": 1428.1734583377838,
+      "samplesMs": [
+        691.3143332004547,
+        950.9579167366028,
+        621.26016664505,
+        244.1259582042694,
+        305.16945815086365,
+        631.3237497806549,
+        1428.1734583377838,
+        596.4041249752045,
+        247.29495811462402
+      ]
+    }
+  },
+  "externalBaseline": {
+    "macdown3000_8MiB": "not previously measured; not rerun",
+    "closestPreservedMacDown3000": {
+      "fixture": "prose-4194304.md",
+      "openMs": 47143.3,
+      "editMs": 34776.9,
+      "scope": "single stress trial; context only"
+    }
+  }
+}

@@ -28,12 +28,19 @@ import Testing
         #expect(rope.line(at:at) == reference.prefix(at).filter{$0 == 10}.count)
     }
 }
-@Test func parserBridgeReturnsOnlyViewport() async throws {
-    let worker = LezerWorker()
+@Test func parserBridgePublishesManifestThenQueriesPreparedViewport() async throws {
+    let worker = ComrakWorker()
     let source = TextRope(String(repeating:"A **bold** paragraph.\n\n",count:1000))
     let result: ParseResult = try await withCheckedThrowingContinuation { continuation in
         worker.request(rope:source, revision:0, visible:NSRange(location:0,length:80)) { continuation.resume(with:$0) }
     }
-    #expect(result.fragments.count < 10)
+    #expect(result.complete==false && result.blocks?.count==1000)
+    #expect(result.fragments.count<10)
+    #expect(result.fragments.allSatisfy{$0.from<80})
     #expect(result.spans.contains{$0.kind == "StrongEmphasis"})
+    let visible:ParseResult=try await withCheckedThrowingContinuation {c in
+        worker.request(rope:source,revision:0,visible:NSRange(location:0,length:80),includeFragments:false) {c.resume(with:$0)}
+    }
+    #expect(visible.fragments.isEmpty && visible.spans.count<30)
+    #expect(visible.spans.allSatisfy{$0.from>=0 && $0.to<=80})
 }

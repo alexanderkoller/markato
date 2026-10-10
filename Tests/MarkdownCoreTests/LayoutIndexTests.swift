@@ -44,6 +44,23 @@ import Testing
     #expect(index.position(atY:0)==nil)
 }
 
+@Test func estimatedRegionCanBeNavigatedAndRefinedLocally() {
+    let index=LayoutIndex()
+    index.replaceSuffix(at:0,with:[.init(length:1_000_000,advance:50_000,height:18,estimated:true)],origin:16)
+    #expect(index.position(at:500_000)?.y==25_016)
+    #expect(index.position(atY:25_016)?.range.location==500_000)
+    #expect(index.hasEstimates(in:NSRange(location:400_000,length:10)))
+    index.replace(NSRange(location:400_000,length:200),with:[.init(length:100,advance:18,height:18),.init(length:100,advance:18,height:18)])
+    #expect(!index.hasEstimates(in:NSRange(location:400_000,length:200)))
+    #expect(index.hasEstimates(in:NSRange(location:399_999,length:1)))
+    #expect(index.hasEstimates(in:NSRange(location:400_200,length:1)))
+    #expect(index.length==1_000_000)
+    #expect(index.treeDepth<8)
+    index.fitEstimatedHeight(to:10_000)
+    #expect(abs(index.height-10_000)<0.001)
+    #expect(index.position(at:399_999)!.y<index.position(at:400_000)!.y)
+}
+
 @Test func localLayoutReplacementShiftsRetainedSuffixByItsMeasuredDelta() {
     let index=LayoutIndex()
     var lines=(0..<8192).map{LayoutIndex.Line(length:5+$0%11,advance:Double(20+$0%3),height:Double(19+$0%3))}

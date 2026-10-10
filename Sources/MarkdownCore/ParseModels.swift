@@ -28,12 +28,27 @@ public struct PreparedBlock: Codable, Equatable, Sendable {
     public let to: Int
     public init(id:String,kind:String,from:Int,to:Int) {self.id=id;self.kind=kind;self.from=from;self.to=to}
 }
+public struct PreparedBlockChange: Codable, Equatable, Sendable {
+    public let prefix: Int
+    public let suffix: Int
+    public let shift: Int
+    public let blocks: [PreparedBlock]
+    public init(prefix:Int,suffix:Int,shift:Int,blocks:[PreparedBlock]) {
+        self.prefix=prefix;self.suffix=suffix;self.shift=shift;self.blocks=blocks
+    }
+}
 public struct ParseResult: Codable, Sendable {
     public let revision: Int
     public let spans: [SyntaxSpan]
     public let fragments: [PreviewFragment]
     public let blocks: [PreparedBlock]?
-    public init(revision:Int,spans:[SyntaxSpan],fragments:[PreviewFragment],blocks:[PreparedBlock]? = nil) { self.revision=revision; self.spans=spans; self.fragments=fragments; self.blocks=blocks }
+    public let blockChange: PreparedBlockChange?
+    public let complete: Bool?
+    public init(revision:Int,spans:[SyntaxSpan],fragments:[PreviewFragment],blocks:[PreparedBlock]? = nil,
+                blockChange:PreparedBlockChange? = nil,complete:Bool? = nil) {
+        self.revision=revision;self.spans=spans;self.fragments=fragments
+        self.blocks=blocks;self.blockChange=blockChange;self.complete=complete
+    }
 }
 public struct SourceEdit: Sendable {
     public let range: NSRange

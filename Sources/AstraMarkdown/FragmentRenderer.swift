@@ -51,8 +51,10 @@ private final class PreviewSurface {
     }
     func size(contentHeight:CGFloat,width:CGFloat,viewportHeight:CGFloat) {
         let margin=max(1,viewportHeight)
-        web.frame=NSRect(x:0,y:margin,width:max(1,width),height:max(margin*3,contentHeight+margin))
-        canvas.frame.size=NSSize(width:max(1,width),height:web.frame.maxY+margin)
+        let frame=NSRect(x:0,y:margin,width:max(1,width),height:max(margin*3,contentHeight+margin))
+        if web.frame != frame {web.frame=frame}
+        let size=NSSize(width:max(1,width),height:web.frame.maxY+margin)
+        if canvas.frame.size != size {canvas.frame.size=size}
     }
 }
 
@@ -182,7 +184,9 @@ private struct CommittedPresentation {
         return NSRange(location:first.fragment.from,length:max(0,content.sourceLength-first.fragment.from))
     }
     private func covers(_ content:PreviewContent,visible:NSRange)->Bool {
-        let start=content.entries.first?.fragment.from ?? 0
+        // A complete first semantic block may follow leading blank source
+        // lines. Those lines are already prepared and add no preview element.
+        let start=content.entries.first.map{$0.fragment.kind=="Pending" ? $0.fragment.from:0} ?? 0
         guard start<=visible.location,content.sourceLength>=NSMaxRange(visible) else{return false}
         return !content.entries.contains {entry in
             entry.fragment.kind=="Pending" && (NSIntersectionRange(entry.fragment.range,visible).length>0 ||
@@ -335,6 +339,41 @@ private struct CommittedPresentation {
         }
         return fillsPendingContent
     }
+    private func displayedPatch(_ request:PreviewRequest)->IndexedPatch? {
+        guard let committed,committed.surface.ready,
+              committed.request.width==request.width,committed.request.fontSize==request.fontSize,
+              committed.request.baseURL?.absoluteString==request.baseURL?.absoluteString,
+              committed.request.revision != request.revision else{return nil}
+        return indexedPatch(from:committed.request.content,to:request)
+    }
+    private struct IndexedPatch {
+        let items:[[String:Any]]
+        let suffixIndex:Int
+        let shift:Int
+    }
+    private func indexedPatch(from previous:PreviewContent?,to request:PreviewRequest)->IndexedPatch? {
+        guard let old=previous?.entries,old.count==request.entries.count,!old.isEmpty else{return nil}
+        let next=request.entries
+        var prefix=0
+        while prefix<old.count,old[prefix].id==next[prefix].id,
+              old[prefix].fragment.html==next[prefix].fragment.html {prefix += 1}
+        guard prefix<old.count else{return nil}
+        var suffix=old.count
+        while suffix>prefix,old[suffix-1].id==next[suffix-1].id,
+              old[suffix-1].fragment.html==next[suffix-1].fragment.html {suffix -= 1}
+        guard suffix-prefix<=8 else{return nil}
+        let shift=suffix<old.count ? next[suffix].fragment.from-old[suffix].fragment.from:0
+        if suffix<old.count {
+            for index in suffix..<old.count where
+                next[index].fragment.from-old[index].fragment.from != shift ||
+                next[index].fragment.to-old[index].fragment.to != shift {return nil}
+        }
+        let items:[[String:Any]]=(prefix..<suffix).map {index in
+            let entry=next[index],fragment=entry.fragment
+            return ["index":index,"id":entry.id,"from":fragment.from,"to":fragment.to,"html":fragment.html!]
+        }
+        return IndexedPatch(items:items,suffixIndex:suffix,shift:shift)
+    }
     private func preparePresentation() {
         guard rendering==nil,let request=desired,
               request.width>0.5,bounds.height>0.5 else{return}
@@ -342,8 +381,9 @@ private struct CommittedPresentation {
             NSLog("Preview request contains incomplete or duplicate fragments")
             return
         }
+        let displayedPatch=displayedPatch(request)
         let surface:PreviewSurface
-        if canExtendDisplayedDocument(request) {surface=displayed}
+        if canExtendDisplayedDocument(request) || displayedPatch != nil {surface=displayed}
         else {
             guard let ready=surfaces.first(where:{$0.ready && $0 !== committed?.surface}) else{return}
             surface=ready
@@ -357,9 +397,11 @@ private struct CommittedPresentation {
         #endif
         let baseKey=request.baseURL?.absoluteString ?? ""
         let previous=surface.preparedAssetBase==baseKey ? Dictionary((surface.preparedContent?.entries ?? []).map{($0.id,$0.fragment.html!)},uniquingKeysWith:{first,_ in first}):[:]
-        let items=request.entries.map {entry -> [String:String] in
+        let indexed=surface === committed?.surface && surface.preparedAssetBase==baseKey
+            ? displayedPatch ?? indexedPatch(from:surface.preparedContent,to:request):nil
+        let items:[[String:Any]]=indexed?.items ?? request.entries.map {entry in
             let fragment=entry.fragment
-            var item=["id":entry.id,"from":String(fragment.from),"to":String(fragment.to)]
+            var item:[String:Any]=["id":entry.id,"from":fragment.from,"to":fragment.to]
             if previous[entry.id] != fragment.html {item["html"]=fragment.html!}
             return item
         }
@@ -367,7 +409,7 @@ private struct CommittedPresentation {
             finishPreparation(request);return
         }
         #if DEBUG
-        TimingDiagnostics.shared.end(encode,values:["mounted":Double(items.count),"htmlEntries":Double(items.filter{$0["html"] != nil}.count),"payloadBytes":Double(data.count)])
+        TimingDiagnostics.shared.end(encode,values:["mounted":Double(request.entries.count),"htmlEntries":Double(items.filter{$0["html"] != nil}.count),"payloadBytes":Double(data.count)])
         patchCount += 1
         let roundtrip=TimingDiagnostics.shared.begin("web.patch.roundtrip")
         #endif
@@ -382,10 +424,14 @@ private struct CommittedPresentation {
             // horizontal state. Restoring an earlier snapshot would overwrite
             // interaction that happened while the new resources were settling.
             let restoreState=surface === self.committed?.surface ? "":"astraRestoreViewState(\(state as? String ?? "null"));"
+            let update:String
+            if let indexed {
+                update="astraPatch(\(json),\(request.id),\(request.fontSize),\(baseJSON)[0],\(indexed.suffixIndex),\(indexed.shift)"
+            } else {update="astraUpdate(\(json),\(request.id),\(request.fontSize),\(baseJSON)[0]"}
             #if DEBUG
-            let script="const patched=astraUpdate(\(json),\(request.id),\(request.fontSize),\(baseJSON)[0],\(roundtrip == nil ? "false":"true"));await astraReady(\(request.width));\(restoreState)const measured=geometry();if(patched.timing)measured.timing=patched.timing;return JSON.stringify(measured);"
+            let script="const patched=\(update),\(roundtrip == nil ? "false":"true"));await astraReady(\(request.width));\(restoreState)const started=performance.now(),measured=geometry();if(patched?.timing){measured.timing={...patched.timing,layoutMs:performance.now()-started,totalMs:patched.timing.patchMs+performance.now()-started};}return JSON.stringify(measured);"
             #else
-            let script="astraUpdate(\(json),\(request.id),\(request.fontSize),\(baseJSON)[0]);await astraReady(\(request.width));\(restoreState)return JSON.stringify(geometry());"
+            let script="\(update));await astraReady(\(request.width));\(restoreState)return JSON.stringify(geometry());"
             #endif
             surface.web.callAsyncJavaScript(script,arguments:[:],in:nil,in:.page) { [weak self] outcome in
                 guard let self else{return}
@@ -423,8 +469,15 @@ private struct CommittedPresentation {
                 }
                 surface.observed=geometry
                 surface.size(contentHeight:geometry.height,width:request.width,viewportHeight:self.bounds.height)
-                let snapshot=WKSnapshotConfiguration()
                 guard let position=self.presentationPosition(request,geometry:geometry) else{self.finishPreparation(request);return}
+                // Local edit patches can commit as soon as their new geometry
+                // is known. Same-revision viewport extension keeps the paint
+                // fence used by the calibrated scrolling path.
+                if indexed != nil,surface === self.committed?.surface {
+                    self.commit(request,geometry:geometry,surface:surface,position:position)
+                    self.finishPreparation(request);return
+                }
+                let snapshot=WKSnapshotConfiguration()
                 let top=position.origin
                 // Fence the destination plus one viewport on either side, not
                 // an unbounded document texture. The whole DOM stays mounted.
@@ -456,7 +509,7 @@ private struct CommittedPresentation {
                 }
             }
         }
-        if let committed {
+        if let committed, surface !== committed.surface {
             committed.surface.web.evaluateJavaScript("JSON.stringify(astraViewState())") {state,_ in patch(state)}
         } else {
             // The initial document has no selection or horizontal state to
@@ -502,6 +555,10 @@ private struct CommittedPresentation {
         return min(max(0,height-bounds.height),max(0,target))
     }
     private func makeMap(_ request:PreviewRequest,geometry:PreviewGeometry)->ScrollLandmarks? {
+        #if DEBUG
+        let work=TimingDiagnostics.shared.begin("preview.map")
+        defer {TimingDiagnostics.shared.end(work)}
+        #endif
         guard let source,source.hasMeasuredLayout,source.contentRevision==request.revision,source.sourceLength==request.content.sourceLength else{return nil}
         let revision=source.geometryRevision
         var points=[ScrollLandmark]()
@@ -520,7 +577,8 @@ private struct CommittedPresentation {
             return PresentationPosition(map:nil,sourceGeometryRevision:nil,origin:origin)
         case .synchronized(let source):
             guard covers(request.content,visible:source.visibleSourceRange) else{return nil}
-            guard let map=makeMap(request,geometry:geometry),let origin=targetOrigin(height:geometry.height,map:map) else{return nil}
+            guard let map=makeMap(request,geometry:geometry) else{return nil}
+            guard let origin=targetOrigin(height:geometry.height,map:map) else{return nil}
             return PresentationPosition(map:map,sourceGeometryRevision:source.geometryRevision,origin:origin)
         }
     }
@@ -528,6 +586,18 @@ private struct CommittedPresentation {
         guard let surface=surfaces.first(where:{$0.web === view}),surface.ready,let request=surface.request,
               let geometry=PreviewGeometry(value,request:request),geometry.measurement>(surface.observed?.measurement ?? -1) else{return}
         let changed=surface.observed.map{!$0.sameLayout(as:geometry)} == true
+        #if DEBUG
+        if let old=surface.observed,changed {
+            let pairs=zip(old.items,geometry.items)
+            TimingDiagnostics.shared.reported("web.geometry.change",milliseconds:0,values:[
+                "oldHeight":Double(old.height),"height":Double(geometry.height),
+                "oldWidth":Double(old.width),"width":Double(geometry.width),
+                "maximumYDelta":pairs.map{abs(Double($0.0.y-$0.1.y))}.max() ?? 0,
+                "maximumHeightDelta":pairs.map{abs(Double($0.0.height-$0.1.height))}.max() ?? 0,
+                "committed":surface === committed?.surface ? 1:0,
+                "request":Double(request.id)])
+        }
+        #endif
         surface.observed=geometry
         if surface === committed?.surface,changed,rendering==nil,desired==nil,committed?.request.id==request.id {requestPresentation()}
     }

@@ -21,6 +21,24 @@ private func prepared(_ id:String,_ from:Int,_ to:Int,_ text:String)->PreviewFra
     #expect(doc.heights(for:"b")?.preview==30)
     #expect(doc.allPages.first?.range==NSRange(location:10,length:8))
 }
+@Test func manifestSpliceRetainsUnaffectedNodesCachesAndShiftedCoordinates() {
+    let doc=PreparedDocument()
+    doc.adopt([.init(id:"a",kind:"Paragraph",from:0,to:5),
+               .init(id:"b",kind:"Paragraph",from:7,to:12),
+               .init(id:"c",kind:"Paragraph",from:14,to:19)],revision:1,length:20)
+    doc.store(ParseResult(revision:1,spans:[.init(kind:"Emphasis",from:14,to:19)],
+        fragments:[prepared("a",0,5,"a"),prepared("b",7,12,"b"),prepared("c",14,19,"c")]),
+        range:NSRange(location:0,length:20))
+    doc.recordPreviewHeights(["c":31],revision:1)
+    doc.apply(.init(prefix:1,suffix:1,shift:3,
+        blocks:[.init(id:"new",kind:"Paragraph",from:7,to:15)]),revision:2,length:23)
+    #expect(doc.entries(covering:NSRange(location:0,length:5))?.first?.fragment.markdown=="a")
+    #expect(doc.entries(covering:NSRange(location:17,length:5))?.first?.fragment.markdown=="c")
+    #expect(doc.entries(covering:NSRange(location:17,length:5))?.first?.fragment.from==17)
+    #expect(doc.entries(covering:NSRange(location:7,length:8))==nil)
+    #expect(doc.heights(for:"c")?.preview==31)
+    #expect(doc.styles(in:NSRange(location:17,length:5))?.first?.range==NSRange(location:17,length:5))
+}
 @Test func retainedStyleRecordsUseRelativeOffsetsAfterMultipleEdits() {
     let doc=PreparedDocument()
     doc.adopt([.init(id:"a",kind:"Paragraph",from:0,to:20),.init(id:"b",kind:"Paragraph",from:22,to:42)],revision:1,length:44)

@@ -12,6 +12,15 @@ private final class SourceScrollView:NSScrollView {
 final class SourceTextView:NSTextView {
     weak var owner:SourceEditor?
     override func insertText(_ insertString:Any,replacementRange:NSRange) {
+        // AppKit otherwise uses the editor-wide typing attributes for direct
+        // insertText calls. Seed the transaction from the replaced/adjacent
+        // source character so ordinary typing preserves the already-prepared
+        // block typography; Comrak will correct it if the edit changes syntax.
+        if replacementRange.location != NSNotFound,let storage=textStorage,storage.length>0 {
+            let offset=min(replacementRange.location,storage.length-1)
+            let inherited=storage.attributes(at:offset,effectiveRange:nil)
+            typingAttributes=inherited.filter{$0.key == .font || $0.key == .foregroundColor}
+        }
         if let text=insertString as? String,owner?.document.newline=="\r\n" {
             super.insertText(text.replacingOccurrences(of:"\r\n",with:"\n").replacingOccurrences(of:"\n",with:"\r\n"),replacementRange:replacementRange)
         } else {super.insertText(insertString,replacementRange:replacementRange)}
@@ -41,7 +50,6 @@ final class SourceEditor:NSView,NSTextViewDelegate,NSTextStorageDelegate,ScrollS
     private let prepared:PreparedDocument
     private var dirtyRange:NSRange?=NSRange(location:0,length:0)
     private var measuredWidth:CGFloat = -1
-    private var highlightScheduled=false
     var viewportChanged:((NSRange)->Void)?
     var scrollGestureChanged:((Bool)->Void)?
     var geometryChanged:(()->Void)?
@@ -57,14 +65,16 @@ final class SourceEditor:NSView,NSTextViewDelegate,NSTextStorageDelegate,ScrollS
     private var highlightRevision = -1
     private var deferredHighlights=[(Int,[SyntaxSpan],NSRange)]()
     private var loadedRevision = -1
+    private var initialStylesReady:Bool
     private struct MeasuredLine {
         let range:NSRange,rect:NSRect
     }
     #if DEBUG
     private(set) var highlightApplications=0
+    var preparedLayoutLength:Int {prepared.sourceLayout.length}
     #endif
     var contentRevision:Int {document.revision}
-    var hasMeasuredLayout:Bool {nativeLayoutRevision==nil && !localEdit && !changingLayout && loadedRevision==document.revision}
+    var hasMeasuredLayout:Bool {(initialStylesReady || document.source.count==0) && nativeLayoutRevision==nil && !localEdit && !changingLayout && loadedRevision==document.revision}
     var viewportOrigin:CGFloat {scroll.contentView.bounds.minY}
     var contentHeight:CGFloat {canvas.bounds.height}
     var sourceLength:Int {document.source.count}
@@ -73,6 +83,7 @@ final class SourceEditor:NSView,NSTextViewDelegate,NSTextStorageDelegate,ScrollS
     var viewportAnchor:Int {offset(atCanvasY:scroll.contentView.bounds.minY+3)}
     var alignmentAnchor:Int {offset(atCanvasY:scroll.contentView.bounds.minY+alignmentOffset)}
     var visibleSourceRange:NSRange {
+        if !initialStylesReady {return NSRange(location:0,length:0)}
         let top=scroll.contentView.bounds.minY,bottom=top+scroll.contentSize.height
         let start=offset(atCanvasY:top+2),end=max(start,offset(atCanvasY:bottom-2,endOfLine:true))
         return NSRange(location:start,length:end-start)
@@ -93,8 +104,8 @@ final class SourceEditor:NSView,NSTextViewDelegate,NSTextStorageDelegate,ScrollS
             }
         }
     }
-    init(document:MarkdownDocument,prepared:PreparedDocument = PreparedDocument()) {
-        self.document=document;self.prepared=prepared;super.init(frame:.zero)
+    init(document:MarkdownDocument,prepared:PreparedDocument = PreparedDocument(),deferInitialLayout:Bool=false) {
+        self.document=document;self.prepared=prepared;initialStylesReady = !deferInitialLayout;super.init(frame:.zero)
         scroll.hasVerticalScroller=true;scroll.autohidesScrollers=true
         scroll.backgroundColor = .textBackgroundColor;scroll.documentView=canvas
         addSubview(scroll);canvas.addSubview(textView)
@@ -106,9 +117,10 @@ final class SourceEditor:NSView,NSTextViewDelegate,NSTextStorageDelegate,ScrollS
         textView.textContainerInset=NSSize(width:16,height:16)
         textView.isVerticallyResizable=false;textView.isHorizontallyResizable=false
         textView.textContainer!.widthTracksTextView=true;textView.textContainer!.heightTracksTextView=false
-        // This editor prepares a complete, contiguous native layout. Scrolling
-        // only exposes its glyphs; no viewport layout can replace its geometry.
-        textView.layoutManager!.allowsNonContiguousLayout=false
+        // TextKit lays out exact geometry only where it is needed. The retained
+        // layout tree carries an estimate for untouched regions and replaces it
+        // with measured lines without changing the scrolling interfaces.
+        textView.layoutManager!.allowsNonContiguousLayout=true
         textView.layoutManager!.backgroundLayoutEnabled=false
         textView.autoresizingMask=[];textView.backgroundColor = .textBackgroundColor
         textView.setAccessibilityLabel("Markdown source")
@@ -157,15 +169,53 @@ final class SourceEditor:NSView,NSTextViewDelegate,NSTextStorageDelegate,ScrollS
     private var baseAttributes:[NSAttributedString.Key:Any] {
         [.font:NSFont.monospacedSystemFont(ofSize:fontSize,weight:.regular),.foregroundColor:NSColor.textColor]
     }
+    private func seedEstimatedLayout(width:CGFloat) {
+        let rope=document.source
+        guard rope.count>0 else {
+            prepared.sourceLayout.replaceSuffix(at:0,with:[],origin:Double(textView.textContainerInset.height));return
+        }
+        let font=baseAttributes[.font] as! NSFont
+        let lineHeight=ceil(textView.layoutManager!.defaultLineHeight(for:font))
+        let characterWidth=max(1,("0" as NSString).size(withAttributes:[.font:font]).width)
+        let columns=max(1,floor(width/characterWidth))
+        // The larger of logical lines and packed character rows is a stable
+        // whole-document estimate. Adding them would count every short line
+        // twice and put TextKit's noncontiguous fragments far from the canvas.
+        let visualLines=max(1,max(Double(rope.lineCount),Double(rope.count)/Double(columns)))
+        prepared.sourceLayout.replaceSuffix(at:0,with:[LayoutIndex.Line(length:rope.count,advance:visualLines*lineHeight,height:lineHeight,estimated:true)],origin:Double(textView.textContainerInset.height))
+    }
+    /// Source syntax is deliberately paint-only. Changing font metrics here
+    /// would invalidate wrapped-line geometry and turn coloring a viewport into
+    /// a TextKit layout operation. The preview retains semantic typography.
+    private func syntaxColor(_ kind:String)->NSColor? {
+        if kind.hasPrefix("ATXHeading") || kind.hasPrefix("SetextHeading") {return .systemIndigo}
+        if kind=="StrongEmphasis" || kind=="Emphasis" {return .systemOrange}
+        if kind.contains("Mark") {return .secondaryLabelColor}
+        if kind=="Link" || kind=="URL" {return .linkColor}
+        if kind.hasPrefix("Math") {return .systemPurple}
+        return nil
+    }
     private func updateDimensions() {
         #if DEBUG
         let work=TimingDiagnostics.shared.begin("source.layout")
         defer {TimingDiagnostics.shared.end(work,values:["documentCharacters":Double(document.source.count),"width":Double(scroll.contentSize.width)])}
         #endif
         let width=max(1,scroll.contentSize.width-32)
-        if abs(width-measuredWidth)>0.001 {dirtyRange=NSRange(location:0,length:prepared.sourceLayout.length);measuredWidth=width}
+        if abs(width-measuredWidth)>0.001 {
+            if prepared.sourceLayout.hasEstimates(in:NSRange(location:0,length:prepared.sourceLayout.length)) {
+                seedEstimatedLayout(width:width)
+                let rope=document.source
+                dirtyRange=rope.lines(0,min(rope.lineCount,80))
+            } else {dirtyRange=NSRange(location:0,length:prepared.sourceLayout.length)}
+            measuredWidth=width
+        }
         guard let dirtyRange else {
             canvas.frame.size.height=max(scroll.contentSize.height,textView.frame.maxY+32)
+            return
+        }
+        guard initialStylesReady || document.source.count==0 else {
+            textView.frame.size.width=max(1,scroll.contentSize.width)
+            canvas.frame.size=scroll.contentSize
             return
         }
         geometryRevision += 1
@@ -175,10 +225,13 @@ final class SourceEditor:NSView,NSTextViewDelegate,NSTextStorageDelegate,ScrollS
         let manager=textView.layoutManager!,container=textView.textContainer!
         // Measure only affected paragraphs. The tree retains both sides, and
         // changes to source length/height shift its suffix through subtree sums.
+        let replacingCompleteIndex=dirtyRange.location==0 && dirtyRange.length==prepared.sourceLayout.length
+            && !prepared.sourceLayout.hasEstimates(in:dirtyRange)
         let boundary=dirtyRange.location
         let end=min(document.source.count,NSMaxRange(dirtyRange)+document.source.count-prepared.sourceLayout.length)
-        manager.ensureLayout(for:container)
         let characters=NSRange(location:boundary,length:max(0,end-boundary))
+        if replacingCompleteIndex {manager.ensureLayout(for:container)}
+        else {manager.ensureLayout(forCharacterRange:characters)}
         let glyphs=manager.glyphRange(forCharacterRange:characters,actualCharacterRange:nil)
         var measured=[MeasuredLine]()
         manager.enumerateLineFragments(forGlyphRange:glyphs) {_,used,_,glyphs,_ in
@@ -188,20 +241,30 @@ final class SourceEditor:NSView,NSTextViewDelegate,NSTextStorageDelegate,ScrollS
             }
         }
         let followingY:CGFloat?
-        if NSMaxRange(glyphs)<manager.numberOfGlyphs {
-            followingY=manager.lineFragmentUsedRect(forGlyphAt:NSMaxRange(glyphs),effectiveRange:nil).minY+textView.textContainerInset.height
+        if NSMaxRange(characters)<document.source.count {
+            let followingGlyph=manager.glyphIndexForCharacter(at:NSMaxRange(characters))
+            followingY=manager.lineFragmentUsedRect(forGlyphAt:followingGlyph,effectiveRange:nil).minY+textView.textContainerInset.height
         } else {followingY=nil}
         let lines=measured.enumerated().map {index,line in
             let next=index+1<measured.count ? measured[index+1].rect.minY:followingY ?? line.rect.maxY
             return LayoutIndex.Line(length:line.range.length,advance:Double(next-line.rect.minY),height:Double(line.rect.height))
         }
         prepared.sourceLayout.replace(dirtyRange,with:lines,origin:measured.first.map{Double($0.rect.minY)})
+        if NSMaxRange(characters)==document.source.count,let last=measured.last {
+            prepared.sourceLayout.fitEstimatedHeight(to:Double(last.rect.maxY))
+        }
         self.dirtyRange=nil
         #if DEBUG
         TimingDiagnostics.shared.reported("source.layout.lines",milliseconds:0,values:["measured":Double(lines.count),"retainedCharacters":Double(prepared.sourceLayout.length-lines.reduce(0){$0+$1.length})])
         #endif
-        let height=max(manager.usedRect(for:container).maxY,manager.extraLineFragmentRect.maxY)
-        textView.frame=NSRect(x:0,y:0,width:scroll.contentSize.width,height:height+textView.textContainerInset.height*2+32)
+        let frameHeight:CGFloat
+        if replacingCompleteIndex {
+            let height=max(manager.usedRect(for:container).maxY,manager.extraLineFragmentRect.maxY)
+            frameHeight=height+textView.textContainerInset.height*2+32
+        } else {
+            frameHeight=max(scroll.contentSize.height,CGFloat(prepared.sourceLayout.height)+textView.textContainerInset.height+32)
+        }
+        textView.frame=NSRect(x:0,y:0,width:scroll.contentSize.width,height:frameHeight)
         canvas.frame.size=NSSize(width:scroll.contentSize.width,height:max(scroll.contentSize.height,textView.frame.maxY+32))
     }
     func reload(preserving selection:NSRange) {
@@ -209,8 +272,23 @@ final class SourceEditor:NSView,NSTextViewDelegate,NSTextStorageDelegate,ScrollS
         let previousChanging=changingLayout;changingLayout=true
         if loadedRevision != document.revision {
             dirtyRange=NSRange(location:0,length:prepared.sourceLayout.length)
-            textView.string=document.source.string
+            #if DEBUG
+            let materializeWork=TimingDiagnostics.shared.begin("source.text.materialize")
+            #endif
+            let text=document.takeInitialText(for:document.revision) ?? document.source.string
+            #if DEBUG
+            TimingDiagnostics.shared.end(materializeWork)
+            let assignWork=TimingDiagnostics.shared.begin("source.text.assign")
+            #endif
+            textView.string=text
+            #if DEBUG
+            TimingDiagnostics.shared.end(assignWork)
+            let attributesWork=TimingDiagnostics.shared.begin("source.text.attributes")
+            #endif
             textView.textStorage!.setAttributes(baseAttributes,range:documentRange)
+            #if DEBUG
+            TimingDiagnostics.shared.end(attributesWork)
+            #endif
             highlightedRanges.removeAll();deferredHighlights.removeAll();highlightRevision=document.revision
         }
         loadedRevision=document.revision
@@ -246,6 +324,22 @@ final class SourceEditor:NSView,NSTextViewDelegate,NSTextStorageDelegate,ScrollS
     private func rect(for offset:Int)->NSRect? {
         guard let line=prepared.sourceLayout.position(at:offset) else{return nil}
         return NSRect(x:textView.textContainerInset.width,y:line.y,width:1,height:line.height)
+    }
+    private func refineLayout(around requested:NSRange) {
+        let rope=document.source,index=prepared.sourceLayout
+        guard requested.length>0,index.hasEstimates(in:requested),nativeLayoutRevision==nil,!localEdit else{return}
+        let first=max(0,rope.line(at:requested.location)-12)
+        let last=min(rope.lineCount,rope.line(at:NSMaxRange(requested))+80)
+        let range=rope.lines(first,last)
+        guard range.length>0,index.hasEstimates(in:range) else{return}
+        let anchor=viewportAnchor
+        let displacement=scroll.contentView.bounds.minY-(verticalPosition(for:anchor) ?? scroll.contentView.bounds.minY)
+        changingLayout=true;dirtyRange=range;updateDimensions()
+        if let y=verticalPosition(for:anchor) {
+            scroll.contentView.scroll(to:NSPoint(x:0,y:max(0,y+displacement)))
+            scroll.reflectScrolledClipView(scroll.contentView)
+        }
+        changingLayout=false;geometryChanged?()
     }
     func verticalPosition(for offset:Int)->CGFloat? {
         // EOF has no glyph. Its coordinate is the explicit document boundary.
@@ -317,12 +411,16 @@ final class SourceEditor:NSView,NSTextViewDelegate,NSTextStorageDelegate,ScrollS
     func reveal(_ offset:Int,alignTop:Bool=false) {
         endScrollGesture()
         let position=min(max(0,offset),document.source.count)
+        if position<document.source.count {
+            refineLayout(around:NSRange(location:position,length:max(1,min(1024,document.source.count-position))))
+        } else if position>0 {
+            refineLayout(around:NSRange(location:max(0,position-1024),length:min(1024,position)))
+        }
         if !alignTop {textView.setSelectedRange(NSRange(location:position,length:0))}
         changingLayout=true
         if position==0 {scroll.contentView.scroll(to:.zero)}
-        else if position==document.source.count {
-            scroll.contentView.scroll(to:NSPoint(x:0,y:max(0,canvas.bounds.height-scroll.contentSize.height)))
-        } else if let target=rect(for:position) {
+        else if position==document.source.count {scroll.contentView.scroll(to:NSPoint(x:0,y:max(0,canvas.bounds.height-scroll.contentSize.height)))}
+        else if let target=rect(for:position) {
             if alignTop {scroll.contentView.scroll(to:NSPoint(x:0,y:target.minY))}
             else {canvas.scrollToVisible(target.insetBy(dx:0,dy:-30))}
         }
@@ -333,6 +431,7 @@ final class SourceEditor:NSView,NSTextViewDelegate,NSTextStorageDelegate,ScrollS
     override func scrollWheel(with event:NSEvent) {scroll.scrollWheel(with:event)}
     private func notifyViewport() {
         guard !changingLayout,!localEdit,nativeLayoutRevision==nil else{return}
+        refineLayout(around:visibleSourceRange)
         viewportChanged?(visibleSourceRange)
     }
     func textView(_ textView:NSTextView,shouldChangeTextIn range:NSRange,replacementString:String?)->Bool {
@@ -367,6 +466,21 @@ final class SourceEditor:NSView,NSTextViewDelegate,NSTextStorageDelegate,ScrollS
     func hasAppliedHighlights(in range:NSRange)->Bool {
         highlightRevision==document.revision && highlightedRanges.contains{ $0.location<=range.location && NSMaxRange($0)>=NSMaxRange(range) }
     }
+    /// Only uncovered native attributes need applying after a prepared revision.
+    func unappliedHighlightRanges(in requested:NSRange)->[NSRange] {
+        let range=NSIntersectionRange(documentRange,requested)
+        guard range.length>0 else{return []}
+        guard highlightRevision==document.revision else{return [range]}
+        var cursor=range.location,result=[NSRange]()
+        for covered in highlightedRanges {
+            if NSMaxRange(covered)<=cursor {continue}
+            if covered.location>=NSMaxRange(range) {break}
+            if covered.location>cursor {result.append(NSRange(location:cursor,length:covered.location-cursor))}
+            cursor=max(cursor,min(NSMaxRange(range),NSMaxRange(covered)))
+        }
+        if cursor<NSMaxRange(range) {result.append(NSRange(location:cursor,length:NSMaxRange(range)-cursor))}
+        return result
+    }
     private func recordHighlightCoverage(_ range:NSRange) {
         var union=range,result=[NSRange]()
         for existing in highlightedRanges {
@@ -380,14 +494,34 @@ final class SourceEditor:NSView,NSTextViewDelegate,NSTextStorageDelegate,ScrollS
         let pending=deferredHighlights;deferredHighlights.removeAll()
         applyHighlightBatch(pending.filter{$0.0==document.revision}.map{($0.1,$0.2)})
     }
-    func queueHighlights(_ spans:[SyntaxSpan],in range:NSRange) {
-        deferredHighlights.append((document.revision,spans,range))
-        guard !highlightScheduled else{return}
-        highlightScheduled=true
-        DispatchQueue.main.asyncAfter(deadline:.now()+0.025) { [weak self] in
-            guard let self else{return};self.highlightScheduled=false;self.applyDeferredHighlights()
-        }
+    var isAwaitingInitialHighlights:Bool {!initialStylesReady}
+    func applyInitialHighlights(_ spans:[SyntaxSpan],in range:NSRange) {
+        initialStylesReady=true
+        applyHighlightBatch([(spans,range)])
+        let width=max(1,scroll.contentSize.width-32)
+        seedEstimatedLayout(width:width)
+        let rope=document.source
+        // A fixed number of logical lines bounds first-view work while covering
+        // several screens. Exact lines replace the estimate in the same tree.
+        dirtyRange=rope.lines(0,min(rope.lineCount,80))
+        relayoutPreservingViewport {}
     }
+    #if DEBUG
+    /// The exhaustive integration check freezes one complete source/preview
+    /// coordinate frame before testing the calibrated scrolling equations.
+    var hasCompletePreparedLayout:Bool {
+        let whole=NSRange(location:0,length:prepared.sourceLayout.length)
+        return !prepared.sourceLayout.hasEstimates(in:whole)
+    }
+    @discardableResult func completePreparedLayout()->Bool {
+        let whole=NSRange(location:0,length:prepared.sourceLayout.length)
+        guard whole.length>0,prepared.sourceLayout.hasEstimates(in:whole) else{return true}
+        guard nativeLayoutRevision==nil,!localEdit,!isScrolling else{return false}
+        dirtyRange=whole
+        relayoutPreservingViewport {}
+        return true
+    }
+    #endif
     func applyHighlights(_ spans:[SyntaxSpan],in requestedRange:NSRange) {
         if isScrolling || textView.hasMarkedText() || nativeLayoutRevision != nil {
             deferredHighlights.append((document.revision,spans,requestedRange));return
@@ -397,9 +531,14 @@ final class SourceEditor:NSView,NSTextViewDelegate,NSTextStorageDelegate,ScrollS
     private func applyHighlightBatch(_ batches:[([SyntaxSpan],NSRange)]) {
         var changes=[([SyntaxSpan],NSRange)]()
         for (spans,range) in batches {
-            let covered=NSIntersectionRange(documentRange,range)
-            guard covered.length>0,!hasAppliedHighlights(in:covered) else{continue}
-            recordHighlightCoverage(covered);changes.append((spans,covered))
+            // An edit cuts only its replaced interval out of highlightCoverage.
+            // Keep the attributes on both retained sides and apply Comrak's
+            // result only to the resulting gap. Reapplying the whole visible
+            // margin invalidates TextKit's otherwise-retained suffix layout.
+            for covered in unappliedHighlightRanges(in:range) {
+                recordHighlightCoverage(covered)
+                changes.append((spans,covered))
+            }
         }
         guard !changes.isEmpty else{return}
         #if DEBUG
@@ -407,28 +546,17 @@ final class SourceEditor:NSView,NSTextViewDelegate,NSTextStorageDelegate,ScrollS
         let work=TimingDiagnostics.shared.begin("source.highlight")
         defer {TimingDiagnostics.shared.end(work,values:["spans":Double(changes.reduce(0){$0+$1.0.count}),"batches":Double(changes.count)])}
         #endif
-        for (_,range) in changes {invalidateLayout(in:range)}
-        relayoutPreservingViewport {
-            let storage=self.textView.textStorage!
-            storage.beginEditing()
-            for (spans,covered) in changes {
-                storage.setAttributes(self.baseAttributes,range:covered)
-                for span in spans {
-                    let range=NSIntersectionRange(covered,span.range)
-                    guard range.length>0 else{continue}
-                    var attrs=[NSAttributedString.Key:Any]()
-                    if (span.kind.hasPrefix("ATXHeading") || span.kind.hasPrefix("SetextHeading")),let level=Int(span.kind.suffix(1)),(1...6).contains(level) {
-                        attrs[.font]=NSFont.monospacedSystemFont(ofSize:level==1 ? self.fontSize*18/13:level==2 ? self.fontSize*16/13:self.fontSize*14/13,weight:.bold)
-                    } else if span.kind=="StrongEmphasis" || span.kind=="Emphasis" {
-                        let font=storage.attribute(.font,at:range.location,effectiveRange:nil) as! NSFont
-                        attrs[.font]=NSFontManager.shared.convert(font,toHaveTrait:span.kind=="StrongEmphasis" ? .boldFontMask:.italicFontMask)
-                    } else if span.kind.contains("Mark") {attrs[.foregroundColor]=NSColor.secondaryLabelColor}
-                    else if span.kind=="Link" || span.kind=="URL" {attrs[.foregroundColor]=NSColor.linkColor}
-                    else if span.kind.hasPrefix("Math") {attrs[.foregroundColor]=NSColor.systemPurple}
-                    storage.addAttributes(attrs,range:range)
-                }
+        // Temporary layout-manager attributes are paint annotations. Unlike
+        // NSTextStorage attribute edits, they never invalidate glyph metrics.
+        let manager=textView.layoutManager!
+        for (spans,covered) in changes {
+            manager.removeTemporaryAttribute(.foregroundColor,forCharacterRange:covered)
+            for span in spans {
+                let range=NSIntersectionRange(covered,span.range)
+                guard range.length>0,let color=syntaxColor(span.kind) else{continue}
+                manager.addTemporaryAttribute(.foregroundColor,value:color,forCharacterRange:range)
             }
-            storage.endEditing()
         }
+        textView.needsDisplay=true
     }
 }

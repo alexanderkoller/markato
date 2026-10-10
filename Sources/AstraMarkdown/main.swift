@@ -2,6 +2,15 @@ import AppKit
 import MarkdownCore
 import UniformTypeIdentifiers
 
+#if DEBUG
+@_cdecl("astra_timing_start")
+func startProfileRecording() { TimingDiagnostics.shared.start() }
+@_cdecl("astra_timing_export")
+func exportProfileRecording(_ path:UnsafePointer<CChar>) {
+    try? TimingDiagnostics.shared.snapshot().json().write(to:URL(fileURLWithPath:String(cString:path)))
+}
+#endif
+
 @MainActor final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     private var currentEditor:EditorWindowController? {
         for window in [NSApp.keyWindow,NSApp.mainWindow].compactMap({$0}) {
@@ -157,7 +166,7 @@ import UniformTypeIdentifiers
     | :--- | :--- |
     | Editing | AppKit and TextKit |
     | Preview | WebKit |
-    | Syntax | Lezer |
+    | Syntax | Comrak |
 
     ## Mathematics
 
@@ -183,7 +192,7 @@ import UniformTypeIdentifiers
     - Source owns scrolling.
     - Preview follows the visible passage.
 
-    [markdown-it](https://github.com/markdown-it/markdown-it)
+    [Comrak](https://github.com/kivikakk/comrak)
     """#
 }
 
