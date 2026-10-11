@@ -501,6 +501,66 @@
   },
   {
     "fixture": "prose-1048576.md",
+    "app": "comrak-complete-dom-delta8",
+    "operation": "edit",
+    "experiment": "comrak-complete-dom-delta8-1791706366017780000-prose-r1",
+    "n": 3,
+    "medianMs": 32.887083292007446,
+    "minMs": 32.67379140853882,
+    "maxMs": 35.49095845222473
+  },
+  {
+    "fixture": "prose-1048576.md",
+    "app": "comrak-complete-dom-delta8",
+    "operation": "edit",
+    "experiment": "comrak-complete-dom-delta8-1791706444172820000-prose-r1",
+    "n": 3,
+    "medianMs": 37.21358323097229,
+    "minMs": 23.851333379745483,
+    "maxMs": 37.45912504196167
+  },
+  {
+    "fixture": "prose-1048576.md",
+    "app": "comrak-complete-dom-delta8",
+    "operation": "edit",
+    "experiment": "comrak-complete-dom-delta8-1791706483640434000-prose-r1",
+    "n": 3,
+    "medianMs": 34.962666749954224,
+    "minMs": 23.488749980926514,
+    "maxMs": 42.223583459854126
+  },
+  {
+    "fixture": "prose-1048576.md",
+    "app": "comrak-complete-dom-delta8",
+    "operation": "open",
+    "experiment": "comrak-complete-dom-delta8-1791706366017780000-prose-r1",
+    "n": 1,
+    "medianMs": 142.21791672706604,
+    "minMs": 142.21791672706604,
+    "maxMs": 142.21791672706604
+  },
+  {
+    "fixture": "prose-1048576.md",
+    "app": "comrak-complete-dom-delta8",
+    "operation": "open",
+    "experiment": "comrak-complete-dom-delta8-1791706444172820000-prose-r1",
+    "n": 1,
+    "medianMs": 134.56679153442383,
+    "minMs": 134.56679153442383,
+    "maxMs": 134.56679153442383
+  },
+  {
+    "fixture": "prose-1048576.md",
+    "app": "comrak-complete-dom-delta8",
+    "operation": "open",
+    "experiment": "comrak-complete-dom-delta8-1791706483640434000-prose-r1",
+    "n": 1,
+    "medianMs": 138.39575004577637,
+    "minMs": 138.39575004577637,
+    "maxMs": 138.39575004577637
+  },
+  {
+    "fixture": "prose-1048576.md",
     "app": "comrak-complete-dom-editrestore",
     "operation": "edit",
     "experiment": "comrak-complete-dom-editrestore-1791663150859160000-prose-r1",
@@ -798,6 +858,66 @@
     "medianMs": 169.11299991607666,
     "minMs": 169.11299991607666,
     "maxMs": 169.11299991607666
+  },
+  {
+    "fixture": "prose-1048576.md",
+    "app": "comrak-regional-final",
+    "operation": "edit",
+    "experiment": "comrak-regional-final-1791706690937634000-prose-r1",
+    "n": 3,
+    "medianMs": 32.301833391189575,
+    "minMs": 24.92508339881897,
+    "maxMs": 33.9932918548584
+  },
+  {
+    "fixture": "prose-1048576.md",
+    "app": "comrak-regional-final",
+    "operation": "edit",
+    "experiment": "comrak-regional-final-1791706690937634000-prose-r2",
+    "n": 3,
+    "medianMs": 24.056249856948853,
+    "minMs": 23.75166654586792,
+    "maxMs": 33.12083315849304
+  },
+  {
+    "fixture": "prose-1048576.md",
+    "app": "comrak-regional-final",
+    "operation": "edit",
+    "experiment": "comrak-regional-final-1791706690937634000-prose-r3",
+    "n": 3,
+    "medianMs": 23.51508331298828,
+    "minMs": 19.12975025177002,
+    "maxMs": 42.029500007629395
+  },
+  {
+    "fixture": "prose-1048576.md",
+    "app": "comrak-regional-final",
+    "operation": "open",
+    "experiment": "comrak-regional-final-1791706690937634000-prose-r1",
+    "n": 1,
+    "medianMs": 139.65837478637695,
+    "minMs": 139.65837478637695,
+    "maxMs": 139.65837478637695
+  },
+  {
+    "fixture": "prose-1048576.md",
+    "app": "comrak-regional-final",
+    "operation": "open",
+    "experiment": "comrak-regional-final-1791706690937634000-prose-r2",
+    "n": 1,
+    "medianMs": 142.56375002861023,
+    "minMs": 142.56375002861023,
+    "maxMs": 142.56375002861023
+  },
+  {
+    "fixture": "prose-1048576.md",
+    "app": "comrak-regional-final",
+    "operation": "open",
+    "experiment": "comrak-regional-final-1791706690937634000-prose-r3",
+    "n": 1,
+    "medianMs": 141.0595417022705,
+    "minMs": 141.0595417022705,
+    "maxMs": 141.0595417022705
   },
   {
     "fixture": "prose-1048576.md",
@@ -3221,6 +3341,66 @@
   },
   {
     "fixture": "prose-65536.md",
+    "app": "comrak-complete-dom-delta8",
+    "operation": "edit",
+    "experiment": "comrak-complete-dom-delta8-1791706339885967000-prose-r1",
+    "n": 3,
+    "medianMs": 46.583333253860474,
+    "minMs": 37.633583307266235,
+    "maxMs": 51.82249999046326
+  },
+  {
+    "fixture": "prose-65536.md",
+    "app": "comrak-complete-dom-delta8",
+    "operation": "edit",
+    "experiment": "comrak-complete-dom-delta8-1791706431487613000-prose-r1",
+    "n": 3,
+    "medianMs": 39.86174964904785,
+    "minMs": 39.56808352470398,
+    "maxMs": 46.56979179382324
+  },
+  {
+    "fixture": "prose-65536.md",
+    "app": "comrak-complete-dom-delta8",
+    "operation": "edit",
+    "experiment": "comrak-complete-dom-delta8-1791706471202129000-prose-r1",
+    "n": 3,
+    "medianMs": 34.94570827484131,
+    "minMs": 27.637208223342896,
+    "maxMs": 42.37854194641113
+  },
+  {
+    "fixture": "prose-65536.md",
+    "app": "comrak-complete-dom-delta8",
+    "operation": "open",
+    "experiment": "comrak-complete-dom-delta8-1791706339885967000-prose-r1",
+    "n": 1,
+    "medianMs": 72.9668333530426,
+    "minMs": 72.9668333530426,
+    "maxMs": 72.9668333530426
+  },
+  {
+    "fixture": "prose-65536.md",
+    "app": "comrak-complete-dom-delta8",
+    "operation": "open",
+    "experiment": "comrak-complete-dom-delta8-1791706431487613000-prose-r1",
+    "n": 1,
+    "medianMs": 74.33633351325989,
+    "minMs": 74.33633351325989,
+    "maxMs": 74.33633351325989
+  },
+  {
+    "fixture": "prose-65536.md",
+    "app": "comrak-complete-dom-delta8",
+    "operation": "open",
+    "experiment": "comrak-complete-dom-delta8-1791706471202129000-prose-r1",
+    "n": 1,
+    "medianMs": 78.01758337020874,
+    "minMs": 78.01758337020874,
+    "maxMs": 78.01758337020874
+  },
+  {
+    "fixture": "prose-65536.md",
     "app": "comrak-concurrent-complete",
     "operation": "edit",
     "experiment": "ab-comrak-viewport-final-vs-comrak-concurrent-complete-1791651226096456000-prose-pair1",
@@ -3478,6 +3658,66 @@
     "medianMs": 123.71749973297119,
     "minMs": 123.71749973297119,
     "maxMs": 123.71749973297119
+  },
+  {
+    "fixture": "prose-65536.md",
+    "app": "comrak-regional-final",
+    "operation": "edit",
+    "experiment": "comrak-regional-final-1791706654719454000-prose-r1",
+    "n": 3,
+    "medianMs": 42.966166496276855,
+    "minMs": 38.12262487411499,
+    "maxMs": 44.171875
+  },
+  {
+    "fixture": "prose-65536.md",
+    "app": "comrak-regional-final",
+    "operation": "edit",
+    "experiment": "comrak-regional-final-1791706654719454000-prose-r2",
+    "n": 3,
+    "medianMs": 37.84712529182434,
+    "minMs": 34.861000061035156,
+    "maxMs": 41.55404186248779
+  },
+  {
+    "fixture": "prose-65536.md",
+    "app": "comrak-regional-final",
+    "operation": "edit",
+    "experiment": "comrak-regional-final-1791706654719454000-prose-r3",
+    "n": 3,
+    "medianMs": 37.54829168319702,
+    "minMs": 36.969083309173584,
+    "maxMs": 50.50025010108948
+  },
+  {
+    "fixture": "prose-65536.md",
+    "app": "comrak-regional-final",
+    "operation": "open",
+    "experiment": "comrak-regional-final-1791706654719454000-prose-r1",
+    "n": 1,
+    "medianMs": 63.24520826339722,
+    "minMs": 63.24520826339722,
+    "maxMs": 63.24520826339722
+  },
+  {
+    "fixture": "prose-65536.md",
+    "app": "comrak-regional-final",
+    "operation": "open",
+    "experiment": "comrak-regional-final-1791706654719454000-prose-r2",
+    "n": 1,
+    "medianMs": 73.79825019836426,
+    "minMs": 73.79825019836426,
+    "maxMs": 73.79825019836426
+  },
+  {
+    "fixture": "prose-65536.md",
+    "app": "comrak-regional-final",
+    "operation": "open",
+    "experiment": "comrak-regional-final-1791706654719454000-prose-r3",
+    "n": 1,
+    "medianMs": 74.13900017738342,
+    "minMs": 74.13900017738342,
+    "maxMs": 74.13900017738342
   },
   {
     "fixture": "prose-65536.md",
@@ -5661,6 +5901,86 @@
   },
   {
     "fixture": "prose-8388608.md",
+    "app": "comrak-complete-dom-delta8",
+    "operation": "edit",
+    "experiment": "comrak-complete-dom-delta8-1791706379471978000-prose-r1",
+    "n": 3,
+    "medianMs": 22.047916650772095,
+    "minMs": 20.338833332061768,
+    "maxMs": 29.482166528701782
+  },
+  {
+    "fixture": "prose-8388608.md",
+    "app": "comrak-complete-dom-delta8",
+    "operation": "edit",
+    "experiment": "comrak-complete-dom-delta8-1791706456895765000-prose-r1",
+    "n": 3,
+    "medianMs": 24.13437509536743,
+    "minMs": 19.632499933242798,
+    "maxMs": 31.941333293914795
+  },
+  {
+    "fixture": "prose-8388608.md",
+    "app": "comrak-complete-dom-delta8",
+    "operation": "edit",
+    "experiment": "comrak-complete-dom-delta8-1791706496152340000-prose-r1",
+    "n": 3,
+    "medianMs": 24.921124935150146,
+    "minMs": 21.198625326156616,
+    "maxMs": 28.90149998664856
+  },
+  {
+    "fixture": "prose-8388608.md",
+    "app": "comrak-complete-dom-delta8",
+    "operation": "edit",
+    "experiment": "comrak-complete-dom-delta8-1791706520293713000-prose-r1",
+    "n": 3,
+    "medianMs": 47.625208139419556,
+    "minMs": 41.93945837020874,
+    "maxMs": 48.71849989891052
+  },
+  {
+    "fixture": "prose-8388608.md",
+    "app": "comrak-complete-dom-delta8",
+    "operation": "open",
+    "experiment": "comrak-complete-dom-delta8-1791706379471978000-prose-r1",
+    "n": 1,
+    "medianMs": 653.5340416431427,
+    "minMs": 653.5340416431427,
+    "maxMs": 653.5340416431427
+  },
+  {
+    "fixture": "prose-8388608.md",
+    "app": "comrak-complete-dom-delta8",
+    "operation": "open",
+    "experiment": "comrak-complete-dom-delta8-1791706456895765000-prose-r1",
+    "n": 1,
+    "medianMs": 715.884708404541,
+    "minMs": 715.884708404541,
+    "maxMs": 715.884708404541
+  },
+  {
+    "fixture": "prose-8388608.md",
+    "app": "comrak-complete-dom-delta8",
+    "operation": "open",
+    "experiment": "comrak-complete-dom-delta8-1791706496152340000-prose-r1",
+    "n": 1,
+    "medianMs": 690.16441655159,
+    "minMs": 690.16441655159,
+    "maxMs": 690.16441655159
+  },
+  {
+    "fixture": "prose-8388608.md",
+    "app": "comrak-complete-dom-delta8",
+    "operation": "open",
+    "experiment": "comrak-complete-dom-delta8-1791706520293713000-prose-r1",
+    "n": 1,
+    "medianMs": 680.1989166736603,
+    "minMs": 680.1989166736603,
+    "maxMs": 680.1989166736603
+  },
+  {
+    "fixture": "prose-8388608.md",
     "app": "comrak-concurrent-complete",
     "operation": "edit",
     "experiment": "ab-comrak-viewport-final-vs-comrak-concurrent-complete-1791651226096456000-prose-pair1",
@@ -6118,6 +6438,66 @@
     "medianMs": 883.1895000934601,
     "minMs": 883.1895000934601,
     "maxMs": 883.1895000934601
+  },
+  {
+    "fixture": "prose-8388608.md",
+    "app": "comrak-regional-final",
+    "operation": "edit",
+    "experiment": "comrak-regional-final-1791706730526322000-prose-r1",
+    "n": 3,
+    "medianMs": 24.426708459854126,
+    "minMs": 23.0125834941864,
+    "maxMs": 25.489750146865845
+  },
+  {
+    "fixture": "prose-8388608.md",
+    "app": "comrak-regional-final",
+    "operation": "edit",
+    "experiment": "comrak-regional-final-1791706730526322000-prose-r2",
+    "n": 3,
+    "medianMs": 17.409083604812622,
+    "minMs": 14.622125148773193,
+    "maxMs": 26.885374784469604
+  },
+  {
+    "fixture": "prose-8388608.md",
+    "app": "comrak-regional-final",
+    "operation": "edit",
+    "experiment": "comrak-regional-final-1791706730526322000-prose-r3",
+    "n": 3,
+    "medianMs": 15.802291631698608,
+    "minMs": 14.831166744232178,
+    "maxMs": 29.418458223342896
+  },
+  {
+    "fixture": "prose-8388608.md",
+    "app": "comrak-regional-final",
+    "operation": "open",
+    "experiment": "comrak-regional-final-1791706730526322000-prose-r1",
+    "n": 1,
+    "medianMs": 685.9141249656677,
+    "minMs": 685.9141249656677,
+    "maxMs": 685.9141249656677
+  },
+  {
+    "fixture": "prose-8388608.md",
+    "app": "comrak-regional-final",
+    "operation": "open",
+    "experiment": "comrak-regional-final-1791706730526322000-prose-r2",
+    "n": 1,
+    "medianMs": 714.586416721344,
+    "minMs": 714.586416721344,
+    "maxMs": 714.586416721344
+  },
+  {
+    "fixture": "prose-8388608.md",
+    "app": "comrak-regional-final",
+    "operation": "open",
+    "experiment": "comrak-regional-final-1791706730526322000-prose-r3",
+    "n": 1,
+    "medianMs": 687.9839582443237,
+    "minMs": 687.9839582443237,
+    "maxMs": 687.9839582443237
   },
   {
     "fixture": "prose-8388608.md",

@@ -51,6 +51,7 @@ struct Block {
 pub struct Document {
     source: String,
     length: usize,
+    has_references: bool,
     blocks: Vec<Block>,
     next_id: u64,
     change: Option<BlockChange>,
@@ -60,6 +61,72 @@ struct BlockChange {
     prefix: usize,
     suffix: usize,
     shift: isize,
+}
+
+#[derive(Clone, Copy)]
+struct Region {
+    first: usize,
+    last: usize,
+    first_owner: usize,
+    last_owner: usize,
+    new_from: usize,
+    new_to: usize,
+    shift: isize,
+}
+
+fn shifted(offset: usize, edit: Edit) -> usize {
+    if offset <= edit.from {
+        offset
+    } else if offset >= edit.to {
+        offset.saturating_add_signed(edit.inserted as isize - (edit.to - edit.from) as isize)
+    } else {
+        edit.from + edit.inserted
+    }
+}
+
+fn edit_region(document: &Document, edits: &[Edit]) -> Option<Region> {
+    let &[edit] = edits else { return None };
+    if document.blocks.is_empty() || document.has_references {
+        return None;
+    }
+    let first_owner = document
+        .blocks
+        .partition_point(|block| block.to <= edit.from)
+        .min(document.blocks.len() - 1);
+    let last_owner = document
+        .blocks
+        .partition_point(|block| block.to < edit.to)
+        .max(first_owner)
+        .min(document.blocks.len() - 1);
+    let first = first_owner.saturating_sub(1);
+    let last = last_owner.saturating_add(1).min(document.blocks.len() - 1);
+    let old_from = if first == 0 {
+        0
+    } else {
+        document.blocks[first - 1].to
+    };
+    let old_to = if last + 1 == document.blocks.len() {
+        document.length
+    } else {
+        document.blocks[last].to
+    };
+    Some(Region {
+        first,
+        last,
+        first_owner,
+        last_owner,
+        new_from: shifted(old_from, edit),
+        new_to: shifted(old_to, edit),
+        shift: edit.inserted as isize - (edit.to - edit.from) as isize,
+    })
+}
+
+fn has_reference_syntax(source: &str) -> bool {
+    source.lines().any(|line| {
+        let line = line.trim_start();
+        line.starts_with('[') && line.contains("]:")
+    }) || source.contains("][")
+        || source.contains("][]")
 }
 
 /// Line starts and Unicode width changes avoid a dense eight-byte-per-byte map.
@@ -455,6 +522,7 @@ fn prepare(
     callback: MathRenderer,
     opaque: *mut c_void,
 ) -> Result<Document, String> {
+    let has_references = has_reference_syntax(&source);
     let mut options = Options::default();
     options.extension.table = true;
     options.extension.math_dollars = true;
@@ -630,6 +698,7 @@ fn prepare(
     Ok(Document {
         source,
         length,
+        has_references,
         blocks,
         next_id,
         change,
@@ -804,6 +873,207 @@ pub unsafe extern "C" fn astra_comrak_parse(
         }
     }
 }
+
+/// # Safety
+/// Document and edit pointers must be valid for their stated lifetimes and lengths.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn astra_comrak_edit_region(
+    document: *const Document,
+    edits: *const Edit,
+    edit_count: usize,
+    from: *mut usize,
+    to: *mut usize,
+) -> bool {
+    if document.is_null() || from.is_null() || to.is_null() {
+        return false;
+    }
+    let edits = if edit_count == 0 {
+        &[]
+    } else if edits.is_null() {
+        return false;
+    } else {
+        unsafe { slice::from_raw_parts(edits, edit_count) }
+    };
+    let Some(region) = edit_region(unsafe { &*document }, edits) else {
+        return false;
+    };
+    unsafe {
+        *from = region.new_from;
+        *to = region.new_to;
+    }
+    true
+}
+
+fn update_region(
+    document: &mut Document,
+    source: String,
+    base: usize,
+    total_length: usize,
+    edits: &[Edit],
+    callback: MathRenderer,
+    opaque: *mut c_void,
+) -> Result<bool, String> {
+    let Some(region) = edit_region(document, edits) else {
+        return Ok(false);
+    };
+    if base != region.new_from
+        || base + source.encode_utf16().count() != region.new_to
+        || total_length != document.length.saturating_add_signed(region.shift)
+        || has_reference_syntax(&source)
+    {
+        return Ok(false);
+    }
+    let mut fragment = prepare(source, None, &[], callback, opaque)?;
+    let old_byte_from = if region.first == 0 {
+        0
+    } else {
+        document.blocks[region.first - 1].bytes.end
+    };
+    let old_byte_to = if region.last + 1 == document.blocks.len() {
+        document.source.len()
+    } else {
+        document.blocks[region.last].bytes.end
+    };
+    let byte_shift = fragment.source.len() as isize - (old_byte_to - old_byte_from) as isize;
+    let edit = edits[0];
+    let mut used = vec![false; region.last - region.first + 1];
+    let mut next_id = document.next_id;
+    for block in &mut fragment.blocks {
+        block.from += base;
+        block.to += base;
+        for span in &mut block.spans {
+            span.from += base;
+            span.to += base;
+        }
+        let local_bytes = block.bytes.clone();
+        let markdown = &fragment.source[local_bytes.clone()];
+        block.bytes = old_byte_from + local_bytes.start..old_byte_from + local_bytes.end;
+        let mut retained = None;
+        for (relative, prior) in document.blocks[region.first..=region.last]
+            .iter()
+            .enumerate()
+        {
+            if used[relative] {
+                continue;
+            }
+            let from = shifted(prior.from, edit);
+            let to = shifted(prior.to, edit);
+            if from == block.from
+                && to == block.to
+                && prior.kind == block.kind
+                && prior.html == block.html
+                && document.source[prior.bytes.clone()] == *markdown
+            {
+                retained = Some(relative);
+                break;
+            }
+        }
+        if let Some(relative) = retained {
+            used[relative] = true;
+            block.id = document.blocks[region.first + relative].id;
+        } else {
+            next_id += 1;
+            block.id = next_id;
+        }
+    }
+
+    // The unchanged outside guards are our observable parser-state checkpoint.
+    // If either disappears or changes, the edit propagated beyond the owner
+    // and this bounded result is not safe to publish.
+    if region.first < region.first_owner
+        && !fragment
+            .blocks
+            .iter()
+            .any(|b| b.id == document.blocks[region.first].id)
+    {
+        return Ok(false);
+    }
+    if region.last > region.last_owner
+        && !fragment
+            .blocks
+            .iter()
+            .any(|b| b.id == document.blocks[region.last].id)
+    {
+        return Ok(false);
+    }
+
+    let suffix = document.blocks.len() - region.last - 1;
+    for block in &mut document.blocks[region.last + 1..] {
+        block.from = block.from.saturating_add_signed(region.shift);
+        block.to = block.to.saturating_add_signed(region.shift);
+        block.bytes = block.bytes.start.saturating_add_signed(byte_shift)
+            ..block.bytes.end.saturating_add_signed(byte_shift);
+        for span in &mut block.spans {
+            span.from = span.from.saturating_add_signed(region.shift);
+            span.to = span.to.saturating_add_signed(region.shift);
+        }
+    }
+    document
+        .source
+        .replace_range(old_byte_from..old_byte_to, &fragment.source);
+    document
+        .blocks
+        .splice(region.first..=region.last, fragment.blocks);
+    document.length = total_length;
+    document.next_id = next_id;
+    document.change = Some(BlockChange {
+        prefix: region.first,
+        suffix,
+        shift: region.shift,
+    });
+    Ok(true)
+}
+
+/// # Safety
+/// Document, source and edit pointers must be valid for their stated lengths.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn astra_comrak_update_region(
+    document: *mut Document,
+    source: *const u16,
+    length: usize,
+    base: usize,
+    total_length: usize,
+    edits: *const Edit,
+    edit_count: usize,
+    math: MathRenderer,
+    context: *mut c_void,
+) -> bool {
+    if document.is_null() || (length > 0 && source.is_null()) || (edit_count > 0 && edits.is_null())
+    {
+        return false;
+    }
+    let units = if length == 0 {
+        &[]
+    } else {
+        unsafe { slice::from_raw_parts(source, length) }
+    };
+    let edits = if edit_count == 0 {
+        &[]
+    } else {
+        unsafe { slice::from_raw_parts(edits, edit_count) }
+    };
+    match catch_unwind(AssertUnwindSafe(|| {
+        update_region(
+            unsafe { &mut *document },
+            String::from_utf16_lossy(units),
+            base,
+            total_length,
+            edits,
+            math,
+            context,
+        )
+    })) {
+        Ok(Ok(updated)) => updated,
+        Ok(Err(error)) => {
+            fail(&error);
+            false
+        }
+        Err(_) => {
+            fail("Comrak regional update panicked");
+            false
+        }
+    }
+}
 /// # Safety
 /// The pointer must be null or a live document returned by this API, with no concurrent users. It must be freed only once.
 #[unsafe(no_mangle)]
@@ -855,6 +1125,9 @@ pub unsafe extern "C" fn astra_comrak_string_free(text: *mut c_char) {
 pub extern "C" fn astra_comrak_error() -> *mut c_char {
     ERROR.with(|e| CString::new(e.borrow().as_str()).unwrap().into_raw())
 }
+
+#[cfg(test)]
+mod regional_reparse_tests;
 
 #[cfg(test)]
 mod tests {

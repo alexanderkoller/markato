@@ -84,17 +84,38 @@ public final class ComrakWorker: @unchecked Sendable {
                     TimingDiagnostics.shared.end(input)
                     let native=TimingDiagnostics.shared.begin("parse.comrak")
                     #endif
-                    let prepared=rope.withContiguousUTF16 {source in
-                        edits.withUnsafeBufferPointer {edits in
-                            astra_comrak_parse(source.baseAddress,source.count,document,edits.baseAddress,edits.count,
-                                renderMath,Unmanaged.passUnretained(math).toOpaque())
+                    var prepared:OpaquePointer?,updatedInPlace=false,parsedCharacters=rope.count
+                    if let current=document,!edits.isEmpty {
+                        var from=0,to=0
+                        let regional=edits.withUnsafeBufferPointer {edits in
+                            astra_comrak_edit_region(current,edits.baseAddress,edits.count,&from,&to)
+                        }
+                        if regional,from>=0,to>=from,to<=rope.count {
+                            parsedCharacters=to-from
+                            let units=rope.units(in:NSRange(location:from,length:to-from))
+                            updatedInPlace=units.withUnsafeBufferPointer {source in
+                                edits.withUnsafeBufferPointer {edits in
+                                    astra_comrak_update_region(current,source.baseAddress,source.count,from,rope.count,
+                                        edits.baseAddress,edits.count,renderMath,Unmanaged.passUnretained(math).toOpaque())
+                                }
+                            }
+                            if updatedInPlace {prepared=current}
+                            else {parsedCharacters=rope.count}
+                        }
+                    }
+                    if !updatedInPlace {
+                        prepared=rope.withContiguousUTF16 {source in
+                            edits.withUnsafeBufferPointer {edits in
+                                astra_comrak_parse(source.baseAddress,source.count,document,edits.baseAddress,edits.count,
+                                    renderMath,Unmanaged.passUnretained(math).toOpaque())
+                            }
                         }
                     }
                     #if DEBUG
-                    TimingDiagnostics.shared.end(native)
+                    TimingDiagnostics.shared.end(native,values:["regional":updatedInPlace ? 1:0,"parsedCharacters":Double(parsedCharacters)])
                     #endif
                     guard let prepared else {throw WorkerError.message(nativeError())}
-                    if let document {astra_comrak_document_free(document)}
+                    if !updatedInPlace,let document {astra_comrak_document_free(document)}
                     document=prepared;preparedRevision=revision
                 }
                 // The first publication fills the existing retained document
