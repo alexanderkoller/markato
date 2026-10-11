@@ -98,15 +98,14 @@ public final class PreparedDocument {
     }
     private var root:BlockNode?
     private var nodes=[String:BlockNode]()
-    private var ordered=[BlockNode]()
     private var syntax=[SyntaxPage]()
     public let sourceLayout=LayoutIndex()
     public private(set) var revision = -1
     public private(set) var length=0
-    public var count:Int {ordered.count}
-    public var hasCompleteFragments:Bool {(root?.preparedCount ?? 0)==ordered.count}
+    public var count:Int {root?.count ?? 0}
+    public var hasCompleteFragments:Bool {(root?.preparedCount ?? 0)==count}
     public var styleCoverage:[NSRange] {syntax.map(\.range)}
-    public var byteCost:Int {ordered.reduce(0){$0+($1.fragment?.html?.utf8.count ?? 0)}}
+    public var byteCost:Int {nodes.values.reduce(0){$0+($1.fragment?.html?.utf8.count ?? 0)}}
     public init() {}
 
     private func build(_ items:[BlockNode],_ from:Int,_ to:Int)->BlockNode? {
@@ -183,7 +182,8 @@ public final class PreparedDocument {
         let previous=nodes
         let previousSyntax=syntax
         self.revision=revision;self.length=length;syntax.removeAll(keepingCapacity:true)
-        nodes.removeAll(keepingCapacity:true);ordered.removeAll(keepingCapacity:true)
+        nodes.removeAll(keepingCapacity:true)
+        var items=[BlockNode]();items.reserveCapacity(blocks.count)
         var start=0
         for (i,block) in blocks.enumerated() {
             precondition(block.from>=start && block.to>=block.from && block.to<=length)
@@ -204,9 +204,9 @@ public final class PreparedDocument {
                     if to>from {syntax.append(SyntaxPage(range:NSRange(location:from,length:to-from),records:page.records,shift:page.shift+delta))}
                 }
             }
-            nodes[block.id]=n;ordered.append(n);start=block.to
+            nodes[block.id]=n;items.append(n);start=block.to
         }
-        root=build(ordered,0,ordered.count)
+        root=build(items,0,items.count)
         setSyntax(syntax)
     }
 
@@ -219,8 +219,8 @@ public final class PreparedDocument {
         defer {TimingDiagnostics.shared.end(work,values:["changedBlocks":Double(change.blocks.count)])}
         #endif
         guard revision != self.revision,change.prefix>=0,change.suffix>=0,
-              change.prefix+change.suffix<=ordered.count else{return}
-        let oldCount=ordered.count,removedCount=oldCount-change.prefix-change.suffix
+              change.prefix+change.suffix<=count else{return}
+        let oldCount=count,removedCount=oldCount-change.prefix-change.suffix
         let (prefix,tail)=split(root,change.prefix)
         let (removed,suffix)=split(tail,removedCount)
         var removedItems=[BlockNode]();collect(removed,&removedItems)
@@ -246,10 +246,6 @@ public final class PreparedDocument {
         for item in inserted {nodes[item.block.id]=item}
         let middle=build(inserted,0,inserted.count)
         root=append(append(prefix,middle),suffix);root?.parent=nil
-        ordered.removeSubrange(change.prefix..<(oldCount-change.suffix))
-        ordered.insert(contentsOf:inserted,at:change.prefix)
-        // The ordered array is an identity/order directory only. Coordinates
-        // live in the tree and are materialized lazily on access.
         self.revision=revision;self.length=length
         var retained=[SyntaxPage]()
         for page in syntax {

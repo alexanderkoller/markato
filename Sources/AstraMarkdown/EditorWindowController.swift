@@ -9,15 +9,24 @@ final class EditorSplitView:NSSplitView {
 }
 
 final class EditorWindowController: NSWindowController, NSSplitViewDelegate, NSSearchFieldDelegate, NSMenuItemValidation, NSWindowDelegate {
+    private struct ParseRequest:Equatable {
+        let revision:Int
+        let range:NSRange
+        var isRetry=false
+    }
     let source: SourceEditor
     let preview = PreviewPane(frame:.zero)
     let split = EditorSplitView()
     private let content = FlippedView()
     private let findBar = NSView()
     private let findField = NSSearchField()
+    private let parseErrorBar = NSView()
+    private let parseErrorLabel = NSTextField(labelWithString:"")
+    private let parseRetryButton = NSButton(title:"Retry",target:nil,action:nil)
     private var findVisible = false
     private var findGeneration = 0
-    private var lastRequest: (Int,NSRange)?
+    private var lastRequest:ParseRequest?
+    private var parseRetryWork:DispatchWorkItem?
     private var presentationRange: (Int,NSRange)?
     private var preservedEditPresentationRevision:Int?
     private var pendingViewport:NSRange?
@@ -37,6 +46,8 @@ final class EditorWindowController: NSWindowController, NSSplitViewDelegate, NSS
     #if DEBUG
     var cachedBlockCount:Int {preparedDocument.count}
     var cachedByteCost:Int {preparedDocument.byteCost}
+    var isShowingParseError:Bool {!parseErrorBar.isHidden}
+    func debugRetryFailedParse() {retryFailedParse(nil)}
     var hasPreparedViewport:Bool {
         guard source.hasMeasuredLayout else{return false}
         let visible=source.visibleSourceRange
@@ -82,6 +93,11 @@ final class EditorWindowController: NSWindowController, NSSplitViewDelegate, NSS
         let previous = NSButton(title:"Previous",target:self,action:#selector(findPrevious(_:)))
         let done = NSButton(title:"Done",target:self,action:#selector(closeFind(_:)))
         for button in [previous,next,done] { button.bezelStyle = .rounded; findBar.addSubview(button) }
+        parseErrorBar.isHidden=true;parseErrorBar.wantsLayer=true
+        parseErrorBar.layer?.backgroundColor=NSColor.systemRed.withAlphaComponent(0.12).cgColor
+        parseErrorLabel.lineBreakMode = .byTruncatingTail
+        parseRetryButton.target=self;parseRetryButton.action=#selector(retryFailedParse(_:));parseRetryButton.bezelStyle = .rounded
+        parseErrorBar.addSubview(parseErrorLabel);parseErrorBar.addSubview(parseRetryButton);content.addSubview(parseErrorBar)
         content.postsFrameChangedNotifications = true
         NotificationCenter.default.addObserver(self,selector:#selector(contentResized(_:)),name:NSView.frameDidChangeNotification,object:content)
         source.viewportChanged = { [weak self] range in self?.viewportChanged(range) }
@@ -122,6 +138,7 @@ final class EditorWindowController: NSWindowController, NSSplitViewDelegate, NSS
         preview.baseURL = document.fileURL?.deletingLastPathComponent()
         document.edited = { [weak self] selection,_,edit in
             guard let self,!self.isClosed else { return }
+            self.cancelParseRetry();self.hideParseError()
             self.completePresentationPendingRevision=nil
             if self.preview.displaysCompleteDocument {
                 // Retain the complete DOM. Once Comrak publishes the manifest
@@ -174,6 +191,7 @@ final class EditorWindowController: NSWindowController, NSSplitViewDelegate, NSS
     func windowDidEndLiveResize(_ notification:Notification) {preview.endLiveResize();source.endLiveResize()}
     func windowWillClose(_ notification:Notification) {
         isClosed=true;pendingViewport=nil;openingRequested=false
+        cancelParseRetry()
         source.viewportChanged=nil;source.geometryChanged=nil
         source.scrollGestureChanged=nil;source.navigationRequested=nil
         source.scrollOverflow=nil
@@ -181,11 +199,16 @@ final class EditorWindowController: NSWindowController, NSSplitViewDelegate, NSS
     }
     @objc private func contentResized(_ notification:Notification) { layoutContent() }
     private func layoutContent() {
-        let bar:CGFloat = findVisible ? 38 : 0
-        findBar.frame = NSRect(x:0,y:0,width:content.bounds.width,height:bar)
+        let findHeight:CGFloat = findVisible ? 38 : 0
+        let errorHeight:CGFloat = parseErrorBar.isHidden ? 0 : 36
+        let bar=findHeight+errorHeight
+        findBar.frame = NSRect(x:0,y:0,width:content.bounds.width,height:findHeight)
         findField.frame = NSRect(x:12,y:6,width:max(180,content.bounds.width-300),height:26)
         let buttons = findBar.subviews.compactMap{$0 as? NSButton}
         for (index,button) in buttons.enumerated() { button.frame = NSRect(x:content.bounds.width-276+CGFloat(index)*88,y:5,width:82,height:28) }
+        parseErrorBar.frame=NSRect(x:0,y:findHeight,width:content.bounds.width,height:errorHeight)
+        parseErrorLabel.frame=NSRect(x:12,y:8,width:max(100,content.bounds.width-104),height:20)
+        parseRetryButton.frame=NSRect(x:content.bounds.width-82,y:4,width:70,height:28)
         split.frame = NSRect(x:0,y:bar,width:content.bounds.width,height:content.bounds.height-bar)
         split.adjustSubviews(); source.needsLayout = true; preview.needsLayout = true
     }
@@ -199,7 +222,7 @@ final class EditorWindowController: NSWindowController, NSSplitViewDelegate, NSS
             DispatchQueue.main.async { [weak self] in self?.prepareViewport() }
         }
     }
-    private func prepareViewport() {
+    private func prepareViewport(retrying failedRequest:ParseRequest?=nil) {
         guard !isClosed else{return}
         #if DEBUG
         let work=TimingDiagnostics.shared.begin("viewport.prepare")
@@ -207,6 +230,9 @@ final class EditorWindowController: NSWindowController, NSSplitViewDelegate, NSS
         #endif
         viewportScheduled = false
         guard let visible = pendingViewport else { return }; pendingViewport = nil
+        // Layout changes caused by the error bar must not become unbounded
+        // implicit retries. Editing or the Retry action clears the bar first.
+        guard parseErrorBar.isHidden else{return}
         let doc = markdownDocument, rope = doc.source
         let margin=rope.lines(max(0,rope.line(at:visible.location)-5),min(rope.lineCount,rope.line(at:NSMaxRange(visible))+6))
         if preparedDocument.revision==doc.revision,let styles=preparedDocument.styles(in:margin),
@@ -227,14 +253,18 @@ final class EditorWindowController: NSWindowController, NSSplitViewDelegate, NSS
         let startLine = max(0,firstVisibleLine-overscan)
         let endLine = min(rope.lineCount,lastVisibleLine+overscan)
         let range = rope.lines(startLine,endLine)
-        if let lastRequest, lastRequest.0 == doc.revision, NSEqualRanges(lastRequest.1,range) { return }
-        lastRequest = (doc.revision,range)
+        let isRetry=failedRequest?.revision==doc.revision && failedRequest?.range==range
+        if !isRetry,lastRequest?.revision==doc.revision,lastRequest?.range==range {return}
+        cancelParseRetry()
+        let request=ParseRequest(revision:doc.revision,range:range,isRetry:isRetry)
+        lastRequest=request
         let cached=preparedDocument.revision==doc.revision ? preparedDocument.entries(covering:range):nil
         let revision = doc.revision
         doc.parser.request(rope:rope,revision:revision,visible:range,renderHTML:cached==nil,includeFragments:cached==nil) { [weak self] result in
-            guard let self,!self.isClosed, self.markdownDocument.revision == revision, self.lastRequest?.0 == revision, self.lastRequest?.1 == range else { return }
+            guard let self,!self.isClosed,self.markdownDocument.revision==revision,self.lastRequest==request else{return}
             switch result {
             case .success(let parsed):
+                self.cancelParseRetry();self.hideParseError()
                 if self.preparedDocument.revision != revision {
                     if let change=parsed.blockChange,self.preparedDocument.revision>=0 {
                         self.preparedDocument.apply(change,revision:revision,length:rope.count)
@@ -281,11 +311,39 @@ final class EditorWindowController: NSWindowController, NSSplitViewDelegate, NSS
                 self.source.needsLayout = true
                 self.prepareDocument(rope:rope,revision:revision)
             case .failure(let error):
-                // A failed request must not permanently suppress this range.
-                self.lastRequest=nil
-                NSLog("Markdown parsing failed: %@",error.localizedDescription)
+                self.handleParseFailure(error,request:request)
             }
         }
+    }
+    private func handleParseFailure(_ error:Error,request:ParseRequest) {
+        NSLog("Markdown parsing failed at revision %d: %@",request.revision,error.localizedDescription)
+        if request.isRetry {
+            lastRequest=nil;cancelParseRetry()
+            preview.showParseFailure(revision:request.revision)
+            parseErrorLabel.stringValue="Preview could not be updated: \(error.localizedDescription)"
+            parseErrorBar.isHidden=false;layoutContent()
+            return
+        }
+        let work=DispatchWorkItem { [weak self] in
+            guard let self,!self.isClosed,self.markdownDocument.revision==request.revision,
+                  self.lastRequest==request else{return}
+            self.pendingViewport=self.source.visibleSourceRange
+            self.prepareViewport(retrying:request)
+        }
+        parseRetryWork=work
+        DispatchQueue.main.asyncAfter(deadline:.now()+0.1,execute:work)
+    }
+    private func cancelParseRetry() {
+        parseRetryWork?.cancel();parseRetryWork=nil
+    }
+    private func hideParseError() {
+        preview.clearParseFailure()
+        guard !parseErrorBar.isHidden else{return}
+        parseErrorBar.isHidden=true;layoutContent()
+    }
+    @objc private func retryFailedParse(_ sender:Any?) {
+        cancelParseRetry();hideParseError();lastRequest=nil
+        pendingViewport=source.visibleSourceRange;prepareViewport()
     }
     private func showPreparedDocument(revision:Int) {
         guard !isClosed else{return}
@@ -309,9 +367,9 @@ final class EditorWindowController: NSWindowController, NSSplitViewDelegate, NSS
            preparedDocument.entries(covering:presented.1) != nil {
             requestedRange=presented.1
             reusesPresentedWindow=true
-        } else if let request=lastRequest,request.0==revision,
-           request.1.location<=visible.location,NSMaxRange(request.1)>=NSMaxRange(visible) {
-            requestedRange=request.1
+        } else if let request=lastRequest,request.revision==revision,
+           request.range.location<=visible.location,NSMaxRange(request.range)>=NSMaxRange(visible) {
+            requestedRange=request.range
             reusesPresentedWindow=false
         } else {requestedRange=visible;reusesPresentedWindow=false}
         // presentationRange already includes the scroll reserve. Re-expanding

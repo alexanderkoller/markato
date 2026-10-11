@@ -46,21 +46,38 @@ import MarkdownCore
             else {DispatchQueue.main.asyncAfter(deadline:.now()+0.01){wait(remaining-1,ready,failure,completion)}}
         }
         wait(500,{controller.hasPreparedViewport && preview.lastRevision==document.revision &&
-            preview.webView.debugText.contains("AstraMarkdown")},"Ultralight did not publish the first viewport") {
+            preview.previewView.debugText.contains("AstraMarkdown")},"Ultralight did not publish the first viewport") {
             check(preview.coversSourceViewport,"The first Ultralight window must cover the source viewport")
             check(preview.preparedFragmentCount<350,"The first Ultralight window must remain bounded")
-            check(preview.webView.debugCount("section[data-id]")==preview.preparedFragmentCount,
+            check(preview.previewView.debugCount("section[data-id]")==preview.preparedFragmentCount,
                 "Ultralight DOM and retained presentation must contain the same blocks")
-            check(preview.webView.debugRect("h1",containing:"AstraMarkdown") != nil,
+            check(preview.previewView.debugRect("h1",containing:"AstraMarkdown") != nil,
                 "The first heading must have measured Ultralight geometry")
-            check(preview.webView.debugCount(".katex")>0,"Ultralight must retain Comrak's KaTeX output")
-            check(preview.webView.debugCount("tbody tr")>0,"Ultralight must render complete table markup")
-            check(preview.webView.debugCount("img")>0 && (preview.webView.debugRect("img")?.height ?? 0)>0,
+            check(preview.previewView.debugCount(".katex")>0,"Ultralight must retain Comrak's KaTeX output")
+            check(preview.previewView.debugCount("tbody tr")>0,"Ultralight must render complete table markup")
+            check(preview.previewView.debugCount("img")>0 && (preview.previewView.debugRect("img")?.height ?? 0)>0,
                 "Ultralight must resolve and lay out the bundled local image")
             let startupCount=preview.preparedFragmentCount
-            verifyTopResizeAnchor(controller) {
-                continueAfterTopResize(controller,document:document,startupCount:startupCount,wait:wait)
+            verifyPresentationFailureRecovery(controller,wait:wait) {
+                verifyTopResizeAnchor(controller) {
+                    continueAfterTopResize(controller,document:document,startupCount:startupCount,wait:wait)
+                }
             }
+        }
+    }
+    private static func verifyPresentationFailureRecovery(_ controller:EditorWindowController,
+        wait:@escaping(Int,@escaping()->Bool,String,@escaping()->Void)->Void,completion:@escaping()->Void) {
+        let preview=controller.preview
+        let failures=preview.presentationFailureCount,revision=preview.lastRevision
+        preview.debugFailNextPresentation()
+        preview.fontSize += 0.5
+        wait(100,{preview.presentationFailureCount==failures+1 &&
+            preview.lastRevision==revision},"Ultralight did not recover from a failed presentation") {
+            check(preview.retainedPresentationAfterFailure,
+                "A failed replacement must retain the committed presentation without a loading mask")
+            check(preview.previewView.debugText.contains("AstraMarkdown"),
+                "Recovery must publish the requested document through the normal presentation path")
+            completion()
         }
     }
     private static func verifyTopResizeAnchor(_ controller:EditorWindowController,completion:@escaping()->Void) {
@@ -95,13 +112,13 @@ import MarkdownCore
             window.setContentSize(sizes[index])
             window.contentView?.layoutSubtreeIfNeeded()
             window.displayIfNeeded()
-            check(controller.preview.webView.debugPaintedBitmapTop==0,
+            check(controller.preview.previewView.debugPaintedBitmapTop==0,
                 "Cached preview bitmap moved away from the viewport top during resize")
             // Width changes schedule TextKit layout and an Ultralight frame.
             // Inspect after both have had an opportunity to adjust their clips.
             DispatchQueue.main.asyncAfter(deadline:.now()+0.03) {
                 window.contentView?.layoutSubtreeIfNeeded();window.displayIfNeeded()
-                check(controller.preview.webView.debugPaintedBitmapTop==0,
+                check(controller.preview.previewView.debugPaintedBitmapTop==0,
                     "Replacement preview bitmap moved away from the viewport top after resize")
                 check(controller.source.debugFirstLineViewportY==sourceTop,
                     "Source first heading moved after deferred top-anchored live-resize work")
@@ -124,33 +141,54 @@ import MarkdownCore
                 "A cached deep jump did not publish") {
                 check(preview.preparedFragmentCount<350,"A deep jump must keep the mounted DOM bounded")
                 check(controller.hasPreparedDocument,"The deep jump should use the fully prepared retained tree")
-                let editRevision=document.revision+1
-                document.replace(NSRange(location:document.source.count,length:0),with:"\n\n## ULTRALIGHT_EDIT\n\nVisible edit.\n")
+                let transientRevision=document.revision+1
+                document.parser.debugFailNextRequests()
+                document.replace(NSRange(location:document.source.count,length:0),with:"\n\n## TRANSIENT_PARSE_EDIT\n\nRecovered automatically.\n")
                 source.reveal(document.source.count,alignTop:false)
-                wait(800,{document.revision==editRevision && preview.lastRevision==editRevision &&
-                    preview.webView.debugText.contains("ULTRALIGHT_EDIT")},"Visible edit did not update Ultralight") {
-                    check(preview.preparedFragmentCount<350,"A visible edit must not expand the mounted DOM")
-                    let oldWidth=preview.bounds.width
-                    preview.beginLiveResize()
-                    preview.frame.size.width=max(320,oldWidth-73)
-                    preview.layoutSubtreeIfNeeded()
-                    preview.endLiveResize()
-                    wait(300,{abs((preview.webView.geometry()?.width ?? 0)-preview.bounds.width)<=1},
-                        "Ultralight did not settle after resize") {
-                        source.reveal(0,alignTop:true)
-                        wait(800,{preview.coversSourceViewport && preview.webView.debugText.contains("AstraMarkdown")},
-                            "Return to the cached first viewport failed") {
-                            check(preview.preparedFragmentCount<350,"Returning to the top must remain bounded")
-                            check(startupCount>0,"Startup must mount semantic entries")
-                            print("INTEGRATION PASSED: Ultralight bounded first view, cached deep jump, retained-tree edit, resize, and return-to-top scrolling")
-                            if CommandLine.arguments.contains("--diagnostics") {
-                                try? TimingDiagnostics.shared.snapshot().json().write(to:URL(fileURLWithPath:"/private/tmp/astra-ultralight-integration-timings.json"),options:.atomic)
-                            }
-                            exit(EXIT_SUCCESS)
+                wait(800,{document.revision==transientRevision && preview.lastRevision==transientRevision &&
+                    preview.previewView.debugText.contains("TRANSIENT_PARSE_EDIT")},"Transient parser failure did not recover") {
+                    check(!controller.isShowingParseError,"A successful automatic retry must clear the parse error")
+                    let retainedRevision=preview.displayedDocumentRevision,repeatedRevision=document.revision+1
+                    document.parser.debugFailNextRequests(2)
+                    document.replace(NSRange(location:document.source.count,length:0),with:"\n\n## REPEATED_PARSE_EDIT\n\nRecovered manually.\n")
+                    source.reveal(document.source.count,alignTop:false)
+                    wait(800,{controller.isShowingParseError},"Repeated parser failure did not expose Retry") {
+                        check(preview.displayedDocumentRevision==retainedRevision,
+                            "Repeated parser failure must retain the last successful preview revision")
+                        check(preview.previewView.debugText.contains("TRANSIENT_PARSE_EDIT") && !preview.isShowingLoadingState,
+                            "Repeated parser failure must leave the last successful preview visible")
+                        controller.debugRetryFailedParse()
+                        wait(800,{document.revision==repeatedRevision && preview.lastRevision==repeatedRevision &&
+                            preview.previewView.debugText.contains("REPEATED_PARSE_EDIT")},"Manual parser retry did not recover") {
+                            continueAfterRecoveredParse(controller,document:document,startupCount:startupCount,wait:wait)
                         }
                     }
                 }
             }
+    }
+    private static func continueAfterRecoveredParse(_ controller:EditorWindowController,document:MarkdownDocument,
+        startupCount:Int,wait:@escaping(Int,@escaping()->Bool,String,@escaping()->Void)->Void) {
+        let preview=controller.preview,source=controller.source
+        check(preview.preparedFragmentCount<350,"A visible edit must not expand the mounted DOM")
+        let oldWidth=preview.bounds.width
+        preview.beginLiveResize()
+        preview.frame.size.width=max(320,oldWidth-73)
+        preview.layoutSubtreeIfNeeded()
+        preview.endLiveResize()
+        wait(300,{abs((preview.previewView.geometry()?.width ?? 0)-preview.bounds.width)<=1},
+            "Ultralight did not settle after resize") {
+            source.reveal(0,alignTop:true)
+            wait(800,{preview.coversSourceViewport && preview.previewView.debugText.contains("AstraMarkdown")},
+                "Return to the cached first viewport failed") {
+                check(preview.preparedFragmentCount<350,"Returning to the top must remain bounded")
+                check(startupCount>0,"Startup must mount semantic entries")
+                print("INTEGRATION PASSED: bounded first view, presentation recovery, automatic and manual parse recovery, retained stale preview, cached navigation, edit, resize, and return-to-top scrolling")
+                if CommandLine.arguments.contains("--diagnostics") {
+                    try? TimingDiagnostics.shared.snapshot().json().write(to:URL(fileURLWithPath:"/private/tmp/astra-ultralight-integration-timings.json"),options:.atomic)
+                }
+                exit(EXIT_SUCCESS)
+            }
+        }
     }
     private static func verifyLayoutIndex() {
         let doc=MarkdownDocument();fixtureDocuments.append(doc)

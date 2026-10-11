@@ -20,12 +20,11 @@ public struct HTMLPreviewGeometry: Equatable, Sendable {
 @MainActor public final class HTMLPreviewView:NSView {
     public var verticalWheel:((NSEvent)->Void)?
     public var openURL:((URL)->Void)?
-    public private(set) var isEngineReady=false
+    public var isEngineReady:Bool {engine != nil}
     private var engine:OpaquePointer?
     private var image:CGImage?
     private var imageSize:NSSize = .zero
-    private var entries=[RenderedEntry]()
-    private var fontSize:CGFloat=14
+    private var entryIDs=[String]()
     private var baseURL:URL?
     private var embeddedAssets=[URL:String]()
     private var horizontalGesture:Bool?
@@ -39,6 +38,7 @@ public struct HTMLPreviewGeometry: Equatable, Sendable {
     private var pixelData=Data()
     #if DEBUG
     public private(set) var debugPaintedBitmapTop:CGFloat?
+    private var debugFailsNextPresentation=false
     #endif
 
     public override var isFlipped:Bool {true}
@@ -64,7 +64,6 @@ public struct HTMLPreviewGeometry: Equatable, Sendable {
         root.withCString {root in css.withCString {style in
             engine=astra_ul_surface_create(root,style,1,1,scale)
         }}
-        isEngineReady=engine != nil
     }
     required init?(coder:NSCoder) {fatalError()}
     deinit {resourcePump?.invalidate();pendingFlush?.cancel();if let engine {astra_ul_surface_destroy(engine)}}
@@ -82,7 +81,9 @@ public struct HTMLPreviewGeometry: Equatable, Sendable {
 
     public func present(_ next:[RenderedEntry],fontSize:CGFloat,baseURL:URL?=nil)->HTMLPreviewGeometry? {
         guard let engine else{return nil}
-        entries=next;self.fontSize=fontSize;self.baseURL=baseURL
+        #if DEBUG
+        if debugFailsNextPresentation {debugFailsNextPresentation=false;return nil}
+        #endif
         astra_ul_surface_begin_update(engine,next.count,fontSize)
         for entry in next {
             guard let html=entry.fragment.html else{return nil}
@@ -92,6 +93,7 @@ public struct HTMLPreviewGeometry: Equatable, Sendable {
             }}
         }
         guard astra_ul_surface_commit_update(engine) else{return nil}
+        entryIDs=next.map(\.id);self.baseURL=baseURL
         didRender()
         refreshImage()
         if next.contains(where:{$0.fragment.html?.contains("<img") == true}) {beginResourcePump()}
@@ -101,12 +103,12 @@ public struct HTMLPreviewGeometry: Equatable, Sendable {
     public func geometry()->HTMLPreviewGeometry? {
         guard let engine else{return nil}
         var value=AstraULGeometry()
-        guard astra_ul_surface_geometry(engine,&value),value.item_count==entries.count else{return nil}
-        var items=[HTMLPreviewGeometry.Item]();items.reserveCapacity(entries.count)
-        for index in entries.indices {
+        guard astra_ul_surface_geometry(engine,&value),value.item_count==entryIDs.count else{return nil}
+        var items=[HTMLPreviewGeometry.Item]();items.reserveCapacity(entryIDs.count)
+        for index in entryIDs.indices {
             var item=AstraULGeometryItem()
             guard astra_ul_surface_geometry_item(engine,index,&item) else{return nil}
-            items.append(.init(id:entries[index].id,y:item.y,height:item.height,
+            items.append(.init(id:entryIDs[index],y:item.y,height:item.height,
                 landmark:item.has_landmark ? item.landmark_y:nil))
         }
         return HTMLPreviewGeometry(width:value.width,height:value.height,items:items)
@@ -243,6 +245,7 @@ public struct HTMLPreviewGeometry: Equatable, Sendable {
     }
 
     #if DEBUG
+    public func debugFailNextPresentation() {debugFailsNextPresentation=true}
     public var debugText:String {
         guard let engine,let raw=astra_ul_surface_text(engine) else{return ""}
         defer {astra_ul_string_free(raw)};return String(cString:raw)

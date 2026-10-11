@@ -68,7 +68,7 @@ dist/debug/AstraMarkdown.app/Contents/MacOS/AstraMarkdown --integration-test
 dist/debug/AstraMarkdown.app/Contents/MacOS/AstraMarkdown --integration-layout-index
 ```
 
-The default integration check covers the bounded first view, cached deep navigation, an EOF edit, resize, and return to the top. The layout-index check compares refined cached positions with independent native glyph coordinates after edits and width changes.
+The default integration check covers the bounded first view, failed presentation recovery, automatic and manual parser recovery while retaining the committed view, cached deep navigation, EOF edits, resize, and return to the top. The layout-index check compares refined cached positions with independent native glyph coordinates after edits and width changes.
 
 These checks establish state ownership, geometry consistency, and parser behavior. They do not prove compositor timing on every physical display.
 

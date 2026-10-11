@@ -49,6 +49,25 @@ private func prepare(_ text:String,_ worker:ComrakWorker = ComrakWorker(),revisi
     #expect(result.fragments.filter{$0.kind=="MathBlock"}.count==3)
     #expect(result.spans.contains{$0.kind=="MathInline"})
 }
+@Test func invalidMathStaysLocalToItsExpression() async throws {
+    let invalid=try await prepare("Before $\\frac{$ after.\n")
+    let invalidHTML=invalid.fragments.compactMap{$0.html}.joined()
+    #expect(invalidHTML.contains("katex-error"))
+    #expect(invalidHTML.contains("Before"))
+    #expect(invalidHTML.contains("after"))
+}
+#if DEBUG
+@Test func unavailableMathStaysLocalToItsExpression() async throws {
+    let worker=ComrakWorker()
+    worker.debugFailNextMathRender()
+    let unavailable=try await prepare("Before $x & <y$ after.\n",worker)
+    let unavailableHTML=unavailable.fragments.compactMap{$0.html}.joined()
+    #expect(unavailableHTML.contains("class=\"math-error\""))
+    #expect(unavailableHTML.contains("x &amp; &lt;y"))
+    #expect(unavailableHTML.contains("Before"))
+    #expect(unavailableHTML.contains("after"))
+}
+#endif
 @Test func blankDocumentAndDistantReferencesHaveCompleteCoverage() async throws {
     let blank=try await prepare(String(repeating:"\n",count:300))
     #expect(blank.fragments.first?.kind=="Empty")

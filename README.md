@@ -47,9 +47,12 @@ The first presentation waits for the revision's single Comrak parse and conversi
 
 Both panes share a `PreparedDocument` containing an AVL block sequence, an interval index of complete source-style records, measured source lines and measured preview heights under the same block IDs and source coordinates. Each native update returns a manifest identifying the unchanged prefix and suffix. The document splices only the changed middle, lazily shifts suffix coordinates and retains cached HTML, syntax, source measurements and preview heights on both sides. TextKit and the bounded Ultralight DOM therefore rebuild only the affected visible units after a local edit.
 
-The Comrak adapter preserves complete paragraphs, lists, quotes, tables and code across viewport changes. Source delimiter styling is derived from parser-recognized source ranges, rather than another Markdown parser. Initial and fallback parsing and the retained model grow with document size; ordinary local reparsing, mounted DOM, layout, and paint are bounded by the affected region or visible window plus any intrinsically large element. The preserved pre-port builds and benchmark records are under `research/2026-10-10/comrak-port/baseline`; the Ultralight decision and module boundary are documented in `docs/ultralight-preview-architecture.md`.
+The Comrak adapter preserves complete paragraphs, lists, quotes, tables and code across viewport changes. Source delimiter styling is derived from parser-recognized source ranges, rather than another Markdown parser. Initial and fallback parsing and the retained model grow with document size; ordinary local reparsing, mounted DOM, layout, and paint are bounded by the affected region or visible window plus any intrinsically large element. The Ultralight module boundary is documented in `docs/ultralight-preview-architecture.md`.
 
 ## Validation
+
+Install the Ultralight SDK as described in `Vendor/Ultralight/README.md`, or set
+`ASTRA_ULTRALIGHT_SDK` to an extracted SDK, before running the Swift checks.
 
 ```sh
 bash scripts/build-native.sh
@@ -68,7 +71,7 @@ dist/debug/AstraMarkdown.app/Contents/MacOS/AstraMarkdown --integration-test
 dist/debug/AstraMarkdown.app/Contents/MacOS/AstraMarkdown --smoke-test
 ```
 
-The default integration check verifies a bounded Ultralight first view, cached deep navigation without reparsing, a retained-tree edit, resize, and return-to-top scrolling. Focused flags retain the source-layout and jump checks. Failed checks exit with a nonzero status. The smoke check writes a bitmap of the example window to `/private/tmp/astra-smoke.png`.
+The default integration check verifies a bounded Ultralight first view, presentation and parser recovery without hiding the committed view, cached deep navigation without reparsing, a retained-tree edit, resize, and return-to-top scrolling. Parser failures receive one cancellable automatic retry; repeated failures leave the last good preview visible and expose a Retry button. Focused flags retain the source-layout and jump checks. Failed checks exit with a nonzero status. The smoke check writes a bitmap of the example window to `/private/tmp/astra-smoke.png`.
 
 The prototype has not established same-frame presentation at 60/120 Hz or complete behavior equivalence with the earlier Markdown dialect. In particular, try complex nested lists and quotes, very large paragraphs and table cells, composed input, rapid scrolling and continuous resizing.
 
@@ -101,10 +104,6 @@ dist/debug/AstraMarkdown.app/Contents/MacOS/AstraMarkdown --integration-test --d
 
 Its report is written to `/private/tmp/astra-ultralight-integration-timings.json`. A focused `--integration-layout-index` check independently compares the cached index with native glyph coordinates after local and coalesced edits, Unicode/CRLF insertion, deletion, append, typography, resize, and model-driven replacement.
 
-The [6 October performance profile](research/2026-10-06/performance/README.md)
-records CPU samples, before/after timing comparisons, the duplicate-highlighting
-fix, and the remaining optimization candidates.
-
 ## Parser maintenance
 
 Comrak 0.55.0 is vendored with a small source-coordinate correction documented in `Native/vendor/comrak/ASTRA-PATCH.md`. The Rust dependency versions are pinned in `Native/Comrak/Cargo.lock`. Build the native adapter with `bash scripts/build-native.sh`. The bundled KaTeX JavaScript and third-party notices are checked in. To rebuild KaTeX after changing `Parser/math.mjs`:
@@ -115,7 +114,7 @@ npm ci
 npm run build
 ```
 
-The application has no external Swift dependencies. Node library versions are pinned in package-lock.json. Comrak, Rust dependency and KaTeX license notices are packaged in the application. Earlier library experiments remain under `research/2026-10-05`.
+The application has no external Swift package dependencies. The Ultralight SDK is installed separately as described in `Vendor/Ultralight/README.md`. Node library versions are pinned in package-lock.json. Comrak, Rust dependency and KaTeX license notices are packaged in the application.
 
 The complete preview regression gate runs debug and release core tests, packages and audits the release app, builds the separate debug app, and exercises bounded native presentation, editing, resizing, and cached navigation. Run it from a macOS graphical session:
 

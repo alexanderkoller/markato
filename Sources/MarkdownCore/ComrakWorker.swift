@@ -12,9 +12,16 @@ public final class ComrakWorker: @unchecked Sendable {
     private var pendingEdits=[(revision:Int,edit:SourceEdit)]()
     private var document:OpaquePointer?
     private var preparedRevision = -1,publishedRevision = -1
-    private var manifestBlocks:[PreparedBlock]?
+    private var changeBaseRevision:Int?
     private var identity=UUID().uuidString
     private let math=MathEngine()
+    #if DEBUG
+    private var debugFailuresRemaining=0
+    public func debugFailNextRequests(_ count:Int = 1) {
+        lock.lock();debugFailuresRemaining=max(0,count);lock.unlock()
+    }
+    public func debugFailNextMathRender() {math.debugFailNextRender()}
+    #endif
 
     public init() {}
     deinit {if let document {astra_comrak_document_free(document)}}
@@ -28,7 +35,7 @@ public final class ComrakWorker: @unchecked Sendable {
             lock.lock();let current=documentEpoch==epoch;lock.unlock()
             guard current else{return}
             if let document {astra_comrak_document_free(document)}
-            document=nil;preparedRevision = -1;publishedRevision = -1;manifestBlocks=nil;identity=UUID().uuidString
+            document=nil;preparedRevision = -1;publishedRevision = -1;changeBaseRevision=nil;identity=UUID().uuidString
         }
     }
     /// Starts the one complete parse as soon as NSDocument has decoded the
@@ -51,31 +58,41 @@ public final class ComrakWorker: @unchecked Sendable {
             guard let prepared else {return}
             if let document {astra_comrak_document_free(document)}
             document=prepared;preparedRevision=revision;publishedRevision = -1
-            manifestBlocks=nil;identity=UUID().uuidString
+            changeBaseRevision=nil;identity=UUID().uuidString
         }
     }
-    public func request(rope:TextRope,revision:Int,visible:NSRange,edit:SourceEdit? = nil,
+    public func request(rope:TextRope,revision:Int,visible:NSRange,
                         renderHTML:Bool = true,includeFragments:Bool = true,
                         completion:@escaping(Result<ParseResult,Error>)->Void) {
         #if DEBUG
         let waiting=TimingDiagnostics.shared.begin("parse.queue.wait")
         #endif
-        lock.lock();generation += 1;let requestedGeneration=generation;latestRevision=max(latestRevision,revision)
-        if let edit {pendingEdits.append((revision,edit))};lock.unlock()
+        lock.lock();generation += 1;let requestedGeneration=generation;latestRevision=max(latestRevision,revision);lock.unlock()
         queue.async { [self] in
             #if DEBUG
             TimingDiagnostics.shared.end(waiting)
             #endif
             lock.lock();let current=generation==requestedGeneration
             let changes=current ? pendingEdits.filter{$0.revision<=revision}.map{$0.edit}:[]
-            if current {pendingEdits.removeAll{$0.revision<=revision}};lock.unlock()
+            #if DEBUG
+            let injectedFailure=current && debugFailuresRemaining>0
+            if injectedFailure {debugFailuresRemaining -= 1}
+            #endif
+            lock.unlock()
             guard current else{return}
+            #if DEBUG
+            if injectedFailure {
+                DispatchQueue.main.async {completion(.failure(WorkerError.message("Injected parser failure")))}
+                return
+            }
+            #endif
             #if DEBUG
             let work=TimingDiagnostics.shared.begin("parse.viewport.work")
             defer {TimingDiagnostics.shared.end(work,values:["revision":Double(revision),"documentCharacters":Double(rope.count),"viewportCharacters":Double(visible.length),"renderHTML":renderHTML ? 1:0])}
             #endif
             do {
                 if preparedRevision != revision {
+                    let baseRevision=preparedRevision
                     #if DEBUG
                     let input=TimingDiagnostics.shared.begin("parse.input")
                     #endif
@@ -117,12 +134,18 @@ public final class ComrakWorker: @unchecked Sendable {
                     guard let prepared else {throw WorkerError.message(nativeError())}
                     if !updatedInPlace,let document {astra_comrak_document_free(document)}
                     document=prepared;preparedRevision=revision
+                    changeBaseRevision=baseRevision>=0 ? baseRevision:nil
+                    // The native document now includes every edit through this
+                    // revision. Consume those edits at the same transition so
+                    // a superseding request cannot apply them a second time.
+                    lock.lock();pendingEdits.removeAll{$0.revision<=revision};lock.unlock()
                 }
-                // The first publication fills the existing retained document
-                // structures exactly as the Lezer implementation did. Later
-                // edits publish only their manifest delta and visible records.
+                // A delta is valid only when the UI published the exact native
+                // revision it was computed from. Superseded intermediate parses
+                // fall back to a full manifest; ordinary edits keep the smaller
+                // delta publication.
                 let manifest:UInt8 = renderHTML && includeFragments
-                    ? (publishedRevision < 0 ? 1 : publishedRevision != revision ? 2 : 0) : 0
+                    ? (publishedRevision==revision ? 0 : changeBaseRevision==publishedRevision ? 2 : 1) : 0
                 // The complete lightweight manifest seeds the retained block
                 // tree, but syntax and HTML records stay bounded to the
                 // requested viewport. Background queries fill the same nodes.
@@ -141,10 +164,9 @@ public final class ComrakWorker: @unchecked Sendable {
                 }
                 let full=decoded.blocks?.map(block)
                 let change=decoded.blockChange.map{PreparedBlockChange(prefix:$0.prefix,suffix:$0.suffix,shift:$0.shift,blocks:$0.blocks.map(block))}
-                if let full {manifestBlocks=full}
                 let result=ParseResult(revision:decoded.revision,spans:decoded.spans,
                     fragments:decoded.fragments.map{PreviewFragment(kind:$0.kind,from:$0.from,to:$0.to,html:$0.html,id:$0.id.map{identity+":"+$0})},
-                    blocks:full != nil ? manifestBlocks:nil,blockChange:change)
+                    blocks:full,blockChange:change)
                 #if DEBUG
                 TimingDiagnostics.shared.end(records)
                 #endif
@@ -210,7 +232,16 @@ private final class MathEngine {
     private struct Key:Hashable {let tex:String;let display:Bool}
     private var context:JSContext?
     private var cache=[Key:String]()
+    #if DEBUG
+    private let debugLock=NSLock()
+    private var debugFailurePending=false
+    func debugFailNextRender() {debugLock.lock();debugFailurePending=true;debugLock.unlock()}
+    #endif
     func render(_ tex:String,display:Bool)->String? {
+        #if DEBUG
+        debugLock.lock();let fail=debugFailurePending;debugFailurePending=false;debugLock.unlock()
+        if fail {return nil}
+        #endif
         let key=Key(tex:tex,display:display)
         if let cached=cache[key] {return cached}
         if context==nil {
@@ -231,6 +262,15 @@ private let renderMath:AstraMathRenderer = {opaque,bytes,length,display in
     let timing=TimingDiagnostics.shared.begin("math.katex")
     defer {TimingDiagnostics.shared.end(timing)}
     #endif
-    guard let html=engine.render(tex,display:display) else{return nil}
+    let html=engine.render(tex,display:display) ?? mathErrorHTML(tex,display:display)
     return html.withCString{strdup($0)}
+}
+private func mathErrorHTML(_ tex:String,display:Bool)->String {
+    let escaped=tex.replacingOccurrences(of:"&",with:"&amp;")
+        .replacingOccurrences(of:"<",with:"&lt;")
+        .replacingOccurrences(of:">",with:"&gt;")
+        .replacingOccurrences(of:"\"",with:"&quot;")
+    return display
+        ? "<pre class=\"math-error\" title=\"Mathematics could not be rendered\"><code>\(escaped)</code></pre>"
+        : "<code class=\"math-error\" title=\"Mathematics could not be rendered\">\(escaped)</code>"
 }
