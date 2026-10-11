@@ -103,11 +103,26 @@ private func prepared(_ id:String,_ from:Int,_ to:Int,_ text:String)->PreviewFra
     #expect(single?.entries.map(\.id)==["2"])
     #expect(single?.previewTop==46)
     // The unrendered final node still contributes an estimated scrollbar
-    // extent, but can never enter the WebKit window.
+    // extent, but can never enter the rendered window.
     #expect(single?.previewHeight==218)
 
     let expanded=doc.window(covering:NSRange(location:20,length:10),before:25,after:500)
     #expect(expanded?.entries.map(\.id)==["0","1","2","3","4"])
     #expect(expanded?.range==NSRange(location:0,length:50))
     #expect(expanded?.previewTop==16)
+}
+
+@Test func measuredHeightCorrectionMatchesTheNextRenderedExtent() throws {
+    let doc=PreparedDocument()
+    doc.adopt([.init(id:"before",kind:"Paragraph",from:0,to:10),
+               .init(id:"inserted",kind:"Paragraph",from:12,to:22),
+               .init(id:"after",kind:"Paragraph",from:24,to:34)],revision:1,length:35)
+    doc.store(ParseResult(revision:1,spans:[],fragments:[
+        prepared("before",0,10,"before"),prepared("inserted",12,22,"inserted"),prepared("after",24,34,"after")
+    ]),range:NSRange(location:0,length:35))
+    let estimated=try #require(doc.window(covering:NSRange(location:12,length:10),before:100,after:100))
+    let correction=doc.recordPreviewHeights(["before":33,"inserted":33,"after":33],revision:1)
+    let measured=try #require(doc.window(covering:NSRange(location:12,length:10),before:100,after:100))
+    #expect(estimated.previewHeight+correction==measured.previewHeight)
+    #expect(doc.recordPreviewHeights(["before":33,"inserted":33,"after":33],revision:1)==0)
 }

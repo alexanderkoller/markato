@@ -30,82 +30,19 @@ and accessibility hooks are not connected to operating-system accessibility
 services. That missing integration belongs inside `HTMLPreview` and remains a
 release gate.
 
-## Evidence
+## Design invariants
 
-The earlier complete-DOM benchmark mounted identical Markdown-derived HTML in
-each renderer. Ultralight was the fastest full HTML implementation, but an 8 MiB
-document still took 1,052 ms to first pixels, 86 ms to materialize a deep view,
-62 ms for a visible edit, and 1.37 GB RSS. Replacing WKWebView while retaining a
-complete DOM would therefore leave the document-size problem intact.
+The native retained tree is the only complete document representation. The
+renderer owns one bounded window of complete semantic blocks and reuses nodes by
+stable block ID. Local scrolling changes viewport coordinates; crossing the
+window reserve reconciles another bounded set of cached entries. A complete
+visible semantic element may be intrinsically large, but invisible document
+length must not increase the mounted DOM.
 
-The follow-up probe mounted only existing semantic block wrappers. It used the
-native Ultralight DOM API with JavaScript disabled, retained overlapping nodes
-by identity, and performed layout and CPU rendering after every operation. Five
-fresh processes were measured for every window/document pair. The 384-block
-window was approximately 22.8 viewports high in this fixture. As in the earlier
-renderer benchmark, Ultralight renderer/view construction precedes the HTML
-timers; the persistent shell is intended to be initialized concurrently with
-Comrak rather than placed after it on the first-view critical path.
-
-| Source document | Blocks in document | First bounded view | Local scroll | 48-block refill | Cold deep window | Visible edit |
-|---:|---:|---:|---:|---:|---:|---:|
-| 64 KiB | 685 | 39.2 ms | 1.27 ms | 2.0 ms | 3.4 ms | 0.12 ms |
-| 1 MiB | 10,879 | 39.2 ms | 1.28 ms | 1.9 ms | 3.8 ms | 0.11 ms |
-| 8 MiB | 86,597 | 38.6 ms | 1.26 ms | 1.9 ms | 3.9 ms | 0.12 ms |
-
-The first-view interval includes navigating to an HTML document containing the
-shell, stylesheet, and initial window. The intended persistent-shell path was
-also measured directly. Inserting and rendering the first 384 blocks into an
-already loaded empty shell took 1.23, 1.23, and 1.24 ms for the three document
-sizes (observed maximum 1.38 ms). Ultralight initialization and shell creation
-can run while Comrak parses on a separate serial executor.
-
-All overlap checks passed: a block retained across a refill remained the same
-DOM node. Reading the heights of all 384 mounted blocks took about 0.04 ms.
-Increasing the window from about 8 to 30 viewports changed a cold deep-window
-replacement from about 1.3 to 4.5--5.5 ms. None of these values increased with
-the total document size.
-
-The accepted exception was also measured. A single visible table took 30.5 ms
-at 100 rows, 36.7 ms at 1,000 rows, and 133.0 ms at 10,000 rows. This is the
-intended rule: work may grow with a complete visible semantic element. Tables
-and code blocks remain complete semantic blocks, preserving stable table layout
-and the retained-tree contract.
-
-The fixtures contain ordinary headings, paragraphs, emphasis, links, and code,
-with no external resources. Integrated testing must still cover the application's
-KaTeX output, images, wide tables, selection, input routing, resize, appearance,
-and accessibility. The measurements establish the scaling property and the DOM
-operations needed for the architecture; they are not a complete compatibility
-test.
-
-Raw measurements and the reproducible harness are under
-`research/2026-10-11/html-renderer-benchmark/`. In particular:
-
-The integrated release app was then measured with the preserved application
-probe, three fresh processes per size and three visible one-character edits per
-process. These intervals include Comrak and the native source update as well as
-HTML presentation.
-
-| Dense Markdown | Ultralight open | Ultralight edit | Previous bounded WebKit open | Previous bounded WebKit edit | MacDown 3000 open | MacDown 3000 edit |
-|---:|---:|---:|---:|---:|---:|---:|
-| 64 KiB | 92.1 ms | 33.9 ms | 119.4 ms | 28.3 ms | 205.8 ms | 52.7 ms |
-| 1 MiB | 79.5 ms | 54.7 ms | 122.8 ms | 56.5 ms | 2,542.0 ms | 2,004.1 ms |
-| 8 MiB | 359.8 ms | 205.5 ms | 370.3 ms | 562.0 ms | — | — |
-
-The 64 KiB open distribution remains noisy (53.8--140.5 ms), so the median is
-reported rather than claiming monotonic size scaling. At 8 MiB, total edit time
-is now dominated by the deliberate whole-document Comrak pass; dispatch itself
-was 1.4 ms median and the bounded renderer does not explain the remaining
-roughly 200 ms. No saved 8 MiB MacDown 3000 result exists; its preserved 4 MiB
-stress run is not directly comparable.
-
-- `src/ultralight_window_bench.cpp`
-- `run_ultralight_window.py`
-- `ultralight-window-summary.json`
-- `ultralight-window-scroll-summary.json`
-- `ultralight-prewarmed-first-view-summary.json`
-- `ultralight-visible-element-summary.json`
+Integrated checks cover KaTeX output, images, tables, cached navigation, edits,
+resize, and presentation recovery. Performance claims require a benchmark of the
+current application and renderer; historical engine comparisons are not part of
+this contract.
 
 ## Module boundary
 
@@ -281,7 +218,7 @@ to a dedicated serial executor and publish complete frames back to AppKit.
 
 Ultralight currently documents that ARIA and platform accessibility hooks are
 not connected to operating-system accessibility services. Shipping the preview
-without a native accessibility tree would be a regression from WKWebView. The
+without a native accessibility tree would be a release regression. The
 module should build `NSAccessibilityElement` objects from mounted semantic
 blocks and DOM rectangles, expose links and headings with suitable roles, and
 request adjacent windows during accessibility traversal. This remains required

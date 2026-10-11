@@ -1,6 +1,6 @@
 import Foundation
 
-/// Immutable AVL rope. Positions and edits use Cocoa/Lezer UTF-16 coordinates.
+/// Immutable AVL rope. Positions and edits use Cocoa UTF-16 coordinates.
 public struct TextRope: Sendable {
     indirect enum Node: Sendable {
         case leaf([UInt16], Int, Bool)

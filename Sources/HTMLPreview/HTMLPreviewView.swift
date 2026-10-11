@@ -20,6 +20,7 @@ public struct HTMLPreviewGeometry: Equatable, Sendable {
 @MainActor public final class HTMLPreviewView:NSView {
     public var verticalWheel:((NSEvent)->Void)?
     public var openURL:((URL)->Void)?
+    public var viewportResized:(()->Void)?
     public var isEngineReady:Bool {engine != nil}
     private var engine:OpaquePointer?
     private var image:CGImage?
@@ -95,7 +96,7 @@ public struct HTMLPreviewGeometry: Equatable, Sendable {
         guard astra_ul_surface_commit_update(engine) else{return nil}
         entryIDs=next.map(\.id);self.baseURL=baseURL
         didRender()
-        refreshImage()
+        guard refreshImage() else{return nil}
         if next.contains(where:{$0.fragment.html?.contains("<img") == true}) {beginResourcePump()}
         return geometry()
     }
@@ -158,7 +159,11 @@ public struct HTMLPreviewGeometry: Equatable, Sendable {
         let width=UInt32(ceil(bounds.width*scale)),height=UInt32(ceil(bounds.height*scale))
         guard width != pixelSize.width || height != pixelSize.height || scale != pixelSize.scale else{return}
         pixelSize=(width,height,scale);astra_ul_surface_resize(engine,width,height,scale)
-        engineDirty=true;scheduleFlush()
+        engineDirty=true
+        // Layout for the new viewport is complete, but its bitmap has not been
+        // published. The owner can restore its semantic top before rendering.
+        viewportResized?()
+        scheduleFlush()
     }
 
     private func scheduleFlush() {
@@ -178,36 +183,42 @@ public struct HTMLPreviewGeometry: Equatable, Sendable {
         defer {TimingDiagnostics.shared.end(work,values:["width":Double(bounds.width),"height":Double(bounds.height)])}
         #endif
         engineDirty=false
-        if astra_ul_surface_render(engine) {refreshImage()}
+        if astra_ul_surface_render(engine) {_ = refreshImage()}
     }
 
     private func didRender() {
         pendingFlush?.cancel();pendingFlush=nil;engineDirty=false
     }
 
-    private func refreshImage() {
-        guard let engine else{return}
+    @discardableResult private func refreshImage()->Bool {
+        guard let engine else{return false}
         #if DEBUG
         let work=TimingDiagnostics.shared.begin("html.bitmap.copy")
         defer {TimingDiagnostics.shared.end(work)}
         #endif
         let count=astra_ul_surface_pixel_bytes(engine)
-        guard count>0 else{return}
-        image=nil
-        if pixelData.count != count {pixelData=Data(count:count)}
+        guard count>0 else{return false}
+        // Build the replacement from separate storage. The currently drawn
+        // CGImage keeps its provider alive until the complete next image is
+        // ready, so a failed copy cannot turn the preview into an empty frame.
+        var nextPixels=pixelData.count==count ? pixelData:Data(count:count)
         var width:UInt32=0,height:UInt32=0,stride:UInt32=0
-        let copied=pixelData.withUnsafeMutableBytes {bytes in
+        let copied=nextPixels.withUnsafeMutableBytes {bytes in
             astra_ul_surface_copy_pixels(engine,bytes.baseAddress,count,&width,&height,&stride)
         }
-        guard copied,let provider=CGDataProvider(data:pixelData as CFData) else{return}
+        guard copied,let provider=CGDataProvider(data:nextPixels as CFData) else{return false}
         let scale=max(1,pixelSize.scale)
-        imageSize=NSSize(width:CGFloat(width)/scale,height:CGFloat(height)/scale)
+        let nextSize=NSSize(width:CGFloat(width)/scale,height:CGFloat(height)/scale)
         let info=CGBitmapInfo(rawValue:CGImageAlphaInfo.premultipliedFirst.rawValue)
             .union(.byteOrder32Little)
-        image=CGImage(width:Int(width),height:Int(height),bitsPerComponent:8,bitsPerPixel:32,
+        guard let nextImage=CGImage(width:Int(width),height:Int(height),bitsPerComponent:8,bitsPerPixel:32,
             bytesPerRow:Int(stride),space:CGColorSpaceCreateDeviceRGB(),bitmapInfo:info,
-            provider:provider,decode:nil,shouldInterpolate:false,intent:.defaultIntent)
+            provider:provider,decode:nil,shouldInterpolate:false,intent:.defaultIntent) else{return false}
+        pixelData=nextPixels
+        imageSize=nextSize
+        image=nextImage
         needsDisplay=true
+        return true
     }
 
     private func beginResourcePump() {
@@ -215,7 +226,7 @@ public struct HTMLPreviewGeometry: Equatable, Sendable {
         resourcePump=Timer.scheduledTimer(withTimeInterval:1/60,repeats:true) { [weak self] timer in
             MainActor.assumeIsolated {
                 guard let self,let engine=self.engine else{timer.invalidate();return}
-                if astra_ul_surface_pump(engine) {self.refreshImage()}
+                if astra_ul_surface_pump(engine) {_ = self.refreshImage()}
                 self.resourcePumpTicks += 1
                 if self.resourcePumpTicks>=180 {timer.invalidate();self.resourcePump=nil}
             }

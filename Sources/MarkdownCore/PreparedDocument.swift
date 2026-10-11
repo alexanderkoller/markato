@@ -402,15 +402,24 @@ public final class PreparedDocument {
         }
         return min(htmlGap,firstSyntaxGap(from:position))
     }
-    public func recordPreviewHeights(_ heights:[String:Double],revision:Int) {
-        guard revision==self.revision else{return}
+    /// Records measured block strides and returns their change to the global
+    /// preview extent. Callers can apply that correction to the frame they are
+    /// about to publish instead of committing once with estimates and again
+    /// with measurements.
+    @discardableResult public func recordPreviewHeights(_ heights:[String:Double],revision:Int)->Double {
+        guard revision==self.revision else{return 0}
+        var extentChange=0.0
         for (id,height) in heights where height.isFinite && height>0 {
             if let node=nodes[id] {
-                materialize(node);node.previewHeight=height
+                materialize(node)
+                let previous=node.effectivePreviewHeight
+                node.previewHeight=height
+                extentChange += height-previous
                 var ancestor:BlockNode?=node
                 while let current=ancestor {current.update();ancestor=current.parent}
             }
         }
+        return extentChange
     }
     public func heights(for id:String)->(source:Double?,preview:Double?)? {
         guard let n=nodes[id] else{return nil}

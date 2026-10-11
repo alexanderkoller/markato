@@ -60,7 +60,9 @@ import MarkdownCore
             let startupCount=preview.preparedFragmentCount
             verifyPresentationFailureRecovery(controller,wait:wait) {
                 verifyTopResizeAnchor(controller) {
-                    continueAfterTopResize(controller,document:document,startupCount:startupCount,wait:wait)
+                    verifyMiddleResizeAnchor(controller,document:document,wait:wait) {
+                        continueAfterTopResize(controller,document:document,startupCount:startupCount,wait:wait)
+                    }
                 }
             }
         }
@@ -141,12 +143,23 @@ import MarkdownCore
                 "A cached deep jump did not publish") {
                 check(preview.preparedFragmentCount<350,"A deep jump must keep the mounted DOM bounded")
                 check(controller.hasPreparedDocument,"The deep jump should use the fully prepared retained tree")
+                let retainedSurface=preview.debugCommittedSurfaceIndex
+                let crossRevisionCommits=preview.crossRevisionCommitCount
+                let inPlaceCrossRevisionCommits=preview.inPlaceCrossRevisionCommitCount
                 let transientRevision=document.revision+1
                 document.parser.debugFailNextRequests()
                 document.replace(NSRange(location:document.source.count,length:0),with:"\n\n## TRANSIENT_PARSE_EDIT\n\nRecovered automatically.\n")
+                check(!preview.isShowingLoadingState,
+                    "An edit must retain the committed preview without flashing the loading layer")
+                check(preview.debugCommittedSurfaceIndex==retainedSurface,
+                    "An edit must leave the committed surface visible while its replacement prepares")
                 source.reveal(document.source.count,alignTop:false)
                 wait(800,{document.revision==transientRevision && preview.lastRevision==transientRevision &&
                     preview.previewView.debugText.contains("TRANSIENT_PARSE_EDIT")},"Transient parser failure did not recover") {
+                    check(preview.crossRevisionCommitCount>crossRevisionCommits,
+                        "The edit did not commit a cross-revision preview replacement")
+                    check(preview.inPlaceCrossRevisionCommitCount==inPlaceCrossRevisionCommits,
+                        "A cross-revision edit mutated the displayed preview surface")
                     check(!controller.isShowingParseError,"A successful automatic retry must clear the parse error")
                     let retainedRevision=preview.displayedDocumentRevision,repeatedRevision=document.revision+1
                     document.parser.debugFailNextRequests(2)
@@ -166,7 +179,195 @@ import MarkdownCore
                 }
             }
     }
+    private static func verifyMiddleResizeAnchor(_ controller:EditorWindowController,document:MarkdownDocument,
+        wait:@escaping(Int,@escaping()->Bool,String,@escaping()->Void)->Void,completion:@escaping()->Void) {
+        guard let window=controller.window else{fail("Missing resize regression window")}
+        let source=controller.source,preview=controller.preview
+        source.debugAlignViewport(at:document.source.count/2,viewportY:source.bounds.height/2)
+        wait(800,{preview.coversSourceViewport &&
+            abs((preview.previewView.geometry()?.width ?? 0)-preview.bounds.width)<1 &&
+            preview.debugScrollMapError.map{abs($0)<0.01}==true},
+            "The middle viewport did not align before resize") {
+            let original=window.contentLayoutRect.size
+            let initialRendererWidth=preview.previewView.geometry()?.width
+            let topAnchor=source.debugRenderedViewportAnchor
+            guard let sourceTopY=source.debugRenderedViewportY(for:topAnchor) else {
+                fail("Missing middle source resize anchor")
+            }
+            let sizes=[NSSize(width:original.width-190,height:original.height-100)]
+            let finalSize=NSSize(width:original.width+170,height:original.height+80)
+            controller.windowWillStartLiveResize(Notification(name:NSWindow.willStartLiveResizeNotification,object:window))
+            guard let previewAnchorY=preview.debugResizeAnchorViewportY else {
+                fail("Missing middle preview resize anchor")
+            }
+            let previewAnchorState=preview.debugResizeAnchorState
+            @MainActor func step(_ index:Int) {
+                guard index<sizes.count else {
+                    // Deliberately do not force layout for the final, different
+                    // size. The end-resize path itself must materialize the
+                    // final split/source geometry before in-place finalization.
+                    window.setContentSize(finalSize)
+                    controller.windowDidEndLiveResize(Notification(name:NSWindow.didEndLiveResizeNotification,object:window))
+                    check(preview.debugResizeAnchorViewportY.map{abs($0-previewAnchorY)<0.01}==true,
+                        "Mouse-up repositioned the preview (\(previewAnchorY) -> \(String(describing:preview.debugResizeAnchorViewportY)))")
+                    // Queued source work after mouse-up must preserve the same
+                    // rendered source top and must not reposition the preview.
+                    source.debugRelayoutVisibleViewport()
+                    check(preview.debugResizeAnchorViewportY.map{abs($0-previewAnchorY)<0.01}==true,
+                        "Post-resize source layout repositioned the preview (\(previewAnchorY) -> \(String(describing:preview.debugResizeAnchorViewportY)), sourcePinned \(source.isResizePositionPinned), previewPin \(String(describing:preview.debugResizePinnedOrigin)), clip \(preview.clipOrigin), start {\(previewAnchorState)}, end {\(preview.debugResizeAnchorState)})")
+                    preview.sourceLayoutChanged()
+                    wait(800,{abs((preview.previewView.geometry()?.width ?? 0)-preview.bounds.width)<1 &&
+                        preview.lastRevision==document.revision},
+                        "The resized middle viewport did not commit against current geometry") {
+                        let finalSourceY=source.debugRenderedViewportY(for:topAnchor)
+                        check(finalSourceY.map{abs($0-sourceTopY)<1}==true,
+                            "The source top position moved during resize completion")
+                        check(preview.debugResizeAnchorViewportY.map{abs($0-previewAnchorY)<0.01}==true,
+                            "The preview semantic top moved after resize finalization (\(previewAnchorY) -> \(String(describing:preview.debugResizeAnchorViewportY)), origin \(preview.clipOrigin))")
+                        let beforeScroll=preview.clipOrigin
+                        source.debugScrollViewport(by:90)
+                        wait(800,{abs(preview.clipOrigin-beforeScroll)>1 &&
+                            preview.debugScrollMapError.map{abs($0)<0.01}==true},
+                            "The first post-resize scroll did not restore center alignment",completion)
+                    }
+                    return
+                }
+                window.setContentSize(sizes[index])
+                window.contentView?.layoutSubtreeIfNeeded();window.displayIfNeeded()
+                DispatchQueue.main.asyncAfter(deadline:.now()+0.03) {
+                    window.contentView?.layoutSubtreeIfNeeded();window.displayIfNeeded()
+                    check(preview.debugResizeAnchorViewportY.map{abs($0-previewAnchorY)<0.01}==true,
+                        "The preview semantic top moved during live resize")
+                    let sourceY=source.debugRenderedViewportY(for:topAnchor)
+                    check(sourceY.map{abs($0-sourceTopY)<1}==true,
+                        "The source top position moved during live resize (\(sourceTopY) -> \(String(describing:sourceY)), anchor \(topAnchor), origin \(source.viewportOrigin))")
+                    if let initialRendererWidth {
+                        let currentWidth=preview.previewView.geometry()?.width ?? 0
+                        check(abs(currentWidth-preview.bounds.width)<1 && abs(currentWidth-initialRendererWidth)>1,
+                            "The displayed preview did not reflow during live resize (\(initialRendererWidth) -> \(currentWidth), pane \(preview.bounds.width))")
+                    }
+                    step(index+1)
+                }
+            }
+            step(0)
+        }
+    }
     private static func continueAfterRecoveredParse(_ controller:EditorWindowController,document:MarkdownDocument,
+        startupCount:Int,wait:@escaping(Int,@escaping()->Bool,String,@escaping()->Void)->Void) {
+        verifyParagraphInsertionStability(controller,document:document,wait:wait) {
+            verifyTypingStability(controller,document:document,wait:wait) {
+                continueAfterTyping(controller,document:document,startupCount:startupCount,wait:wait)
+            }
+        }
+    }
+    private static func verifyParagraphInsertionStability(_ controller:EditorWindowController,document:MarkdownDocument,
+        wait:@escaping(Int,@escaping()->Bool,String,@escaping()->Void)->Void,completion:@escaping()->Void) {
+        let preview=controller.preview,source=controller.source,following="Recovered manually."
+        let location=(document.source.string as NSString).range(of:following).location
+        guard location != NSNotFound else{fail("Missing paragraph insertion fixture")}
+        source.reveal(location,alignTop:true)
+        wait(800,{preview.coversSourceViewport && preview.debugParagraphViewportY(containing:following) != nil},
+            "The following paragraph was not visible before insertion") {
+            let retainedSurface=preview.debugCommittedSurfaceIndex
+            var committedPositions=[CGFloat]()
+            preview.debugPresentationCommitted = {
+                if preview.displayedDocumentRevision==document.revision,
+                   let y=preview.debugParagraphViewportY(containing:following) {committedPositions.append(y)}
+            }
+            source.textView.setSelectedRange(NSRange(location:location,length:0))
+            source.textView.insertText("Inserted paragraph.\n\n",replacementRange:source.textView.selectedRange())
+            check(!preview.isShowingLoadingState,
+                "A paragraph insertion must retain the committed preview without a loading flash")
+            check(preview.debugCommittedSurfaceIndex==retainedSurface,
+                "A paragraph insertion must remain offscreen until its replacement is ready")
+            wait(800,{preview.lastRevision==document.revision &&
+                preview.previewView.debugText.contains("Inserted paragraph.")},
+                "The inserted paragraph did not reach the preview") {
+                guard let settled=preview.debugParagraphViewportY(containing:following) else {
+                    fail("The following paragraph disappeared after insertion")
+                }
+                DispatchQueue.main.asyncAfter(deadline:.now()+0.3) {
+                    guard let after=preview.debugParagraphViewportY(containing:following) else {
+                        fail("The following paragraph disappeared while geometry settled")
+                    }
+                    check(!committedPositions.isEmpty,
+                        "The paragraph insertion did not publish a measured preview frame")
+                    if let low=committedPositions.min(),let high=committedPositions.max() {
+                        check(high-low<0.01,
+                            "The following paragraph oscillated across committed insertion frames")
+                    }
+                    check(abs(after-settled)<0.01,
+                        "The following paragraph moved after the insertion frame committed")
+                    // The paragraph now exists. A second Enter only adds one
+                    // more separator line, so the rendered IDs and HTML are
+                    // unchanged and the existing bitmap must be reusable.
+                    let paragraph="Inserted paragraph."
+                    let paragraphEnd=location+(paragraph as NSString).length
+                    let reused=preview.pixelReuseCommitCount
+                    let beforeEnter=after
+                    var enterPositions=[CGFloat]()
+                    preview.debugPresentationCommitted = {
+                        if preview.displayedDocumentRevision==document.revision,
+                           let y=preview.debugParagraphViewportY(containing:following) {enterPositions.append(y)}
+                    }
+                    source.textView.setSelectedRange(NSRange(location:paragraphEnd,length:0))
+                    source.textView.insertText("\n",replacementRange:source.textView.selectedRange())
+                    check(!preview.isShowingLoadingState,
+                        "An extra paragraph separator must not flash the loading layer")
+                    wait(800,{preview.lastRevision==document.revision},
+                        "The extra paragraph separator did not reach the preview") {
+                        check(preview.pixelReuseCommitCount==reused+1,
+                            "An extra paragraph separator must reuse the unchanged preview pixels")
+                        DispatchQueue.main.asyncAfter(deadline:.now()+0.3) {
+                            preview.debugPresentationCommitted=nil
+                            guard let afterEnter=preview.debugParagraphViewportY(containing:following) else {
+                                fail("The following paragraph disappeared after the extra Enter")
+                            }
+                            for y in enterPositions {
+                                check(abs(y-beforeEnter)<0.01,
+                                    "The following paragraph moved during the extra Enter")
+                            }
+                            check(abs(afterEnter-beforeEnter)<0.01,
+                                "The following paragraph moved after the extra Enter settled")
+                            completion()
+                        }
+                    }
+                }
+            }
+        }
+    }
+    private static func verifyTypingStability(_ controller:EditorWindowController,document:MarkdownDocument,
+        wait:@escaping(Int,@escaping()->Bool,String,@escaping()->Void)->Void,completion:@escaping()->Void) {
+        let preview=controller.preview,source=controller.source
+        source.reveal(document.source.count,alignTop:false)
+        source.textView.setSelectedRange(NSRange(location:document.source.count,length:0))
+        let characters=Array(" flickercheck")
+        var expected=""
+        func step(_ index:Int) {
+            guard index<characters.count else {completion();return}
+            let previousRevision=document.revision
+            let retainedSurface=preview.debugCommittedSurfaceIndex
+            let crossRevisionCommits=preview.crossRevisionCommitCount
+            let inPlaceCrossRevisionCommits=preview.inPlaceCrossRevisionCommitCount
+            expected.append(characters[index])
+            source.textView.insertText(String(characters[index]),replacementRange:source.textView.selectedRange())
+            check(document.revision==previousRevision+1,"A simulated keystroke must create one document revision")
+            check(!preview.isShowingLoadingState,
+                "A keystroke must retain the committed preview without flashing the loading layer")
+            check(preview.debugCommittedSurfaceIndex==retainedSurface,
+                "A keystroke must not replace the visible surface before rendering finishes")
+            wait(800,{preview.lastRevision==document.revision && preview.previewView.debugText.contains(expected)},
+                "A simulated keystroke did not reach the preview") {
+                check(preview.crossRevisionCommitCount>crossRevisionCommits,
+                    "A simulated keystroke did not commit a preview replacement")
+                check(preview.inPlaceCrossRevisionCommitCount==inPlaceCrossRevisionCommits,
+                    "A simulated keystroke mutated the displayed preview surface")
+                step(index+1)
+            }
+        }
+        step(0)
+    }
+    private static func continueAfterTyping(_ controller:EditorWindowController,document:MarkdownDocument,
         startupCount:Int,wait:@escaping(Int,@escaping()->Bool,String,@escaping()->Void)->Void) {
         let preview=controller.preview,source=controller.source
         check(preview.preparedFragmentCount<350,"A visible edit must not expand the mounted DOM")
@@ -182,7 +383,7 @@ import MarkdownCore
                 "Return to the cached first viewport failed") {
                 check(preview.preparedFragmentCount<350,"Returning to the top must remain bounded")
                 check(startupCount>0,"Startup must mount semantic entries")
-                print("INTEGRATION PASSED: bounded first view, presentation recovery, automatic and manual parse recovery, retained stale preview, cached navigation, edit, resize, and return-to-top scrolling")
+                print("INTEGRATION PASSED: bounded first view, presentation recovery, automatic and manual parse recovery, retained stale preview, cached navigation, stable paragraph insertion, rapid typing, edit, resize, and return-to-top scrolling")
                 if CommandLine.arguments.contains("--diagnostics") {
                     try? TimingDiagnostics.shared.snapshot().json().write(to:URL(fileURLWithPath:"/private/tmp/astra-ultralight-integration-timings.json"),options:.atomic)
                 }

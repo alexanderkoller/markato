@@ -188,7 +188,14 @@ final class EditorWindowController: NSWindowController, NSSplitViewDelegate, NSS
     }
     deinit { NotificationCenter.default.removeObserver(self) }
     func windowWillStartLiveResize(_ notification:Notification) {source.beginLiveResize();preview.beginLiveResize()}
-    func windowDidEndLiveResize(_ notification:Notification) {preview.endLiveResize();source.endLiveResize()}
+    func windowDidEndLiveResize(_ notification:Notification) {
+        // AppKit may deliver the end notification while the final content/split
+        // frames still only carry `needsLayout`. Materialize that complete view
+        // hierarchy first, then release/finalize native source geometry before
+        // the preview builds its resized landmark map.
+        window?.contentView?.layoutSubtreeIfNeeded()
+        source.endLiveResize();preview.endLiveResize()
+    }
     func windowWillClose(_ notification:Notification) {
         isClosed=true;pendingViewport=nil;openingRequested=false
         cancelParseRetry()
