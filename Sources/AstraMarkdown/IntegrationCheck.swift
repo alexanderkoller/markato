@@ -67,7 +67,7 @@ import MarkdownCore
         waitForDemoTop(controller,document:document,remaining:100)
     }
     private static func verifyUltralightPreview(_ controller:EditorWindowController,document:MarkdownDocument) {
-        let preview=controller.preview,source=controller.source
+        let preview=controller.preview
         func wait(_ remaining:Int,_ ready:@escaping()->Bool,_ failure:String,_ completion:@escaping()->Void) {
             guard remaining>0 else{fail("\(failure): \(preview.debugGeometry())")}
             if ready() {completion()}
@@ -86,6 +86,66 @@ import MarkdownCore
             check(preview.webView.debugCount("img")>0 && (preview.webView.debugRect("img")?.height ?? 0)>0,
                 "Ultralight must resolve and lay out the bundled local image")
             let startupCount=preview.preparedFragmentCount
+            verifyTopResizeAnchor(controller) {
+                continueAfterTopResize(controller,document:document,startupCount:startupCount,wait:wait)
+            }
+        }
+    }
+    private static func verifyTopResizeAnchor(_ controller:EditorWindowController,completion:@escaping()->Void) {
+        guard let window=controller.window,let previewTop=controller.preview.debugFirstHeadingViewportY else {
+            fail("Missing first heading geometry before resize")
+        }
+        check(!controller.split.preservesContentDuringLiveResize,
+            "The editor split must redraw its panes instead of preserving stale live-resize pixels")
+        let original=window.contentLayoutRect.size
+        let sourceTop=controller.source.debugFirstLineViewportY
+        let sizes=[NSSize(width:original.width-240,height:original.height-135),
+            NSSize(width:original.width-160,height:original.height-90),
+            NSSize(width:original.width-80,height:original.height-45),original,
+            NSSize(width:original.width+80,height:original.height+45),
+            NSSize(width:original.width+160,height:original.height+90),
+            NSSize(width:original.width+240,height:original.height+135)]
+        let notification=Notification(name:NSWindow.willStartLiveResizeNotification,object:window)
+        controller.windowWillStartLiveResize(notification)
+        func step(_ index:Int) {
+            guard index<sizes.count else {
+                controller.windowDidEndLiveResize(Notification(name:NSWindow.didEndLiveResizeNotification,object:window))
+                DispatchQueue.main.asyncAfter(deadline:.now()+0.05) {
+                    window.contentView?.layoutSubtreeIfNeeded();window.displayIfNeeded()
+                    check(controller.source.debugFirstLineViewportY==sourceTop,
+                        "Source top moved when the resized presentation committed")
+                    check(controller.preview.debugFirstHeadingViewportY==previewTop,
+                        "Preview top moved when the resized presentation committed")
+                    completion()
+                }
+                return
+            }
+            window.setContentSize(sizes[index])
+            window.contentView?.layoutSubtreeIfNeeded()
+            window.displayIfNeeded()
+            check(controller.preview.webView.debugPaintedBitmapTop==0,
+                "Cached preview bitmap moved away from the viewport top during resize")
+            // Width changes schedule TextKit layout and an Ultralight frame.
+            // Inspect after both have had an opportunity to adjust their clips.
+            DispatchQueue.main.asyncAfter(deadline:.now()+0.03) {
+                window.contentView?.layoutSubtreeIfNeeded();window.displayIfNeeded()
+                check(controller.preview.webView.debugPaintedBitmapTop==0,
+                    "Replacement preview bitmap moved away from the viewport top after resize")
+                check(controller.source.debugFirstLineViewportY==sourceTop,
+                    "Source first heading moved after deferred top-anchored live-resize work")
+                guard let currentPreviewTop=controller.preview.debugFirstHeadingViewportY else {
+                    fail("Preview first heading disappeared during top-anchored live resize")
+                }
+                check(currentPreviewTop==previewTop,
+                    "Preview first heading moved after deferred top-anchored live-resize work")
+                step(index+1)
+            }
+        }
+        step(0)
+    }
+    private static func continueAfterTopResize(_ controller:EditorWindowController,document:MarkdownDocument,
+        startupCount:Int,wait:@escaping(Int,@escaping()->Bool,String,@escaping()->Void)->Void) {
+        let preview=controller.preview,source=controller.source
             source.reveal(document.source.count,alignTop:false)
             wait(800,{preview.coversSourceViewport && !preview.isShowingLoadingState &&
                 preview.displayedSourceRange.map{NSMaxRange($0)>=document.source.count-1}==true},
@@ -99,8 +159,10 @@ import MarkdownCore
                     preview.webView.debugText.contains("ULTRALIGHT_EDIT")},"Visible edit did not update Ultralight") {
                     check(preview.preparedFragmentCount<350,"A visible edit must not expand the mounted DOM")
                     let oldWidth=preview.bounds.width
+                    preview.beginLiveResize()
                     preview.frame.size.width=max(320,oldWidth-73)
                     preview.layoutSubtreeIfNeeded()
+                    preview.endLiveResize()
                     wait(300,{abs((preview.webView.geometry()?.width ?? 0)-preview.bounds.width)<=1},
                         "Ultralight did not settle after resize") {
                         source.reveal(0,alignTop:true)
@@ -117,7 +179,6 @@ import MarkdownCore
                     }
                 }
             }
-        }
     }
     private static func verifyLayoutIndex() {
         let doc=MarkdownDocument();fixtureDocuments.append(doc)

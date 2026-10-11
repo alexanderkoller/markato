@@ -1,10 +1,17 @@
 import AppKit
 import MarkdownCore
 
+/// NSSplitView preserves pixels from the preceding frame during a live resize
+/// by default. The source and HTML panes redraw independently, so those stale
+/// pixels make their shared top edge visibly alternate between two positions.
+final class EditorSplitView:NSSplitView {
+    override var preservesContentDuringLiveResize:Bool {false}
+}
+
 final class EditorWindowController: NSWindowController, NSSplitViewDelegate, NSSearchFieldDelegate, NSMenuItemValidation, NSWindowDelegate {
     let source: SourceEditor
     let preview = PreviewPane(frame:.zero)
-    let split = NSSplitView()
+    let split = EditorSplitView()
     private let content = FlippedView()
     private let findBar = NSView()
     private let findField = NSSearchField()
@@ -112,6 +119,7 @@ final class EditorWindowController: NSWindowController, NSSplitViewDelegate, NSS
             else if self.completePresentationPendingRevision==document.revision {
                 self.showCompletePreparedDocument(revision:document.revision)
             }
+            if self.preview.needsWindowTrimming {self.showPreparedDocument(revision:document.revision)}
             self.prepareDocument(rope:document.source,revision:document.revision)
         }
         source.geometryChanged = { [weak self] in self?.preview.sourceLayoutChanged() }
@@ -172,6 +180,8 @@ final class EditorWindowController: NSWindowController, NSSplitViewDelegate, NSS
         super.showWindow(sender)
     }
     deinit { NotificationCenter.default.removeObserver(self) }
+    func windowWillStartLiveResize(_ notification:Notification) {source.beginLiveResize();preview.beginLiveResize()}
+    func windowDidEndLiveResize(_ notification:Notification) {preview.endLiveResize();source.endLiveResize()}
     func windowWillClose(_ notification:Notification) {
         isClosed=true;pendingViewport=nil;openingRequested=false
         source.viewportChanged=nil;source.geometryChanged=nil
@@ -289,7 +299,8 @@ final class EditorWindowController: NSWindowController, NSSplitViewDelegate, NSS
     }
     private func showPreparedDocument(revision:Int) {
         guard !isClosed else{return}
-        if preview.displaysCompleteDocument,preview.displayedDocumentRevision==revision {
+        if preview.displaysCompleteDocument,preview.displayedDocumentRevision==revision,
+           !preview.needsWindowTrimming {
             presentationPending=false;completePresentationPendingRevision=nil
             preview.moveViewport();return
         }
@@ -316,7 +327,8 @@ final class EditorWindowController: NSWindowController, NSSplitViewDelegate, NSS
         // presentationRange already includes the scroll reserve. Re-expanding
         // it after every edit changes the DOM shape and prevents the renderer
         // from replacing only the changed block at its stable index.
-        let reach=reusesPresentedWindow ? 0 : max(1,Double(preview.bounds.height))*24
+        // Twelve viewports on each side give a roughly 24-viewport runway.
+        let reach=reusesPresentedWindow ? 0 : max(1,Double(preview.bounds.height))*12
         guard let window=preparedDocument.window(covering:requestedRange,before:reach,after:reach) else {
             viewportChanged(visible);return
         }

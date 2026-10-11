@@ -32,6 +32,7 @@ public struct HTMLPreviewSnapshotConfiguration:Sendable {
     public private(set) var isEngineReady=false
     private var engine:OpaquePointer?
     private var image:CGImage?
+    private var imageSize:NSSize = .zero
     private var entries=[RenderedEntry]()
     private var fontSize:CGFloat=14
     private var baseURL:URL?
@@ -40,6 +41,14 @@ public struct HTMLPreviewSnapshotConfiguration:Sendable {
     private var axisReset:DispatchWorkItem?
     private var resourcePump:Timer?
     private var resourcePumpTicks=0
+    private var pendingFlush:DispatchWorkItem?
+    private var engineDirty=false
+    private var pixelSize=(width:UInt32(0),height:UInt32(0),scale:CGFloat(0))
+    private var scrollPoint:NSPoint?
+    private var pixelData=Data()
+    #if DEBUG
+    public private(set) var debugPaintedBitmapTop:CGFloat?
+    #endif
 
     public override var isFlipped:Bool {true}
     public override var acceptsFirstResponder:Bool {true}
@@ -67,7 +76,7 @@ public struct HTMLPreviewSnapshotConfiguration:Sendable {
         isEngineReady=engine != nil
     }
     required init?(coder:NSCoder) {fatalError()}
-    deinit {resourcePump?.invalidate();if let engine {astra_ul_surface_destroy(engine)}}
+    deinit {resourcePump?.invalidate();pendingFlush?.cancel();if let engine {astra_ul_surface_destroy(engine)}}
 
     private static var sdkRoot:URL {
         if let value=ProcessInfo.processInfo.environment["ASTRA_ULTRALIGHT_SDK"] {return URL(fileURLWithPath:value)}
@@ -89,6 +98,7 @@ public struct HTMLPreviewSnapshotConfiguration:Sendable {
             }}
         }
         guard astra_ul_surface_commit_update(engine) else{return nil}
+        didRender()
         refreshImage()
         if next.contains(where:{$0.fragment.html?.contains("<img") == true}) {beginResourcePump()}
         return geometry()
@@ -106,6 +116,7 @@ public struct HTMLPreviewSnapshotConfiguration:Sendable {
             guard success else{return nil}
             entries[replacement.index]=replacement.entry
         }
+        didRender()
         refreshImage()
         return geometry()
     }
@@ -152,7 +163,9 @@ public struct HTMLPreviewSnapshotConfiguration:Sendable {
 
     public func scroll(to point:NSPoint) {
         guard let engine else{return}
-        astra_ul_surface_scroll(engine,point.x,point.y);refreshImage()
+        if let previous=scrollPoint,abs(previous.x-point.x)<0.01,abs(previous.y-point.y)<0.01 {return}
+        scrollPoint=point;astra_ul_surface_scroll(engine,point.x,point.y)
+        engineDirty=true;scheduleFlush()
     }
 
     public override func setFrameSize(_ newSize:NSSize) {
@@ -164,24 +177,58 @@ public struct HTMLPreviewSnapshotConfiguration:Sendable {
     private func resizeEngine() {
         guard let engine,bounds.width>0,bounds.height>0 else{return}
         let scale=max(1,window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 1)
-        astra_ul_surface_resize(engine,UInt32(ceil(bounds.width*scale)),UInt32(ceil(bounds.height*scale)),scale)
-        refreshImage()
+        let width=UInt32(ceil(bounds.width*scale)),height=UInt32(ceil(bounds.height*scale))
+        guard width != pixelSize.width || height != pixelSize.height || scale != pixelSize.scale else{return}
+        pixelSize=(width,height,scale);astra_ul_surface_resize(engine,width,height,scale)
+        engineDirty=true;scheduleFlush()
+    }
+
+    private func scheduleFlush() {
+        guard pendingFlush==nil else{return}
+        let work=DispatchWorkItem { [weak self] in self?.flush() }
+        pendingFlush=work
+        // AppKit stretches the last frame immediately. Reflow at most once per
+        // display interval while live resize events continue to arrive.
+        DispatchQueue.main.asyncAfter(deadline:.now()+1/60,execute:work)
+    }
+
+    public func flush() {
+        pendingFlush?.cancel();pendingFlush=nil
+        guard engineDirty,let engine else{return}
+        #if DEBUG
+        let work=TimingDiagnostics.shared.begin("html.flush")
+        defer {TimingDiagnostics.shared.end(work,values:["width":Double(bounds.width),"height":Double(bounds.height)])}
+        #endif
+        engineDirty=false
+        if astra_ul_surface_render(engine) {refreshImage()}
+    }
+
+    private func didRender() {
+        pendingFlush?.cancel();pendingFlush=nil;engineDirty=false
     }
 
     private func refreshImage() {
         guard let engine else{return}
+        #if DEBUG
+        let work=TimingDiagnostics.shared.begin("html.bitmap.copy")
+        defer {TimingDiagnostics.shared.end(work)}
+        #endif
         let count=astra_ul_surface_pixel_bytes(engine)
         guard count>0 else{return}
-        var data=Data(count:count),width:UInt32=0,height:UInt32=0,stride:UInt32=0
-        let copied=data.withUnsafeMutableBytes {bytes in
+        image=nil
+        if pixelData.count != count {pixelData=Data(count:count)}
+        var width:UInt32=0,height:UInt32=0,stride:UInt32=0
+        let copied=pixelData.withUnsafeMutableBytes {bytes in
             astra_ul_surface_copy_pixels(engine,bytes.baseAddress,count,&width,&height,&stride)
         }
-        guard copied,let provider=CGDataProvider(data:data as CFData) else{return}
+        guard copied,let provider=CGDataProvider(data:pixelData as CFData) else{return}
+        let scale=max(1,pixelSize.scale)
+        imageSize=NSSize(width:CGFloat(width)/scale,height:CGFloat(height)/scale)
         let info=CGBitmapInfo(rawValue:CGImageAlphaInfo.premultipliedFirst.rawValue)
             .union(.byteOrder32Little)
         image=CGImage(width:Int(width),height:Int(height),bitsPerComponent:8,bitsPerPixel:32,
             bytesPerRow:Int(stride),space:CGColorSpaceCreateDeviceRGB(),bitmapInfo:info,
-            provider:provider,decode:nil,shouldInterpolate:true,intent:.defaultIntent)
+            provider:provider,decode:nil,shouldInterpolate:false,intent:.defaultIntent)
         needsDisplay=true
     }
 
@@ -201,8 +248,21 @@ public struct HTMLPreviewSnapshotConfiguration:Sendable {
         NSColor.textBackgroundColor.setFill();dirtyRect.fill()
         guard let image,let context=NSGraphicsContext.current?.cgContext else{return}
         context.saveGState()
-        context.translateBy(x:0,y:bounds.height);context.scaleBy(x:1,y:-1)
-        context.draw(image,in:NSRect(origin:.zero,size:bounds.size))
+        // CGImage rows run bottom-to-top in this flipped NSView. Translate by
+        // the cached image's height, not the current viewport height: during
+        // live resize those heights intentionally differ until Ultralight's
+        // next frame arrives. Using bounds.height bottom-anchored the old frame
+        // and made its top jump by every viewport-height delta.
+        let translationY=imageSize.height
+        #if DEBUG
+        debugPaintedBitmapTop=translationY-imageSize.height
+        #endif
+        context.translateBy(x:0,y:translationY);context.scaleBy(x:1,y:-1)
+        // Never resample text merely because AppKit has delivered the new
+        // bounds before Ultralight's next frame. Keep the last frame pixel
+        // aligned and let the freshly reflowed frame replace it atomically.
+        context.interpolationQuality = .none
+        context.draw(image,in:NSRect(origin:.zero,size:imageSize))
         context.restoreGState()
     }
 

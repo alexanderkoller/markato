@@ -9,6 +9,14 @@ private final class SourceScrollView:NSScrollView {
         if consumeScroll?(event) != true {super.scrollWheel(with:event)}
     }
 }
+private final class SourceClipView:NSClipView {
+    var locksTop=false
+    override func constrainBoundsRect(_ proposedBounds:NSRect)->NSRect {
+        var bounds=super.constrainBoundsRect(proposedBounds)
+        if locksTop {bounds.origin.y=0}
+        return bounds
+    }
+}
 final class SourceTextView:NSTextView {
     weak var owner:SourceEditor?
     override func insertText(_ insertString:Any,replacementRange:NSRange) {
@@ -61,6 +69,7 @@ final class SourceEditor:NSView,NSTextViewDelegate,NSTextStorageDelegate,ScrollS
     private var nativeLayoutRevision:Int?
     private var observations=[NSObjectProtocol]()
     private var resizeAnchor:(Int,CGFloat)?
+    private var resizeAnchoredAtTop=false
     private var highlightedRanges=[NSRange]()
     private var highlightRevision = -1
     private var deferredHighlights=[(Int,[SyntaxSpan],NSRange)]()
@@ -72,6 +81,12 @@ final class SourceEditor:NSView,NSTextViewDelegate,NSTextStorageDelegate,ScrollS
     #if DEBUG
     private(set) var highlightApplications=0
     var preparedLayoutLength:Int {prepared.sourceLayout.length}
+    var debugFirstLineViewportY:CGFloat {
+        guard textView.string.count>0 else{return textView.frame.minY+textView.textContainerInset.height-scroll.contentView.bounds.minY}
+        let glyph=textView.layoutManager!.glyphIndexForCharacter(at:0)
+        let line=textView.layoutManager!.lineFragmentUsedRect(forGlyphAt:glyph,effectiveRange:nil)
+        return textView.frame.minY+textView.textContainerInset.height+line.minY-scroll.contentView.bounds.minY
+    }
     #endif
     var contentRevision:Int {document.revision}
     var hasMeasuredLayout:Bool {(initialStylesReady || document.source.count==0) && nativeLayoutRevision==nil && !localEdit && !changingLayout && loadedRevision==document.revision}
@@ -106,6 +121,7 @@ final class SourceEditor:NSView,NSTextViewDelegate,NSTextStorageDelegate,ScrollS
     }
     init(document:MarkdownDocument,prepared:PreparedDocument = PreparedDocument(),deferInitialLayout:Bool=false) {
         self.document=document;self.prepared=prepared;initialStylesReady = !deferInitialLayout;super.init(frame:.zero)
+        scroll.contentView=SourceClipView()
         scroll.hasVerticalScroller=true;scroll.autohidesScrollers=true
         scroll.backgroundColor = .textBackgroundColor;scroll.documentView=canvas
         addSubview(scroll);canvas.addSubview(textView)
@@ -133,6 +149,16 @@ final class SourceEditor:NSView,NSTextViewDelegate,NSTextStorageDelegate,ScrollS
     }
     required init?(coder:NSCoder) {fatalError()}
     deinit {for observation in observations {NotificationCenter.default.removeObserver(observation)}}
+    func beginLiveResize() {
+        guard let clip=scroll.contentView as? SourceClipView else{return}
+        clip.locksTop=clip.bounds.minY==0
+        if clip.locksTop {clip.scroll(to:.zero);scroll.reflectScrolledClipView(clip)}
+    }
+    func endLiveResize() {
+        guard let clip=scroll.contentView as? SourceClipView else{return}
+        let wasLocked=clip.locksTop;clip.locksTop=false
+        if wasLocked {clip.scroll(to:.zero);scroll.reflectScrolledClipView(clip)}
+    }
     func beginScrollGesture() {
         guard !isScrolling else{return}
         isScrolling=true;scrollGestureChanged?(true)
@@ -142,9 +168,15 @@ final class SourceEditor:NSView,NSTextViewDelegate,NSTextStorageDelegate,ScrollS
         isScrolling=false;applyDeferredHighlights();scrollGestureChanged?(false)
     }
     override func setFrameSize(_ size:NSSize) {
-        if size != frame.size {endScrollGesture()}
-        if loadedRevision>=0,nativeLayoutRevision==nil,abs(size.width-frame.width)>0.5,resizeAnchor==nil,let y=verticalPosition(for:viewportAnchor) {
-            resizeAnchor=(viewportAnchor,scroll.contentView.bounds.minY-y)
+        if size != frame.size {
+            endScrollGesture()
+            if loadedRevision>=0,nativeLayoutRevision==nil,scroll.contentView.bounds.minY==0 {
+                resizeAnchoredAtTop=true
+            }
+        }
+        if loadedRevision>=0,nativeLayoutRevision==nil,abs(size.width-frame.width)>0.5,
+           resizeAnchor==nil,!resizeAnchoredAtTop,let y=verticalPosition(for:viewportAnchor) {
+                resizeAnchor=(viewportAnchor,scroll.contentView.bounds.minY-y)
         }
         super.setFrameSize(size);needsLayout=true
     }
@@ -157,10 +189,14 @@ final class SourceEditor:NSView,NSTextViewDelegate,NSTextStorageDelegate,ScrollS
         let changed=scroll.frame.size != bounds.size
         guard changed || loadedRevision<0 else{return}
         changingLayout=true
-        let anchor=resizeAnchor;resizeAnchor=nil
+        let anchor=resizeAnchor,atTop=resizeAnchoredAtTop
+        resizeAnchor=nil;resizeAnchoredAtTop=false
         scroll.frame=bounds
         if loadedRevision<0 {reload(preserving:NSRange(location:0,length:0))}else{updateDimensions()}
-        if let (offset,displacement)=anchor,let y=verticalPosition(for:offset) {
+        if atTop {
+            scroll.contentView.scroll(to:.zero)
+            scroll.reflectScrolledClipView(scroll.contentView)
+        } else if let (offset,displacement)=anchor,let y=verticalPosition(for:offset) {
             scroll.contentView.scroll(to:NSPoint(x:0,y:max(0,y+displacement)))
             scroll.reflectScrolledClipView(scroll.contentView)
         }
@@ -456,7 +492,7 @@ final class SourceEditor:NSView,NSTextViewDelegate,NSTextStorageDelegate,ScrollS
         guard let revision=nativeLayoutRevision,revision==document.revision,!changingLayout else{return}
         changingLayout=true;scroll.frame=bounds;updateDimensions();changingLayout=false
         nativeLayoutRevision=nil
-        resizeAnchor=nil;needsLayout=true
+        resizeAnchor=nil;resizeAnchoredAtTop=false;needsLayout=true
         geometryChanged?();notifyViewport();applyDeferredHighlights()
     }
     func textViewDidChangeSelection(_ notification:Notification) {

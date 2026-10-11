@@ -2,10 +2,23 @@ import AppKit
 import HTMLPreview
 import MarkdownCore
 
+private final class PreviewClipView:NSClipView {
+    var rendererOrigin:CGFloat=0
+    override func constrainBoundsRect(_ proposedBounds:NSRect)->NSRect {
+        var bounds=super.constrainBoundsRect(proposedBounds)
+        bounds.origin.y=rendererOrigin
+        return bounds
+    }
+    func move(to origin:CGFloat) {
+        rendererOrigin=origin
+        scroll(to:NSPoint(x:bounds.minX,y:origin))
+    }
+}
+
 /// One presentation surface owns all of its native and HTML-engine coordinates.
 /// The inactive surface stays hidden until its complete presentation is ready.
 @MainActor private final class PreviewSurface {
-    let clip=NSClipView()
+    let clip=PreviewClipView()
     let canvas=FlippedView()
     let web:HTMLPreviewView
     var ready=false
@@ -15,8 +28,8 @@ import MarkdownCore
     var preparedAssetBase:String?
     var ignoresGeometry=false
     private(set) var logicalOrigin:CGFloat=0
+    private var localOrigin:CGFloat?
     private(set) var windowTop:CGFloat=0
-    private var margin:CGFloat=1
     init(web:HTMLPreviewView) {
         self.web=web;ready=web.isEngineReady
         clip.drawsBackground=true;clip.backgroundColor = .textBackgroundColor
@@ -29,18 +42,25 @@ import MarkdownCore
     }
     func size(contentHeight:CGFloat,windowTop:CGFloat=0,windowHeight:CGFloat?=nil,width:CGFloat,viewportHeight:CGFloat) {
         self.windowTop=windowTop
-        margin=max(1,viewportHeight)
-        let frame=NSRect(x:0,y:margin+logicalOrigin,width:max(1,width),height:max(1,viewportHeight))
+        // Ultralight is viewport-sized, unlike the old full-document WebView.
+        // Keep its outer coordinate system fixed while the viewport changes;
+        // moving both the view and clip by `viewportHeight` caused AppKit to
+        // visibly present that relocation during every live-resize frame.
+        let frame=NSRect(x:0,y:logicalOrigin,width:max(1,width),height:max(1,viewportHeight))
         if web.frame != frame {web.frame=frame}
-        let size=NSSize(width:max(1,width),height:max(contentHeight+margin*2,frame.maxY+margin))
+        let size=NSSize(width:max(1,width),height:max(viewportHeight,max(contentHeight,frame.maxY)))
         if canvas.frame.size != size {canvas.frame.size=size}
+        clip.move(to:logicalOrigin)
     }
-    func scroll(to origin:CGFloat) {
+    func scroll(to origin:CGFloat,flush:Bool=false) {
         logicalOrigin=origin
         let local=max(0,origin-windowTop)
-        web.setFrameOrigin(NSPoint(x:0,y:margin+origin))
-        clip.scroll(to:NSPoint(x:0,y:margin+origin))
-        web.scroll(to:NSPoint(x:0,y:local))
+        web.setFrameOrigin(NSPoint(x:0,y:origin))
+        clip.move(to:origin)
+        if localOrigin.map({abs($0-local)>=0.01}) ?? true {
+            localOrigin=local;web.scroll(to:NSPoint(x:0,y:local))
+        }
+        if flush {web.flush()}
     }
 }
 
@@ -160,6 +180,11 @@ private struct CommittedPresentation {
     private var rendering:PreviewRequest?
     private var independentOrigin:CGFloat=0
     private var version=0,measuredWidth:CGFloat=0
+    private var liveResizeActive=false
+    private var liveResizeOwnsMapFreeze=false
+    private var liveResizeNeedsPresentation=false
+    private var resizePinnedOrigin:CGFloat?
+    private var resizePinnedSourceOrigin:CGFloat?
     private var inspector:NSWindowController?
     private(set) var isScrollMappingFrozen=false
     var presentationSettled:(()->Void)?
@@ -214,6 +239,10 @@ private struct CommittedPresentation {
             && visiblePreview.upperBound>committed.geometry.height-reserve
         return needsBefore || needsAfter
     }
+    var needsWindowTrimming:Bool {
+        guard let committed,committed.request.entries.count>1,bounds.height>1 else{return false}
+        return committed.geometry.height>bounds.height*30
+    }
     var isShowingLoadingState:Bool {!loadingView.isHidden}
     var clipOrigin:CGFloat {clip.bounds.minY}
     var webView:HTMLPreviewView {web}
@@ -251,7 +280,18 @@ private struct CommittedPresentation {
     }
     required init?(coder:NSCoder) {fatalError()}
     override func draw(_ dirtyRect:NSRect) {NSColor.textBackgroundColor.setFill();dirtyRect.fill()}
-    func moveViewport() {place();updateLoadingState()}
+    func moveViewport() {
+        if !liveResizeActive,let pinned=resizePinnedSourceOrigin,let source,
+           source.viewportOrigin != pinned {
+            resizePinnedOrigin=nil;resizePinnedSourceOrigin=nil
+        }
+        // Source and preview geometry must describe the same widths. During a
+        // live resize the source can publish intermediate geometry before the
+        // browser has painted its matching frame, so retain the last coherent
+        // position until the resized preview has been measured.
+        if !liveResizeActive {place()}
+        updateLoadingState()
+    }
     private var hasCurrentMap:Bool {
         guard let committed else{return false}
         guard let source else{return true}
@@ -283,13 +323,16 @@ private struct CommittedPresentation {
         guard let source,source.contentHeight<=bounds.height+0.001,
               let committed,committed.totalHeight>bounds.height,
               abs(event.scrollingDeltaY)>=abs(event.scrollingDeltaX) else{return false}
+        resizePinnedOrigin=nil;resizePinnedSourceOrigin=nil
         independentOrigin=max(0,visibleWebRange.lowerBound-event.scrollingDeltaY);place();return true
     }
     func navigatePreview(toEnd:Bool) {
         guard let committed else{return}
+        resizePinnedOrigin=nil;resizePinnedSourceOrigin=nil
         independentOrigin=toEnd ? max(0,committed.totalHeight-bounds.height):0;place()
     }
     func beginScrollGesture() {
+        resizePinnedOrigin=nil;resizePinnedSourceOrigin=nil
         guard !isScrollMappingFrozen else{return}
         refreshMap()
         guard hasCurrentMap else{updateLoadingState();return}
@@ -299,10 +342,14 @@ private struct CommittedPresentation {
         isScrollMappingFrozen=false;moveViewport();preparePresentation()
     }
     func sourceLayoutChanged() {
+        if liveResizeActive {return}
         if !isScrollMappingFrozen {moveViewport()}
         preparePresentation()
     }
-    func invalidate() {endScrollGesture();version += 1;content=nil;desired=nil;updateLoadingState()}
+    func invalidate() {
+        resizePinnedOrigin=nil;resizePinnedSourceOrigin=nil
+        endScrollGesture();version += 1;content=nil;desired=nil;updateLoadingState()
+    }
     /// Apply an equal-cardinality manifest splice immediately to the complete
     /// displayed DOM. Its old geometry/map remain the last committed snapshot;
     /// the caller follows with a normal full measurement and commit.
@@ -439,7 +486,7 @@ private struct CommittedPresentation {
         guard let position=presentationPosition(request,geometry:geometry) else {finishPreparation(request);return}
         surface.size(contentHeight:position.totalHeight,windowTop:position.windowTop,
             windowHeight:geometry.height,width:request.width,viewportHeight:bounds.height)
-        surface.scroll(to:position.origin)
+        surface.scroll(to:position.origin,flush:true)
         #if DEBUG
         TimingDiagnostics.shared.end(roundtrip,values:["mounted":Double(request.entries.count),"height":Double(geometry.height)])
         #endif
@@ -474,6 +521,9 @@ private struct CommittedPresentation {
         return (CGFloat(top)-(geometry.items.first?.y ?? 0),height)
     }
     private func targetOrigin(height:CGFloat,map:ScrollLandmarks?)->CGFloat? {
+        if let resizePinnedOrigin {
+            return min(max(0,height-bounds.height),max(0,resizePinnedOrigin))
+        }
         let target:CGFloat
         switch scrolling {
         case .independent:target=independentOrigin
@@ -544,19 +594,46 @@ private struct CommittedPresentation {
         CATransaction.commit()
     }
     override func setFrameSize(_ size:NSSize) {
-        if size != frame.size {endScrollGesture()}
+        if size != frame.size,!liveResizeActive {endScrollGesture()}
         super.setFrameSize(size);needsLayout=true
     }
     override func layout() {
+        #if DEBUG
+        let resizeWork=TimingDiagnostics.shared.begin("preview.layout")
+        defer {TimingDiagnostics.shared.end(resizeWork,values:["width":Double(bounds.width),"height":Double(bounds.height)])}
+        #endif
         super.layout()
         for surface in surfaces {surface.clip.frame=bounds}
         loadingView.frame=bounds
         loadingLabel.frame=NSRect(x:16,y:max(0,(bounds.height-24)/2),width:max(0,bounds.width-32),height:24)
         loadingView.layer?.backgroundColor=NSColor.textBackgroundColor.cgColor
         let changed=measuredWidth != bounds.width;measuredWidth=bounds.width
-        if changed {endScrollGesture();requestPresentation()}
-        if let committed {committed.surface.size(contentHeight:committed.totalHeight,windowTop:committed.windowTop,windowHeight:committed.geometry.height,width:committed.request.width,viewportHeight:bounds.height)}
-        place();preparePresentation()
+        if changed {
+            if liveResizeActive {liveResizeNeedsPresentation=true}
+            else {endScrollGesture();requestPresentation()}
+        }
+        if let committed {
+            let width=liveResizeActive ? bounds.width:committed.request.width
+            committed.surface.size(contentHeight:committed.totalHeight,windowTop:committed.windowTop,
+                windowHeight:committed.geometry.height,width:width,viewportHeight:bounds.height)
+        }
+        if !liveResizeActive {place();preparePresentation()}
+    }
+    func beginLiveResize() {
+        guard !liveResizeActive else{return}
+        resizePinnedOrigin=visiblePreviewRange.lowerBound
+        resizePinnedSourceOrigin=source?.viewportOrigin
+        refreshMap();liveResizeActive=true
+        if !isScrollMappingFrozen,hasCurrentMap {
+            isScrollMappingFrozen=true;liveResizeOwnsMapFreeze=true
+        }
+    }
+    func endLiveResize() {
+        guard liveResizeActive else{return}
+        liveResizeActive=false
+        if liveResizeOwnsMapFreeze {isScrollMappingFrozen=false;liveResizeOwnsMapFreeze=false}
+        if liveResizeNeedsPresentation {liveResizeNeedsPresentation=false;requestPresentation()}
+        else {moveViewport()}
     }
     private func refreshMap() {
         guard let committed,let source,(committed.sourceGeometryRevision != source.geometryRevision || committed.viewportHeight != bounds.height) else{return}
@@ -588,6 +665,10 @@ private struct CommittedPresentation {
     var debugAlignmentDrift:Double {
         guard let committed,let source,let target=committed.map?.previewY(for:Double(source.viewportOrigin)) else{return 0}
         return Double(visiblePreviewRange.lowerBound)-target
+    }
+    var debugFirstHeadingViewportY:CGFloat? {
+        guard let committed,let rect=committed.surface.web.debugRect("h1",containing:"AstraMarkdown") else{return nil}
+        return committed.surface.web.frame.minY-committed.surface.clip.bounds.minY+rect.minY
     }
     func debugGeometry()->String {"mounted=\(preparedFragmentCount), height=\(committed?.geometry.height ?? 0), desired=\(String(describing:desired?.id)), rendering=\(String(describing:rendering?.id)), measuredSource=\(source?.hasMeasuredLayout == true), mapCurrent=\(hasCurrentMap), clip=\(clipOrigin), patches=\(patchCount), displayed=\(String(describing:displayedSourceRange)), visible=\(String(describing:source?.visibleSourceRange))"}
     #endif

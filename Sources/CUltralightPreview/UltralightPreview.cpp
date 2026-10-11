@@ -170,8 +170,14 @@ void astra_ul_surface_resize(AstraULSurface* surface, uint32_t width,
                              uint32_t height, double device_scale) {
   if (!surface) return;
   surface->view->Resize(std::max(1u, width), std::max(1u, height), device_scale);
-  surface->render();
   ++surface->measurement;
+}
+
+bool astra_ul_surface_render(AstraULSurface* surface) {
+  if (!surface) return false;
+  surface->render();
+  auto* pixels = surface->view->surface();
+  return pixels && !pixels->dirty_bounds().IsEmpty();
 }
 
 void astra_ul_surface_begin_update(AstraULSurface* surface, size_t count,
@@ -231,7 +237,6 @@ bool astra_ul_surface_geometry_item(AstraULSurface* surface, size_t index,
 void astra_ul_surface_scroll(AstraULSurface* surface, double x, double y) {
   if (!surface) return;
   surface->document.defaultView().scrollTo(x, y);
-  surface->render();
 }
 
 size_t astra_ul_surface_pixel_bytes(AstraULSurface* surface) {

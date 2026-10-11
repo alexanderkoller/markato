@@ -34,6 +34,9 @@ void astra_ul_surface_destroy(AstraULSurface* surface);
 bool astra_ul_surface_ready(AstraULSurface* surface);
 void astra_ul_surface_resize(AstraULSurface* surface, uint32_t width,
                              uint32_t height, double device_scale);
+// Apply all pending view/DOM/scroll mutations in one renderer update. Returns
+// true when this surface produced pixels that should be published.
+bool astra_ul_surface_render(AstraULSurface* surface);
 
 void astra_ul_surface_begin_update(AstraULSurface* surface, size_t count,
                                    double font_size);
