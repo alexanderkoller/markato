@@ -15,7 +15,7 @@ final class MarkdownDocument: NSDocument {
     override class var autosavesInPlace: Bool { true }
     override init() { super.init(); hasUndoManager = true; fileType = "Markdown" }
     override func makeWindowControllers() {
-        // Parse on the worker while AppKit and WebKit create the window. Comrak
+        // Parse on the worker while AppKit and Ultralight create the window. Comrak
         // prepares one AST; the first viewport receives only its records while
         // the complete manifest seeds the retained document trees.
         parser.request(rope:source,revision:revision,visible:NSRange(location:0,length:0),renderHTML:false) {result in

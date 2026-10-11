@@ -25248,5 +25248,2178 @@
       }
     ],
     "errors": []
+  },
+  {
+    "app": "comrak-cached-window",
+    "fixture": "prose-65536.md",
+    "round": 1,
+    "runId": "comrak-cached-window-1791659951998221000-prose-r1",
+    "requestedEdits": 3,
+    "inputSHA256": "f6f7e3711e99aeac4cea1ba4e98524070881b535be3f075c1394d0fc1ccb1185",
+    "privateInputPath": "/private/tmp/astra-comrak-port-benchmark/inputs/comrak-cached-window-65536-r1-comrak-cached-window-1791659951998221000-prose-r1.md",
+    "pristineFixtureUnchanged": true,
+    "startedUnix": 1791659952.001867,
+    "wallSeconds": 10.507251977920532,
+    "exitCode": 0,
+    "status": "complete",
+    "samples": [
+      {
+        "editIndex": 0,
+        "operation": "open",
+        "dispatchMs": 57.167083501815796,
+        "observedHeading": "BENCH_START",
+        "verifiedSource": true,
+        "elapsedMs": 124.99750018119812,
+        "type": "sample"
+      },
+      {
+        "editIndex": 1,
+        "operation": "edit",
+        "dispatchMs": 4.2850000858306885,
+        "observedHeading": "ED0ED8DC601",
+        "verifiedSource": true,
+        "elapsedMs": 89.48687481880188,
+        "type": "sample"
+      },
+      {
+        "editIndex": 2,
+        "operation": "edit",
+        "dispatchMs": 3.2169582843780518,
+        "observedHeading": "ED0ED8DC602",
+        "verifiedSource": true,
+        "elapsedMs": 59.5295832157135,
+        "type": "sample"
+      },
+      {
+        "editIndex": 3,
+        "operation": "edit",
+        "dispatchMs": 3.243333339691162,
+        "observedHeading": "ED0ED8DC603",
+        "verifiedSource": true,
+        "elapsedMs": 66.95458340644836,
+        "type": "sample"
+      }
+    ],
+    "errors": []
+  },
+  {
+    "app": "comrak-cached-window",
+    "fixture": "prose-1048576.md",
+    "round": 1,
+    "runId": "comrak-cached-window-1791659951998221000-prose-r1",
+    "requestedEdits": 3,
+    "inputSHA256": "3af127c0e280539e0b9c25ff88d1bcbad800aac2d8a5d7e17fa6f64a4c9bb4c3",
+    "privateInputPath": "/private/tmp/astra-comrak-port-benchmark/inputs/comrak-cached-window-1048576-r1-comrak-cached-window-1791659951998221000-prose-r1.md",
+    "pristineFixtureUnchanged": true,
+    "startedUnix": 1791659963.5342982,
+    "wallSeconds": 9.98063588142395,
+    "exitCode": 0,
+    "status": "complete",
+    "samples": [
+      {
+        "editIndex": 0,
+        "operation": "open",
+        "dispatchMs": 61.27562499046326,
+        "observedHeading": "BENCH_START",
+        "verifiedSource": true,
+        "elapsedMs": 122.31854176521301,
+        "type": "sample"
+      },
+      {
+        "editIndex": 1,
+        "operation": "edit",
+        "dispatchMs": 2.850083351135254,
+        "observedHeading": "E5316629301",
+        "verifiedSource": true,
+        "elapsedMs": 84.17095828056335,
+        "type": "sample"
+      },
+      {
+        "editIndex": 2,
+        "operation": "edit",
+        "dispatchMs": 2.5123748779296875,
+        "observedHeading": "E5316629302",
+        "verifiedSource": true,
+        "elapsedMs": 85.36633324623108,
+        "type": "sample"
+      },
+      {
+        "editIndex": 3,
+        "operation": "edit",
+        "dispatchMs": 2.7518749237060547,
+        "observedHeading": "E5316629303",
+        "verifiedSource": true,
+        "elapsedMs": 84.1967499256134,
+        "type": "sample"
+      }
+    ],
+    "errors": []
+  },
+  {
+    "app": "comrak-cached-window",
+    "fixture": "prose-8388608.md",
+    "round": 1,
+    "runId": "comrak-cached-window-1791659951998221000-prose-r1",
+    "requestedEdits": 3,
+    "inputSHA256": "8e8db8d9ee856bec38d3ae32da8c6c8079ae441c72a71f461c8f7ad044e429ab",
+    "privateInputPath": "/private/tmp/astra-comrak-port-benchmark/inputs/comrak-cached-window-8388608-r1-comrak-cached-window-1791659951998221000-prose-r1.md",
+    "pristineFixtureUnchanged": true,
+    "startedUnix": 1791659974.540169,
+    "wallSeconds": 10.643956899642944,
+    "exitCode": 0,
+    "status": "complete",
+    "samples": [
+      {
+        "editIndex": 0,
+        "operation": "open",
+        "dispatchMs": 83.87450003623962,
+        "observedHeading": "BENCH_START",
+        "verifiedSource": true,
+        "elapsedMs": 362.33300018310547,
+        "type": "sample"
+      },
+      {
+        "editIndex": 1,
+        "operation": "edit",
+        "dispatchMs": 1.5107083320617676,
+        "observedHeading": "E95FB2D0801",
+        "verifiedSource": true,
+        "elapsedMs": 210.79270839691162,
+        "type": "sample"
+      },
+      {
+        "editIndex": 2,
+        "operation": "edit",
+        "dispatchMs": 1.268458366394043,
+        "observedHeading": "E95FB2D0802",
+        "verifiedSource": true,
+        "elapsedMs": 224.18220829963684,
+        "type": "sample"
+      },
+      {
+        "editIndex": 3,
+        "operation": "edit",
+        "dispatchMs": 1.2951250076293945,
+        "observedHeading": "E95FB2D0803",
+        "verifiedSource": true,
+        "elapsedMs": 243.63808345794678,
+        "type": "sample"
+      }
+    ],
+    "errors": []
+  },
+  {
+    "app": "comrak-cached-window",
+    "fixture": "prose-65536.md",
+    "round": 1,
+    "runId": "comrak-cached-window-1791659951998221000-prose-r2",
+    "requestedEdits": 3,
+    "inputSHA256": "f6f7e3711e99aeac4cea1ba4e98524070881b535be3f075c1394d0fc1ccb1185",
+    "privateInputPath": "/private/tmp/astra-comrak-port-benchmark/inputs/comrak-cached-window-65536-r1-comrak-cached-window-1791659951998221000-prose-r2.md",
+    "pristineFixtureUnchanged": true,
+    "startedUnix": 1791659986.205614,
+    "wallSeconds": 9.920409917831421,
+    "exitCode": 0,
+    "status": "complete",
+    "samples": [
+      {
+        "editIndex": 0,
+        "operation": "open",
+        "dispatchMs": 57.0725417137146,
+        "observedHeading": "BENCH_START",
+        "verifiedSource": true,
+        "elapsedMs": 127.60183334350586,
+        "type": "sample"
+      },
+      {
+        "editIndex": 1,
+        "operation": "edit",
+        "dispatchMs": 4.5758750438690186,
+        "observedHeading": "E0DC1310401",
+        "verifiedSource": true,
+        "elapsedMs": 68.56783318519592,
+        "type": "sample"
+      },
+      {
+        "editIndex": 2,
+        "operation": "edit",
+        "dispatchMs": 4.0600831508636475,
+        "observedHeading": "E0DC1310402",
+        "verifiedSource": true,
+        "elapsedMs": 59.461416721343994,
+        "type": "sample"
+      },
+      {
+        "editIndex": 3,
+        "operation": "edit",
+        "dispatchMs": 3.1812081336975098,
+        "observedHeading": "E0DC1310403",
+        "verifiedSource": true,
+        "elapsedMs": 64.91404175758362,
+        "type": "sample"
+      }
+    ],
+    "errors": []
+  },
+  {
+    "app": "comrak-cached-window",
+    "fixture": "prose-1048576.md",
+    "round": 1,
+    "runId": "comrak-cached-window-1791659951998221000-prose-r2",
+    "requestedEdits": 3,
+    "inputSHA256": "3af127c0e280539e0b9c25ff88d1bcbad800aac2d8a5d7e17fa6f64a4c9bb4c3",
+    "privateInputPath": "/private/tmp/astra-comrak-port-benchmark/inputs/comrak-cached-window-1048576-r1-comrak-cached-window-1791659951998221000-prose-r2.md",
+    "pristineFixtureUnchanged": true,
+    "startedUnix": 1791659997.1540182,
+    "wallSeconds": 9.925063848495483,
+    "exitCode": 0,
+    "status": "complete",
+    "samples": [
+      {
+        "editIndex": 0,
+        "operation": "open",
+        "dispatchMs": 62.44987511634827,
+        "observedHeading": "BENCH_START",
+        "verifiedSource": true,
+        "elapsedMs": 124.37854170799255,
+        "type": "sample"
+      },
+      {
+        "editIndex": 1,
+        "operation": "edit",
+        "dispatchMs": 2.41504168510437,
+        "observedHeading": "EBD7F1F8001",
+        "verifiedSource": true,
+        "elapsedMs": 77.57870841026306,
+        "type": "sample"
+      },
+      {
+        "editIndex": 2,
+        "operation": "edit",
+        "dispatchMs": 1.0988335609436035,
+        "observedHeading": "EBD7F1F8002",
+        "verifiedSource": true,
+        "elapsedMs": 61.27837514877319,
+        "type": "sample"
+      },
+      {
+        "editIndex": 3,
+        "operation": "edit",
+        "dispatchMs": 1.059166669845581,
+        "observedHeading": "EBD7F1F8003",
+        "verifiedSource": true,
+        "elapsedMs": 62.355250120162964,
+        "type": "sample"
+      }
+    ],
+    "errors": []
+  },
+  {
+    "app": "comrak-cached-window",
+    "fixture": "prose-8388608.md",
+    "round": 1,
+    "runId": "comrak-cached-window-1791659951998221000-prose-r2",
+    "requestedEdits": 3,
+    "inputSHA256": "8e8db8d9ee856bec38d3ae32da8c6c8079ae441c72a71f461c8f7ad044e429ab",
+    "privateInputPath": "/private/tmp/astra-comrak-port-benchmark/inputs/comrak-cached-window-8388608-r1-comrak-cached-window-1791659951998221000-prose-r2.md",
+    "pristineFixtureUnchanged": true,
+    "startedUnix": 1791660008.107115,
+    "wallSeconds": 10.60088300704956,
+    "exitCode": 0,
+    "status": "complete",
+    "samples": [
+      {
+        "editIndex": 0,
+        "operation": "open",
+        "dispatchMs": 85.3225417137146,
+        "observedHeading": "BENCH_START",
+        "verifiedSource": true,
+        "elapsedMs": 366.12870812416077,
+        "type": "sample"
+      },
+      {
+        "editIndex": 1,
+        "operation": "edit",
+        "dispatchMs": 1.513000249862671,
+        "observedHeading": "E04949ABF01",
+        "verifiedSource": true,
+        "elapsedMs": 198.59475016593933,
+        "type": "sample"
+      },
+      {
+        "editIndex": 2,
+        "operation": "edit",
+        "dispatchMs": 1.2914583683013916,
+        "observedHeading": "E04949ABF02",
+        "verifiedSource": true,
+        "elapsedMs": 224.7546248435974,
+        "type": "sample"
+      },
+      {
+        "editIndex": 3,
+        "operation": "edit",
+        "dispatchMs": 1.25266695022583,
+        "observedHeading": "E04949ABF03",
+        "verifiedSource": true,
+        "elapsedMs": 242.09862518310547,
+        "type": "sample"
+      }
+    ],
+    "errors": []
+  },
+  {
+    "app": "comrak-cached-window",
+    "fixture": "prose-65536.md",
+    "round": 1,
+    "runId": "comrak-cached-window-1791659951998221000-prose-r3",
+    "requestedEdits": 3,
+    "inputSHA256": "f6f7e3711e99aeac4cea1ba4e98524070881b535be3f075c1394d0fc1ccb1185",
+    "privateInputPath": "/private/tmp/astra-comrak-port-benchmark/inputs/comrak-cached-window-65536-r1-comrak-cached-window-1791659951998221000-prose-r3.md",
+    "pristineFixtureUnchanged": true,
+    "startedUnix": 1791660019.727766,
+    "wallSeconds": 9.980220794677734,
+    "exitCode": 0,
+    "status": "complete",
+    "samples": [
+      {
+        "editIndex": 0,
+        "operation": "open",
+        "dispatchMs": 58.218125104904175,
+        "observedHeading": "BENCH_START",
+        "verifiedSource": true,
+        "elapsedMs": 121.80687499046326,
+        "type": "sample"
+      },
+      {
+        "editIndex": 1,
+        "operation": "edit",
+        "dispatchMs": 4.135833501815796,
+        "observedHeading": "E24C9366001",
+        "verifiedSource": true,
+        "elapsedMs": 99.11591672897339,
+        "type": "sample"
+      },
+      {
+        "editIndex": 2,
+        "operation": "edit",
+        "dispatchMs": 3.2788333892822266,
+        "observedHeading": "E24C9366002",
+        "verifiedSource": true,
+        "elapsedMs": 56.71870827674866,
+        "type": "sample"
+      },
+      {
+        "editIndex": 3,
+        "operation": "edit",
+        "dispatchMs": 3.43387508392334,
+        "observedHeading": "E24C9366003",
+        "verifiedSource": true,
+        "elapsedMs": 80.43616652488708,
+        "type": "sample"
+      }
+    ],
+    "errors": []
+  },
+  {
+    "app": "comrak-cached-window",
+    "fixture": "prose-1048576.md",
+    "round": 1,
+    "runId": "comrak-cached-window-1791659951998221000-prose-r3",
+    "requestedEdits": 3,
+    "inputSHA256": "3af127c0e280539e0b9c25ff88d1bcbad800aac2d8a5d7e17fa6f64a4c9bb4c3",
+    "privateInputPath": "/private/tmp/astra-comrak-port-benchmark/inputs/comrak-cached-window-1048576-r1-comrak-cached-window-1791659951998221000-prose-r3.md",
+    "pristineFixtureUnchanged": true,
+    "startedUnix": 1791660030.7333918,
+    "wallSeconds": 10.019317388534546,
+    "exitCode": 0,
+    "status": "complete",
+    "samples": [
+      {
+        "editIndex": 0,
+        "operation": "open",
+        "dispatchMs": 60.60599994659424,
+        "observedHeading": "BENCH_START",
+        "verifiedSource": true,
+        "elapsedMs": 124.6265001296997,
+        "type": "sample"
+      },
+      {
+        "editIndex": 1,
+        "operation": "edit",
+        "dispatchMs": 1.386291742324829,
+        "observedHeading": "E1133E77101",
+        "verifiedSource": true,
+        "elapsedMs": 78.25049996376038,
+        "type": "sample"
+      },
+      {
+        "editIndex": 2,
+        "operation": "edit",
+        "dispatchMs": 1.630124807357788,
+        "observedHeading": "E1133E77102",
+        "verifiedSource": true,
+        "elapsedMs": 68.41479158401489,
+        "type": "sample"
+      },
+      {
+        "editIndex": 3,
+        "operation": "edit",
+        "dispatchMs": 2.791749954223633,
+        "observedHeading": "E1133E77103",
+        "verifiedSource": true,
+        "elapsedMs": 89.79712510108948,
+        "type": "sample"
+      }
+    ],
+    "errors": []
+  },
+  {
+    "app": "comrak-cached-window",
+    "fixture": "prose-8388608.md",
+    "round": 1,
+    "runId": "comrak-cached-window-1791659951998221000-prose-r3",
+    "requestedEdits": 3,
+    "inputSHA256": "8e8db8d9ee856bec38d3ae32da8c6c8079ae441c72a71f461c8f7ad044e429ab",
+    "privateInputPath": "/private/tmp/astra-comrak-port-benchmark/inputs/comrak-cached-window-8388608-r1-comrak-cached-window-1791659951998221000-prose-r3.md",
+    "pristineFixtureUnchanged": true,
+    "startedUnix": 1791660041.7819798,
+    "wallSeconds": 10.621642112731934,
+    "exitCode": 0,
+    "status": "complete",
+    "samples": [
+      {
+        "editIndex": 0,
+        "operation": "open",
+        "dispatchMs": 84.6684582233429,
+        "observedHeading": "BENCH_START",
+        "verifiedSource": true,
+        "elapsedMs": 357.936083316803,
+        "type": "sample"
+      },
+      {
+        "editIndex": 1,
+        "operation": "edit",
+        "dispatchMs": 1.4247918128967285,
+        "observedHeading": "E11369CF401",
+        "verifiedSource": true,
+        "elapsedMs": 203.53787517547607,
+        "type": "sample"
+      },
+      {
+        "editIndex": 2,
+        "operation": "edit",
+        "dispatchMs": 1.2665417194366455,
+        "observedHeading": "E11369CF402",
+        "verifiedSource": true,
+        "elapsedMs": 226.41687488555908,
+        "type": "sample"
+      },
+      {
+        "editIndex": 3,
+        "operation": "edit",
+        "dispatchMs": 1.304333209991455,
+        "observedHeading": "E11369CF403",
+        "verifiedSource": true,
+        "elapsedMs": 242.84245824813843,
+        "type": "sample"
+      }
+    ],
+    "errors": []
+  },
+  {
+    "app": "comrak-cached-window-editfix",
+    "fixture": "prose-65536.md",
+    "round": 1,
+    "runId": "comrak-cached-window-editfix-1791660948475853000-prose-r1",
+    "requestedEdits": 3,
+    "inputSHA256": "f6f7e3711e99aeac4cea1ba4e98524070881b535be3f075c1394d0fc1ccb1185",
+    "privateInputPath": "/private/tmp/astra-comrak-port-benchmark/inputs/comrak-cached-window-editfix-65536-r1-comrak-cached-window-editfix-1791660948475853000-prose-r1.md",
+    "pristineFixtureUnchanged": true,
+    "startedUnix": 1791660948.480408,
+    "wallSeconds": 10.517887115478516,
+    "exitCode": 0,
+    "status": "complete",
+    "samples": [
+      {
+        "editIndex": 0,
+        "operation": "open",
+        "dispatchMs": 57.24879169464111,
+        "observedHeading": "BENCH_START",
+        "verifiedSource": true,
+        "elapsedMs": 122.57187509536743,
+        "type": "sample"
+      },
+      {
+        "editIndex": 1,
+        "operation": "edit",
+        "dispatchMs": 4.610583543777466,
+        "observedHeading": "E99A9BF8A01",
+        "verifiedSource": true,
+        "elapsedMs": 44.829874992370605,
+        "type": "sample"
+      },
+      {
+        "editIndex": 2,
+        "operation": "edit",
+        "dispatchMs": 3.4244582653045654,
+        "observedHeading": "E99A9BF8A02",
+        "verifiedSource": true,
+        "elapsedMs": 28.157458066940308,
+        "type": "sample"
+      },
+      {
+        "editIndex": 3,
+        "operation": "edit",
+        "dispatchMs": 4.40666651725769,
+        "observedHeading": "E99A9BF8A03",
+        "verifiedSource": true,
+        "elapsedMs": 27.393583297729492,
+        "type": "sample"
+      }
+    ],
+    "errors": []
+  },
+  {
+    "app": "comrak-cached-window-editfix",
+    "fixture": "prose-65536.md",
+    "round": 1,
+    "runId": "comrak-cached-window-editfix-1791660948475853000-prose-r2",
+    "requestedEdits": 3,
+    "inputSHA256": "f6f7e3711e99aeac4cea1ba4e98524070881b535be3f075c1394d0fc1ccb1185",
+    "privateInputPath": "/private/tmp/astra-comrak-port-benchmark/inputs/comrak-cached-window-editfix-65536-r1-comrak-cached-window-editfix-1791660948475853000-prose-r2.md",
+    "pristineFixtureUnchanged": true,
+    "startedUnix": 1791660960.0261,
+    "wallSeconds": 9.899205207824707,
+    "exitCode": 0,
+    "status": "complete",
+    "samples": [
+      {
+        "editIndex": 0,
+        "operation": "open",
+        "dispatchMs": 58.845499992370605,
+        "observedHeading": "BENCH_START",
+        "verifiedSource": true,
+        "elapsedMs": 124.93258333206177,
+        "type": "sample"
+      },
+      {
+        "editIndex": 1,
+        "operation": "edit",
+        "dispatchMs": 3.142291784286499,
+        "observedHeading": "EABF742A001",
+        "verifiedSource": true,
+        "elapsedMs": 29.55150008201599,
+        "type": "sample"
+      },
+      {
+        "editIndex": 2,
+        "operation": "edit",
+        "dispatchMs": 3.56612491607666,
+        "observedHeading": "EABF742A002",
+        "verifiedSource": true,
+        "elapsedMs": 31.79337501525879,
+        "type": "sample"
+      },
+      {
+        "editIndex": 3,
+        "operation": "edit",
+        "dispatchMs": 3.2049169540405273,
+        "observedHeading": "EABF742A003",
+        "verifiedSource": true,
+        "elapsedMs": 30.22683358192444,
+        "type": "sample"
+      }
+    ],
+    "errors": []
+  },
+  {
+    "app": "comrak-cached-window-editfix",
+    "fixture": "prose-65536.md",
+    "round": 1,
+    "runId": "comrak-cached-window-editfix-1791660948475853000-prose-r3",
+    "requestedEdits": 3,
+    "inputSHA256": "f6f7e3711e99aeac4cea1ba4e98524070881b535be3f075c1394d0fc1ccb1185",
+    "privateInputPath": "/private/tmp/astra-comrak-port-benchmark/inputs/comrak-cached-window-editfix-65536-r1-comrak-cached-window-editfix-1791660948475853000-prose-r3.md",
+    "pristineFixtureUnchanged": true,
+    "startedUnix": 1791660970.9531038,
+    "wallSeconds": 9.91010308265686,
+    "exitCode": 0,
+    "status": "complete",
+    "samples": [
+      {
+        "editIndex": 0,
+        "operation": "open",
+        "dispatchMs": 57.08045816421509,
+        "observedHeading": "BENCH_START",
+        "verifiedSource": true,
+        "elapsedMs": 120.36183309555054,
+        "type": "sample"
+      },
+      {
+        "editIndex": 1,
+        "operation": "edit",
+        "dispatchMs": 4.186875104904175,
+        "observedHeading": "ED7671DE901",
+        "verifiedSource": true,
+        "elapsedMs": 46.97112512588501,
+        "type": "sample"
+      },
+      {
+        "editIndex": 2,
+        "operation": "edit",
+        "dispatchMs": 3.671083450317383,
+        "observedHeading": "ED7671DE902",
+        "verifiedSource": true,
+        "elapsedMs": 32.34712505340576,
+        "type": "sample"
+      },
+      {
+        "editIndex": 3,
+        "operation": "edit",
+        "dispatchMs": 3.1594583988189697,
+        "observedHeading": "ED7671DE903",
+        "verifiedSource": true,
+        "elapsedMs": 30.176291704177856,
+        "type": "sample"
+      }
+    ],
+    "errors": []
+  },
+  {
+    "app": "comrak-cached-window-editfix",
+    "fixture": "prose-1048576.md",
+    "round": 1,
+    "runId": "comrak-cached-window-editfix-1791660995477872000-prose-r1",
+    "requestedEdits": 3,
+    "inputSHA256": "3af127c0e280539e0b9c25ff88d1bcbad800aac2d8a5d7e17fa6f64a4c9bb4c3",
+    "privateInputPath": "/private/tmp/astra-comrak-port-benchmark/inputs/comrak-cached-window-editfix-1048576-r1-comrak-cached-window-editfix-1791660995477872000-prose-r1.md",
+    "pristineFixtureUnchanged": true,
+    "startedUnix": 1791660995.482456,
+    "wallSeconds": 9.913220882415771,
+    "exitCode": 0,
+    "status": "complete",
+    "samples": [
+      {
+        "editIndex": 0,
+        "operation": "open",
+        "dispatchMs": 61.872541427612305,
+        "observedHeading": "BENCH_START",
+        "verifiedSource": true,
+        "elapsedMs": 144.66987466812134,
+        "type": "sample"
+      },
+      {
+        "editIndex": 1,
+        "operation": "edit",
+        "dispatchMs": 3.0208749771118164,
+        "observedHeading": "ED51359EC01",
+        "verifiedSource": true,
+        "elapsedMs": 67.157541513443,
+        "type": "sample"
+      },
+      {
+        "editIndex": 2,
+        "operation": "edit",
+        "dispatchMs": 2.5816667079925537,
+        "observedHeading": "ED51359EC02",
+        "verifiedSource": true,
+        "elapsedMs": 49.1425416469574,
+        "type": "sample"
+      },
+      {
+        "editIndex": 3,
+        "operation": "edit",
+        "dispatchMs": 2.4681665897369385,
+        "observedHeading": "ED51359EC03",
+        "verifiedSource": true,
+        "elapsedMs": 45.81566667556763,
+        "type": "sample"
+      }
+    ],
+    "errors": []
+  },
+  {
+    "app": "comrak-cached-window-editfix",
+    "fixture": "prose-8388608.md",
+    "round": 1,
+    "runId": "comrak-cached-window-editfix-1791660995477872000-prose-r1",
+    "requestedEdits": 3,
+    "inputSHA256": "8e8db8d9ee856bec38d3ae32da8c6c8079ae441c72a71f461c8f7ad044e429ab",
+    "privateInputPath": "/private/tmp/astra-comrak-port-benchmark/inputs/comrak-cached-window-editfix-8388608-r1-comrak-cached-window-editfix-1791660995477872000-prose-r1.md",
+    "pristineFixtureUnchanged": true,
+    "startedUnix": 1791661006.427969,
+    "wallSeconds": 10.590721130371094,
+    "exitCode": 0,
+    "status": "complete",
+    "samples": [
+      {
+        "editIndex": 0,
+        "operation": "open",
+        "dispatchMs": 85.58320832252502,
+        "observedHeading": "BENCH_START",
+        "verifiedSource": true,
+        "elapsedMs": 390.24595832824707,
+        "type": "sample"
+      },
+      {
+        "editIndex": 1,
+        "operation": "edit",
+        "dispatchMs": 1.545041561126709,
+        "observedHeading": "E633ACFDD01",
+        "verifiedSource": true,
+        "elapsedMs": 211.72195839881897,
+        "type": "sample"
+      },
+      {
+        "editIndex": 2,
+        "operation": "edit",
+        "dispatchMs": 1.3762917518615723,
+        "observedHeading": "E633ACFDD02",
+        "verifiedSource": true,
+        "elapsedMs": 205.11825013160706,
+        "type": "sample"
+      },
+      {
+        "editIndex": 3,
+        "operation": "edit",
+        "dispatchMs": 1.4357497692108154,
+        "observedHeading": "E633ACFDD03",
+        "verifiedSource": true,
+        "elapsedMs": 187.07029175758362,
+        "type": "sample"
+      }
+    ],
+    "errors": []
+  },
+  {
+    "app": "comrak-cached-window-editfix",
+    "fixture": "prose-1048576.md",
+    "round": 1,
+    "runId": "comrak-cached-window-editfix-1791660995477872000-prose-r2",
+    "requestedEdits": 3,
+    "inputSHA256": "3af127c0e280539e0b9c25ff88d1bcbad800aac2d8a5d7e17fa6f64a4c9bb4c3",
+    "privateInputPath": "/private/tmp/astra-comrak-port-benchmark/inputs/comrak-cached-window-editfix-1048576-r1-comrak-cached-window-editfix-1791660995477872000-prose-r2.md",
+    "pristineFixtureUnchanged": true,
+    "startedUnix": 1791661018.040284,
+    "wallSeconds": 9.892663955688477,
+    "exitCode": 0,
+    "status": "complete",
+    "samples": [
+      {
+        "editIndex": 0,
+        "operation": "open",
+        "dispatchMs": 62.54070830345154,
+        "observedHeading": "BENCH_START",
+        "verifiedSource": true,
+        "elapsedMs": 131.6214165687561,
+        "type": "sample"
+      },
+      {
+        "editIndex": 1,
+        "operation": "edit",
+        "dispatchMs": 3.0947084426879883,
+        "observedHeading": "E821B702801",
+        "verifiedSource": true,
+        "elapsedMs": 61.59266686439514,
+        "type": "sample"
+      },
+      {
+        "editIndex": 2,
+        "operation": "edit",
+        "dispatchMs": 1.0610418319702148,
+        "observedHeading": "E821B702802",
+        "verifiedSource": true,
+        "elapsedMs": 33.85529184341431,
+        "type": "sample"
+      },
+      {
+        "editIndex": 3,
+        "operation": "edit",
+        "dispatchMs": 2.4665417671203613,
+        "observedHeading": "E821B702803",
+        "verifiedSource": true,
+        "elapsedMs": 45.60733342170715,
+        "type": "sample"
+      }
+    ],
+    "errors": []
+  },
+  {
+    "app": "comrak-cached-window-editfix",
+    "fixture": "prose-8388608.md",
+    "round": 1,
+    "runId": "comrak-cached-window-editfix-1791660995477872000-prose-r2",
+    "requestedEdits": 3,
+    "inputSHA256": "8e8db8d9ee856bec38d3ae32da8c6c8079ae441c72a71f461c8f7ad044e429ab",
+    "privateInputPath": "/private/tmp/astra-comrak-port-benchmark/inputs/comrak-cached-window-editfix-8388608-r1-comrak-cached-window-editfix-1791660995477872000-prose-r2.md",
+    "pristineFixtureUnchanged": true,
+    "startedUnix": 1791661028.9655921,
+    "wallSeconds": 10.624111890792847,
+    "exitCode": 0,
+    "status": "complete",
+    "samples": [
+      {
+        "editIndex": 0,
+        "operation": "open",
+        "dispatchMs": 84.05920839309692,
+        "observedHeading": "BENCH_START",
+        "verifiedSource": true,
+        "elapsedMs": 393.4472916126251,
+        "type": "sample"
+      },
+      {
+        "editIndex": 1,
+        "operation": "edit",
+        "dispatchMs": 1.4814167022705078,
+        "observedHeading": "E72A0857001",
+        "verifiedSource": true,
+        "elapsedMs": 193.9965000152588,
+        "type": "sample"
+      },
+      {
+        "editIndex": 2,
+        "operation": "edit",
+        "dispatchMs": 1.209291696548462,
+        "observedHeading": "E72A0857002",
+        "verifiedSource": true,
+        "elapsedMs": 266.366375207901,
+        "type": "sample"
+      },
+      {
+        "editIndex": 3,
+        "operation": "edit",
+        "dispatchMs": 1.3418331146240234,
+        "observedHeading": "E72A0857003",
+        "verifiedSource": true,
+        "elapsedMs": 187.05554151535034,
+        "type": "sample"
+      }
+    ],
+    "errors": []
+  },
+  {
+    "app": "comrak-cached-window-editfix",
+    "fixture": "prose-1048576.md",
+    "round": 1,
+    "runId": "comrak-cached-window-editfix-1791660995477872000-prose-r3",
+    "requestedEdits": 3,
+    "inputSHA256": "3af127c0e280539e0b9c25ff88d1bcbad800aac2d8a5d7e17fa6f64a4c9bb4c3",
+    "privateInputPath": "/private/tmp/astra-comrak-port-benchmark/inputs/comrak-cached-window-editfix-1048576-r1-comrak-cached-window-editfix-1791660995477872000-prose-r3.md",
+    "pristineFixtureUnchanged": true,
+    "startedUnix": 1791661040.6095092,
+    "wallSeconds": 9.876575946807861,
+    "exitCode": 0,
+    "status": "complete",
+    "samples": [
+      {
+        "editIndex": 0,
+        "operation": "open",
+        "dispatchMs": 65.44804191589355,
+        "observedHeading": "BENCH_START",
+        "verifiedSource": true,
+        "elapsedMs": 126.99845838546753,
+        "type": "sample"
+      },
+      {
+        "editIndex": 1,
+        "operation": "edit",
+        "dispatchMs": 2.5336248874664307,
+        "observedHeading": "E32AB484E01",
+        "verifiedSource": true,
+        "elapsedMs": 58.83620810508728,
+        "type": "sample"
+      },
+      {
+        "editIndex": 2,
+        "operation": "edit",
+        "dispatchMs": 2.446958303451538,
+        "observedHeading": "E32AB484E02",
+        "verifiedSource": true,
+        "elapsedMs": 52.55116677284241,
+        "type": "sample"
+      },
+      {
+        "editIndex": 3,
+        "operation": "edit",
+        "dispatchMs": 2.478874921798706,
+        "observedHeading": "E32AB484E03",
+        "verifiedSource": true,
+        "elapsedMs": 45.20924997329712,
+        "type": "sample"
+      }
+    ],
+    "errors": []
+  },
+  {
+    "app": "comrak-cached-window-editfix",
+    "fixture": "prose-8388608.md",
+    "round": 1,
+    "runId": "comrak-cached-window-editfix-1791660995477872000-prose-r3",
+    "requestedEdits": 3,
+    "inputSHA256": "8e8db8d9ee856bec38d3ae32da8c6c8079ae441c72a71f461c8f7ad044e429ab",
+    "privateInputPath": "/private/tmp/astra-comrak-port-benchmark/inputs/comrak-cached-window-editfix-8388608-r1-comrak-cached-window-editfix-1791660995477872000-prose-r3.md",
+    "pristineFixtureUnchanged": true,
+    "startedUnix": 1791661051.519125,
+    "wallSeconds": 10.524849891662598,
+    "exitCode": 0,
+    "status": "complete",
+    "samples": [
+      {
+        "editIndex": 0,
+        "operation": "open",
+        "dispatchMs": 68.82795834541321,
+        "observedHeading": "BENCH_START",
+        "verifiedSource": true,
+        "elapsedMs": 370.15645837783813,
+        "type": "sample"
+      },
+      {
+        "editIndex": 1,
+        "operation": "edit",
+        "dispatchMs": 1.3002915382385254,
+        "observedHeading": "EF3581A2001",
+        "verifiedSource": true,
+        "elapsedMs": 194.32874989509583,
+        "type": "sample"
+      },
+      {
+        "editIndex": 2,
+        "operation": "edit",
+        "dispatchMs": 1.2633333206176758,
+        "observedHeading": "EF3581A2002",
+        "verifiedSource": true,
+        "elapsedMs": 213.393000125885,
+        "type": "sample"
+      },
+      {
+        "editIndex": 3,
+        "operation": "edit",
+        "dispatchMs": 1.1970415115356445,
+        "observedHeading": "EF3581A2003",
+        "verifiedSource": true,
+        "elapsedMs": 186.69162487983704,
+        "type": "sample"
+      }
+    ],
+    "errors": []
+  },
+  {
+    "app": "comrak-complete-dom",
+    "fixture": "prose-65536.md",
+    "round": 1,
+    "runId": "comrak-complete-dom-1791662863189459000-prose-r1",
+    "requestedEdits": 3,
+    "inputSHA256": "f6f7e3711e99aeac4cea1ba4e98524070881b535be3f075c1394d0fc1ccb1185",
+    "privateInputPath": "/private/tmp/astra-comrak-port-benchmark/inputs/comrak-complete-dom-65536-r1-comrak-complete-dom-1791662863189459000-prose-r1.md",
+    "pristineFixtureUnchanged": true,
+    "startedUnix": 1791662863.192854,
+    "wallSeconds": 19.004762172698975,
+    "exitCode": 0,
+    "status": "complete",
+    "samples": [
+      {
+        "editIndex": 0,
+        "operation": "open",
+        "dispatchMs": 94.42454171180725,
+        "observedHeading": "BENCH_START",
+        "verifiedSource": true,
+        "elapsedMs": 163.16970825195312,
+        "type": "sample"
+      },
+      {
+        "editIndex": 1,
+        "operation": "edit",
+        "dispatchMs": 5.222791910171509,
+        "observedHeading": "EBB9FDFF101",
+        "verifiedSource": true,
+        "elapsedMs": 75.1210834980011,
+        "type": "sample"
+      },
+      {
+        "editIndex": 2,
+        "operation": "edit",
+        "dispatchMs": 3.0384583473205566,
+        "observedHeading": "EBB9FDFF102",
+        "verifiedSource": true,
+        "elapsedMs": 89.50154185295105,
+        "type": "sample"
+      },
+      {
+        "editIndex": 3,
+        "operation": "edit",
+        "dispatchMs": 3.506333351135254,
+        "observedHeading": "EBB9FDFF103",
+        "verifiedSource": true,
+        "elapsedMs": 59.72541666030884,
+        "type": "sample"
+      }
+    ],
+    "errors": []
+  },
+  {
+    "app": "comrak-complete-dom",
+    "fixture": "prose-1048576.md",
+    "round": 1,
+    "runId": "comrak-complete-dom-1791662863189459000-prose-r1",
+    "requestedEdits": 3,
+    "inputSHA256": "3af127c0e280539e0b9c25ff88d1bcbad800aac2d8a5d7e17fa6f64a4c9bb4c3",
+    "privateInputPath": "/private/tmp/astra-comrak-port-benchmark/inputs/comrak-complete-dom-1048576-r1-comrak-complete-dom-1791662863189459000-prose-r1.md",
+    "pristineFixtureUnchanged": true,
+    "startedUnix": 1791662883.2284229,
+    "wallSeconds": 19.623531103134155,
+    "exitCode": 0,
+    "status": "complete",
+    "samples": [
+      {
+        "editIndex": 0,
+        "operation": "open",
+        "dispatchMs": 53.56283354759216,
+        "observedHeading": "BENCH_START",
+        "verifiedSource": true,
+        "elapsedMs": 120.55379176139832,
+        "type": "sample"
+      },
+      {
+        "editIndex": 1,
+        "operation": "edit",
+        "dispatchMs": 3.2268331050872803,
+        "observedHeading": "EDC055E0301",
+        "verifiedSource": true,
+        "elapsedMs": 576.6566665172577,
+        "type": "sample"
+      },
+      {
+        "editIndex": 2,
+        "operation": "edit",
+        "dispatchMs": 2.226249933242798,
+        "observedHeading": "EDC055E0302",
+        "verifiedSource": true,
+        "elapsedMs": 384.6040415763855,
+        "type": "sample"
+      },
+      {
+        "editIndex": 3,
+        "operation": "edit",
+        "dispatchMs": 2.349583387374878,
+        "observedHeading": "EDC055E0303",
+        "verifiedSource": true,
+        "elapsedMs": 365.13804173469543,
+        "type": "sample"
+      }
+    ],
+    "errors": []
+  },
+  {
+    "app": "comrak-complete-dom",
+    "fixture": "prose-8388608.md",
+    "round": 1,
+    "runId": "comrak-complete-dom-1791662863189459000-prose-r1",
+    "requestedEdits": 3,
+    "inputSHA256": "8e8db8d9ee856bec38d3ae32da8c6c8079ae441c72a71f461c8f7ad044e429ab",
+    "privateInputPath": "/private/tmp/astra-comrak-port-benchmark/inputs/comrak-complete-dom-8388608-r1-comrak-complete-dom-1791662863189459000-prose-r1.md",
+    "pristineFixtureUnchanged": true,
+    "startedUnix": 1791662903.877994,
+    "wallSeconds": 18.514400005340576,
+    "exitCode": 0,
+    "status": "complete",
+    "samples": [
+      {
+        "editIndex": 0,
+        "operation": "open",
+        "dispatchMs": 87.98850011825562,
+        "observedHeading": "BENCH_START",
+        "verifiedSource": true,
+        "elapsedMs": 375.1064167022705,
+        "type": "sample"
+      },
+      {
+        "editIndex": 1,
+        "operation": "edit",
+        "dispatchMs": 1.598083257675171,
+        "observedHeading": "EE99917ED01",
+        "verifiedSource": true,
+        "elapsedMs": 177.9918749332428,
+        "type": "sample"
+      },
+      {
+        "editIndex": 2,
+        "operation": "edit",
+        "dispatchMs": 1.333583116531372,
+        "observedHeading": "EE99917ED02",
+        "verifiedSource": true,
+        "elapsedMs": 169.03037476539612,
+        "type": "sample"
+      },
+      {
+        "editIndex": 3,
+        "operation": "edit",
+        "dispatchMs": 1.332625150680542,
+        "observedHeading": "EE99917ED03",
+        "verifiedSource": true,
+        "elapsedMs": 180.55241680145264,
+        "type": "sample"
+      }
+    ],
+    "errors": []
+  },
+  {
+    "app": "comrak-complete-dom-editrestore",
+    "fixture": "prose-1048576.md",
+    "round": 1,
+    "runId": "comrak-complete-dom-editrestore-1791663150859160000-prose-r1",
+    "requestedEdits": 3,
+    "inputSHA256": "3af127c0e280539e0b9c25ff88d1bcbad800aac2d8a5d7e17fa6f64a4c9bb4c3",
+    "privateInputPath": "/private/tmp/astra-comrak-port-benchmark/inputs/comrak-complete-dom-editrestore-1048576-r1-comrak-complete-dom-editrestore-1791663150859160000-prose-r1.md",
+    "pristineFixtureUnchanged": true,
+    "startedUnix": 1791663150.863656,
+    "wallSeconds": 20.0448899269104,
+    "exitCode": 0,
+    "status": "complete",
+    "samples": [
+      {
+        "editIndex": 0,
+        "operation": "open",
+        "dispatchMs": 64.5064582824707,
+        "observedHeading": "BENCH_START",
+        "verifiedSource": true,
+        "elapsedMs": 134.37254166603088,
+        "type": "sample"
+      },
+      {
+        "editIndex": 1,
+        "operation": "edit",
+        "dispatchMs": 3.1998748779296875,
+        "observedHeading": "EB333B22001",
+        "verifiedSource": true,
+        "elapsedMs": 497.6088750362396,
+        "type": "sample"
+      },
+      {
+        "editIndex": 2,
+        "operation": "edit",
+        "dispatchMs": 2.6134166717529297,
+        "observedHeading": "EB333B22002",
+        "verifiedSource": true,
+        "elapsedMs": 383.72666668891907,
+        "type": "sample"
+      },
+      {
+        "editIndex": 3,
+        "operation": "edit",
+        "dispatchMs": 2.023916721343994,
+        "observedHeading": "EB333B22003",
+        "verifiedSource": true,
+        "elapsedMs": 420.9752082824707,
+        "type": "sample"
+      }
+    ],
+    "errors": []
+  },
+  {
+    "app": "comrak-complete-dom-inplace",
+    "fixture": "prose-1048576.md",
+    "round": 1,
+    "runId": "comrak-complete-dom-inplace-1791663336391220000-prose-r1",
+    "requestedEdits": 3,
+    "inputSHA256": "3af127c0e280539e0b9c25ff88d1bcbad800aac2d8a5d7e17fa6f64a4c9bb4c3",
+    "privateInputPath": "/private/tmp/astra-comrak-port-benchmark/inputs/comrak-complete-dom-inplace-1048576-r1-comrak-complete-dom-inplace-1791663336391220000-prose-r1.md",
+    "pristineFixtureUnchanged": true,
+    "startedUnix": 1791663336.3949609,
+    "wallSeconds": 19.08495831489563,
+    "exitCode": 0,
+    "status": "complete",
+    "samples": [
+      {
+        "editIndex": 0,
+        "operation": "open",
+        "dispatchMs": 65.94187521934509,
+        "observedHeading": "BENCH_START",
+        "verifiedSource": true,
+        "elapsedMs": 133.83362531661987,
+        "type": "sample"
+      },
+      {
+        "editIndex": 1,
+        "operation": "edit",
+        "dispatchMs": 3.4264581203460693,
+        "observedHeading": "E566378EA01",
+        "verifiedSource": true,
+        "elapsedMs": 136.7280831336975,
+        "type": "sample"
+      },
+      {
+        "editIndex": 2,
+        "operation": "edit",
+        "dispatchMs": 2.4167916774749756,
+        "observedHeading": "E566378EA02",
+        "verifiedSource": true,
+        "elapsedMs": 102.27329158782959,
+        "type": "sample"
+      },
+      {
+        "editIndex": 3,
+        "operation": "edit",
+        "dispatchMs": 2.372708320617676,
+        "observedHeading": "E566378EA03",
+        "verifiedSource": true,
+        "elapsedMs": 108.27724981307983,
+        "type": "sample"
+      }
+    ],
+    "errors": []
+  },
+  {
+    "app": "comrak-complete-dom-delta",
+    "fixture": "prose-1048576.md",
+    "round": 1,
+    "runId": "comrak-complete-dom-delta-1791694196293977000-prose-r1",
+    "requestedEdits": 3,
+    "inputSHA256": "3af127c0e280539e0b9c25ff88d1bcbad800aac2d8a5d7e17fa6f64a4c9bb4c3",
+    "privateInputPath": "/private/tmp/astra-comrak-port-benchmark/inputs/comrak-complete-dom-delta-1048576-r1-comrak-complete-dom-delta-1791694196293977000-prose-r1.md",
+    "pristineFixtureUnchanged": true,
+    "startedUnix": 1791694196.2985148,
+    "wallSeconds": 20.902690172195435,
+    "exitCode": 0,
+    "status": "complete",
+    "samples": [
+      {
+        "editIndex": 0,
+        "operation": "open",
+        "dispatchMs": 42.322333335876465,
+        "observedHeading": "BENCH_START",
+        "verifiedSource": true,
+        "elapsedMs": 122.53979182243347,
+        "type": "sample"
+      },
+      {
+        "editIndex": 1,
+        "operation": "edit",
+        "dispatchMs": 3.642500162124634,
+        "observedHeading": "EDA5C66E801",
+        "verifiedSource": true,
+        "elapsedMs": 142.84066677093506,
+        "type": "sample"
+      },
+      {
+        "editIndex": 2,
+        "operation": "edit",
+        "dispatchMs": 2.8750834465026855,
+        "observedHeading": "EDA5C66E802",
+        "verifiedSource": true,
+        "elapsedMs": 53.51495838165283,
+        "type": "sample"
+      },
+      {
+        "editIndex": 3,
+        "operation": "edit",
+        "dispatchMs": 2.6119167804718018,
+        "observedHeading": "EDA5C66E803",
+        "verifiedSource": true,
+        "elapsedMs": 1413.9406249523163,
+        "type": "sample"
+      }
+    ],
+    "errors": []
+  },
+  {
+    "app": "comrak-complete-dom-delta2",
+    "fixture": "prose-1048576.md",
+    "round": 1,
+    "runId": "comrak-complete-dom-delta2-1791694288468375000-prose-r1",
+    "requestedEdits": 3,
+    "inputSHA256": "3af127c0e280539e0b9c25ff88d1bcbad800aac2d8a5d7e17fa6f64a4c9bb4c3",
+    "privateInputPath": "/private/tmp/astra-comrak-port-benchmark/inputs/comrak-complete-dom-delta2-1048576-r1-comrak-complete-dom-delta2-1791694288468375000-prose-r1.md",
+    "pristineFixtureUnchanged": true,
+    "startedUnix": 1791694288.472882,
+    "wallSeconds": 23.936830759048462,
+    "exitCode": 0,
+    "status": "complete",
+    "samples": [
+      {
+        "editIndex": 0,
+        "operation": "open",
+        "dispatchMs": 46.83562517166138,
+        "observedHeading": "BENCH_START",
+        "verifiedSource": true,
+        "elapsedMs": 113.62050008773804,
+        "type": "sample"
+      },
+      {
+        "editIndex": 1,
+        "operation": "edit",
+        "dispatchMs": 3.1455416679382324,
+        "observedHeading": "E116862E901",
+        "verifiedSource": true,
+        "elapsedMs": 115.0313332080841,
+        "type": "sample"
+      },
+      {
+        "editIndex": 2,
+        "operation": "edit",
+        "dispatchMs": 2.0335001945495605,
+        "observedHeading": "E116862E902",
+        "verifiedSource": true,
+        "elapsedMs": 4780.519375324249,
+        "type": "sample"
+      },
+      {
+        "editIndex": 3,
+        "operation": "edit",
+        "dispatchMs": 2.5707499980926514,
+        "observedHeading": "E116862E903",
+        "verifiedSource": true,
+        "elapsedMs": 90.28233337402344,
+        "type": "sample"
+      }
+    ],
+    "errors": []
+  },
+  {
+    "app": "comrak-complete-dom-delta3",
+    "fixture": "prose-1048576.md",
+    "round": 1,
+    "runId": "comrak-complete-dom-delta3-1791694482972036000-prose-r1",
+    "requestedEdits": 3,
+    "inputSHA256": "3af127c0e280539e0b9c25ff88d1bcbad800aac2d8a5d7e17fa6f64a4c9bb4c3",
+    "privateInputPath": "/private/tmp/astra-comrak-port-benchmark/inputs/comrak-complete-dom-delta3-1048576-r1-comrak-complete-dom-delta3-1791694482972036000-prose-r1.md",
+    "pristineFixtureUnchanged": true,
+    "startedUnix": 1791694482.976552,
+    "wallSeconds": 22.911580085754395,
+    "exitCode": 0,
+    "status": "complete",
+    "samples": [
+      {
+        "editIndex": 0,
+        "operation": "open",
+        "dispatchMs": 67.05649995803833,
+        "observedHeading": "BENCH_START",
+        "verifiedSource": true,
+        "elapsedMs": 137.17637491226196,
+        "type": "sample"
+      },
+      {
+        "editIndex": 1,
+        "operation": "edit",
+        "dispatchMs": 3.072666645050049,
+        "observedHeading": "E6C08972B01",
+        "verifiedSource": true,
+        "elapsedMs": 1522.4619998931885,
+        "type": "sample"
+      },
+      {
+        "editIndex": 2,
+        "operation": "edit",
+        "dispatchMs": 4.312499761581421,
+        "observedHeading": "E6C08972B02",
+        "verifiedSource": true,
+        "elapsedMs": 1151.8536248207092,
+        "type": "sample"
+      },
+      {
+        "editIndex": 3,
+        "operation": "edit",
+        "dispatchMs": 1.404416561126709,
+        "observedHeading": "E6C08972B03",
+        "verifiedSource": true,
+        "elapsedMs": 1139.2241666316986,
+        "type": "sample"
+      }
+    ],
+    "errors": []
+  },
+  {
+    "app": "comrak-complete-dom-delta4",
+    "fixture": "prose-1048576.md",
+    "round": 1,
+    "runId": "comrak-complete-dom-delta4-1791694548509975000-prose-r1",
+    "requestedEdits": 3,
+    "inputSHA256": "3af127c0e280539e0b9c25ff88d1bcbad800aac2d8a5d7e17fa6f64a4c9bb4c3",
+    "privateInputPath": "/private/tmp/astra-comrak-port-benchmark/inputs/comrak-complete-dom-delta4-1048576-r1-comrak-complete-dom-delta4-1791694548509975000-prose-r1.md",
+    "pristineFixtureUnchanged": true,
+    "startedUnix": 1791694548.514812,
+    "wallSeconds": 20.86085605621338,
+    "exitCode": 0,
+    "status": "complete",
+    "samples": [
+      {
+        "editIndex": 0,
+        "operation": "open",
+        "dispatchMs": 49.977333307266235,
+        "observedHeading": "BENCH_START",
+        "verifiedSource": true,
+        "elapsedMs": 148.89333319664001,
+        "type": "sample"
+      },
+      {
+        "editIndex": 1,
+        "operation": "edit",
+        "dispatchMs": 4.861833333969116,
+        "observedHeading": "EB5E5437701",
+        "verifiedSource": true,
+        "elapsedMs": 1374.9672501087189,
+        "type": "sample"
+      },
+      {
+        "editIndex": 2,
+        "operation": "edit",
+        "dispatchMs": 3.508166790008545,
+        "observedHeading": "EB5E5437702",
+        "verifiedSource": true,
+        "elapsedMs": 66.72058367729187,
+        "type": "sample"
+      },
+      {
+        "editIndex": 3,
+        "operation": "edit",
+        "dispatchMs": 1.2412500381469727,
+        "observedHeading": "EB5E5437703",
+        "verifiedSource": true,
+        "elapsedMs": 48.19149994850159,
+        "type": "sample"
+      }
+    ],
+    "errors": []
+  },
+  {
+    "app": "comrak-complete-dom-delta-debug",
+    "fixture": "prose-1048576.md",
+    "round": 1,
+    "runId": "comrak-complete-dom-delta-debug-1791694596522560000-prose-r1",
+    "requestedEdits": 3,
+    "inputSHA256": "3af127c0e280539e0b9c25ff88d1bcbad800aac2d8a5d7e17fa6f64a4c9bb4c3",
+    "privateInputPath": "/private/tmp/astra-comrak-port-benchmark/inputs/comrak-complete-dom-delta-debug-1048576-r1-comrak-complete-dom-delta-debug-1791694596522560000-prose-r1.md",
+    "pristineFixtureUnchanged": true,
+    "startedUnix": 1791694596.526966,
+    "wallSeconds": 21.07424569129944,
+    "exitCode": 0,
+    "status": "complete",
+    "samples": [
+      {
+        "editIndex": 0,
+        "operation": "open",
+        "dispatchMs": 116.41841650009155,
+        "observedHeading": "BENCH_START",
+        "verifiedSource": true,
+        "elapsedMs": 225.0869584083557,
+        "type": "sample"
+      },
+      {
+        "editIndex": 1,
+        "operation": "edit",
+        "dispatchMs": 4.064125061035156,
+        "observedHeading": "E7A23FA5201",
+        "verifiedSource": true,
+        "elapsedMs": 1223.4849581718445,
+        "type": "sample"
+      },
+      {
+        "editIndex": 2,
+        "operation": "edit",
+        "dispatchMs": 1.4076251983642578,
+        "observedHeading": "E7A23FA5202",
+        "verifiedSource": true,
+        "elapsedMs": 703.1552500724792,
+        "type": "sample"
+      },
+      {
+        "editIndex": 3,
+        "operation": "edit",
+        "dispatchMs": 1.5241248607635498,
+        "observedHeading": "E7A23FA5203",
+        "verifiedSource": true,
+        "elapsedMs": 665.0883750915527,
+        "type": "sample"
+      }
+    ],
+    "errors": []
+  },
+  {
+    "app": "comrak-complete-dom-delta5",
+    "fixture": "prose-1048576.md",
+    "round": 1,
+    "runId": "comrak-complete-dom-delta5-1791694662019709000-prose-r1",
+    "requestedEdits": 3,
+    "inputSHA256": "3af127c0e280539e0b9c25ff88d1bcbad800aac2d8a5d7e17fa6f64a4c9bb4c3",
+    "privateInputPath": "/private/tmp/astra-comrak-port-benchmark/inputs/comrak-complete-dom-delta5-1048576-r1-comrak-complete-dom-delta5-1791694662019709000-prose-r1.md",
+    "pristineFixtureUnchanged": true,
+    "startedUnix": 1791694662.024129,
+    "wallSeconds": 20.431840181350708,
+    "exitCode": 0,
+    "status": "complete",
+    "samples": [
+      {
+        "editIndex": 0,
+        "operation": "open",
+        "dispatchMs": 77.79841661453247,
+        "observedHeading": "BENCH_START",
+        "verifiedSource": true,
+        "elapsedMs": 148.43237495422363,
+        "type": "sample"
+      },
+      {
+        "editIndex": 1,
+        "operation": "edit",
+        "dispatchMs": 3.565666913986206,
+        "observedHeading": "E9560AC6201",
+        "verifiedSource": true,
+        "elapsedMs": 97.71708369255066,
+        "type": "sample"
+      },
+      {
+        "editIndex": 2,
+        "operation": "edit",
+        "dispatchMs": 1.761958360671997,
+        "observedHeading": "E9560AC6202",
+        "verifiedSource": true,
+        "elapsedMs": 772.2802498340607,
+        "type": "sample"
+      },
+      {
+        "editIndex": 3,
+        "operation": "edit",
+        "dispatchMs": 2.325166702270508,
+        "observedHeading": "E9560AC6203",
+        "verifiedSource": true,
+        "elapsedMs": 478.28725004196167,
+        "type": "sample"
+      }
+    ],
+    "errors": []
+  },
+  {
+    "app": "comrak-complete-dom-delta-debug2",
+    "fixture": "prose-1048576.md",
+    "round": 1,
+    "runId": "comrak-complete-dom-delta-debug2-1791694721056217000-prose-r1",
+    "requestedEdits": 3,
+    "inputSHA256": "3af127c0e280539e0b9c25ff88d1bcbad800aac2d8a5d7e17fa6f64a4c9bb4c3",
+    "privateInputPath": "/private/tmp/astra-comrak-port-benchmark/inputs/comrak-complete-dom-delta-debug2-1048576-r1-comrak-complete-dom-delta-debug2-1791694721056217000-prose-r1.md",
+    "pristineFixtureUnchanged": true,
+    "startedUnix": 1791694721.060297,
+    "wallSeconds": 19.50432515144348,
+    "exitCode": 0,
+    "status": "complete",
+    "samples": [
+      {
+        "editIndex": 0,
+        "operation": "open",
+        "dispatchMs": 99.8116250038147,
+        "observedHeading": "BENCH_START",
+        "verifiedSource": true,
+        "elapsedMs": 173.88120818138123,
+        "type": "sample"
+      },
+      {
+        "editIndex": 1,
+        "operation": "edit",
+        "dispatchMs": 4.533791780471802,
+        "observedHeading": "E4D90E76501",
+        "verifiedSource": true,
+        "elapsedMs": 82.12479186058044,
+        "type": "sample"
+      },
+      {
+        "editIndex": 2,
+        "operation": "edit",
+        "dispatchMs": 1.487041711807251,
+        "observedHeading": "E4D90E76502",
+        "verifiedSource": true,
+        "elapsedMs": 283.35933351516724,
+        "type": "sample"
+      },
+      {
+        "editIndex": 3,
+        "operation": "edit",
+        "dispatchMs": 3.272791624069214,
+        "observedHeading": "E4D90E76503",
+        "verifiedSource": true,
+        "elapsedMs": 860.0360832214355,
+        "type": "sample"
+      }
+    ],
+    "errors": []
+  },
+  {
+    "app": "comrak-complete-dom-delta6",
+    "fixture": "prose-1048576.md",
+    "round": 1,
+    "runId": "comrak-complete-dom-delta6-1791694816385849000-prose-r1",
+    "requestedEdits": 3,
+    "inputSHA256": "3af127c0e280539e0b9c25ff88d1bcbad800aac2d8a5d7e17fa6f64a4c9bb4c3",
+    "privateInputPath": "/private/tmp/astra-comrak-port-benchmark/inputs/comrak-complete-dom-delta6-1048576-r1-comrak-complete-dom-delta6-1791694816385849000-prose-r1.md",
+    "pristineFixtureUnchanged": true,
+    "startedUnix": 1791694816.389864,
+    "wallSeconds": 22.243808031082153,
+    "exitCode": 0,
+    "status": "complete",
+    "samples": [
+      {
+        "editIndex": 0,
+        "operation": "open",
+        "dispatchMs": 63.54379200935364,
+        "observedHeading": "BENCH_START",
+        "verifiedSource": true,
+        "elapsedMs": 132.7768750190735,
+        "type": "sample"
+      },
+      {
+        "editIndex": 1,
+        "operation": "edit",
+        "dispatchMs": 1.5695416927337646,
+        "observedHeading": "E8238C58001",
+        "verifiedSource": true,
+        "elapsedMs": 1599.432166814804,
+        "type": "sample"
+      },
+      {
+        "editIndex": 2,
+        "operation": "edit",
+        "dispatchMs": 1.880833387374878,
+        "observedHeading": "E8238C58002",
+        "verifiedSource": true,
+        "elapsedMs": 236.77700018882751,
+        "type": "sample"
+      },
+      {
+        "editIndex": 3,
+        "operation": "edit",
+        "dispatchMs": 10.299499988555908,
+        "observedHeading": "E8238C58003",
+        "verifiedSource": true,
+        "elapsedMs": 1251.2343747615814,
+        "type": "sample"
+      }
+    ],
+    "errors": []
+  },
+  {
+    "app": "comrak-complete-dom-delta7",
+    "fixture": "prose-1048576.md",
+    "round": 1,
+    "runId": "comrak-complete-dom-delta7-1791694920042461000-prose-r1",
+    "requestedEdits": 3,
+    "inputSHA256": "3af127c0e280539e0b9c25ff88d1bcbad800aac2d8a5d7e17fa6f64a4c9bb4c3",
+    "privateInputPath": "/private/tmp/astra-comrak-port-benchmark/inputs/comrak-complete-dom-delta7-1048576-r1-comrak-complete-dom-delta7-1791694920042461000-prose-r1.md",
+    "pristineFixtureUnchanged": true,
+    "startedUnix": 1791694920.0464928,
+    "wallSeconds": 20.28916096687317,
+    "exitCode": 0,
+    "status": "complete",
+    "samples": [
+      {
+        "editIndex": 0,
+        "operation": "open",
+        "dispatchMs": 61.65974998474121,
+        "observedHeading": "BENCH_START",
+        "verifiedSource": true,
+        "elapsedMs": 127.97916674613953,
+        "type": "sample"
+      },
+      {
+        "editIndex": 1,
+        "operation": "edit",
+        "dispatchMs": 3.5642499923706055,
+        "observedHeading": "EF92E2E0F01",
+        "verifiedSource": true,
+        "elapsedMs": 471.48383355140686,
+        "type": "sample"
+      },
+      {
+        "editIndex": 2,
+        "operation": "edit",
+        "dispatchMs": 1.5178334712982178,
+        "observedHeading": "EF92E2E0F02",
+        "verifiedSource": true,
+        "elapsedMs": 440.0061249732971,
+        "type": "sample"
+      },
+      {
+        "editIndex": 3,
+        "operation": "edit",
+        "dispatchMs": 2.6399166584014893,
+        "observedHeading": "EF92E2E0F03",
+        "verifiedSource": true,
+        "elapsedMs": 441.05362486839294,
+        "type": "sample"
+      }
+    ],
+    "errors": []
+  },
+  {
+    "app": "ultralight-bounded",
+    "fixture": "prose-65536.md",
+    "round": 1,
+    "runId": "ultralight-bounded-1791698871174844000-prose-r1",
+    "requestedEdits": 3,
+    "inputSHA256": "f6f7e3711e99aeac4cea1ba4e98524070881b535be3f075c1394d0fc1ccb1185",
+    "privateInputPath": "/private/tmp/astra-comrak-port-benchmark/inputs/ultralight-bounded-65536-r1-ultralight-bounded-1791698871174844000-prose-r1.md",
+    "pristineFixtureUnchanged": true,
+    "startedUnix": 1791698871.1789749,
+    "wallSeconds": 11.52135705947876,
+    "exitCode": 0,
+    "status": "complete",
+    "samples": [
+      {
+        "editIndex": 0,
+        "operation": "open",
+        "dispatchMs": 111.01133346557617,
+        "observedHeading": "BENCH_START",
+        "verifiedSource": true,
+        "elapsedMs": 140.47258353233337,
+        "type": "sample"
+      },
+      {
+        "editIndex": 1,
+        "operation": "edit",
+        "dispatchMs": 2.0228333473205566,
+        "observedHeading": "EC20A9D0001",
+        "verifiedSource": true,
+        "elapsedMs": 47.18816661834717,
+        "type": "sample"
+      },
+      {
+        "editIndex": 2,
+        "operation": "edit",
+        "dispatchMs": 2.952625036239624,
+        "observedHeading": "EC20A9D0002",
+        "verifiedSource": true,
+        "elapsedMs": 35.012333393096924,
+        "type": "sample"
+      },
+      {
+        "editIndex": 3,
+        "operation": "edit",
+        "dispatchMs": 1.1162083148956299,
+        "observedHeading": "EC20A9D0003",
+        "verifiedSource": true,
+        "elapsedMs": 16.507833242416382,
+        "type": "sample"
+      }
+    ],
+    "errors": []
+  },
+  {
+    "app": "ultralight-bounded",
+    "fixture": "prose-1048576.md",
+    "round": 1,
+    "runId": "ultralight-bounded-1791698871174844000-prose-r1",
+    "requestedEdits": 3,
+    "inputSHA256": "3af127c0e280539e0b9c25ff88d1bcbad800aac2d8a5d7e17fa6f64a4c9bb4c3",
+    "privateInputPath": "/private/tmp/astra-comrak-port-benchmark/inputs/ultralight-bounded-1048576-r1-ultralight-bounded-1791698871174844000-prose-r1.md",
+    "pristineFixtureUnchanged": true,
+    "startedUnix": 1791698883.72667,
+    "wallSeconds": 9.844706773757935,
+    "exitCode": 0,
+    "status": "complete",
+    "samples": [
+      {
+        "editIndex": 0,
+        "operation": "open",
+        "dispatchMs": 47.45645833015442,
+        "observedHeading": "BENCH_START",
+        "verifiedSource": true,
+        "elapsedMs": 79.51345825195312,
+        "type": "sample"
+      },
+      {
+        "editIndex": 1,
+        "operation": "edit",
+        "dispatchMs": 1.3838331699371338,
+        "observedHeading": "E73E9937301",
+        "verifiedSource": true,
+        "elapsedMs": 37.614874839782715,
+        "type": "sample"
+      },
+      {
+        "editIndex": 2,
+        "operation": "edit",
+        "dispatchMs": 2.587458372116089,
+        "observedHeading": "E73E9937302",
+        "verifiedSource": true,
+        "elapsedMs": 54.31933331489563,
+        "type": "sample"
+      },
+      {
+        "editIndex": 3,
+        "operation": "edit",
+        "dispatchMs": 2.5805001258850098,
+        "observedHeading": "E73E9937303",
+        "verifiedSource": true,
+        "elapsedMs": 55.69633364677429,
+        "type": "sample"
+      }
+    ],
+    "errors": []
+  },
+  {
+    "app": "ultralight-bounded",
+    "fixture": "prose-8388608.md",
+    "round": 1,
+    "runId": "ultralight-bounded-1791698871174844000-prose-r1",
+    "requestedEdits": 3,
+    "inputSHA256": "8e8db8d9ee856bec38d3ae32da8c6c8079ae441c72a71f461c8f7ad044e429ab",
+    "privateInputPath": "/private/tmp/astra-comrak-port-benchmark/inputs/ultralight-bounded-8388608-r1-ultralight-bounded-1791698871174844000-prose-r1.md",
+    "pristineFixtureUnchanged": true,
+    "startedUnix": 1791698894.5945768,
+    "wallSeconds": 10.565453052520752,
+    "exitCode": 0,
+    "status": "complete",
+    "samples": [
+      {
+        "editIndex": 0,
+        "operation": "open",
+        "dispatchMs": 50.21804189682007,
+        "observedHeading": "BENCH_START",
+        "verifiedSource": true,
+        "elapsedMs": 355.95250034332275,
+        "type": "sample"
+      },
+      {
+        "editIndex": 1,
+        "operation": "edit",
+        "dispatchMs": 1.508291482925415,
+        "observedHeading": "E2CCFE30401",
+        "verifiedSource": true,
+        "elapsedMs": 239.9430000782013,
+        "type": "sample"
+      },
+      {
+        "editIndex": 2,
+        "operation": "edit",
+        "dispatchMs": 1.2530832290649414,
+        "observedHeading": "E2CCFE30402",
+        "verifiedSource": true,
+        "elapsedMs": 208.08291673660278,
+        "type": "sample"
+      },
+      {
+        "editIndex": 3,
+        "operation": "edit",
+        "dispatchMs": 1.4350416660308838,
+        "observedHeading": "E2CCFE30403",
+        "verifiedSource": true,
+        "elapsedMs": 195.5760416984558,
+        "type": "sample"
+      }
+    ],
+    "errors": []
+  },
+  {
+    "app": "ultralight-bounded",
+    "fixture": "prose-65536.md",
+    "round": 1,
+    "runId": "ultralight-bounded-1791698871174844000-prose-r2",
+    "requestedEdits": 3,
+    "inputSHA256": "f6f7e3711e99aeac4cea1ba4e98524070881b535be3f075c1394d0fc1ccb1185",
+    "privateInputPath": "/private/tmp/astra-comrak-port-benchmark/inputs/ultralight-bounded-65536-r1-ultralight-bounded-1791698871174844000-prose-r2.md",
+    "pristineFixtureUnchanged": true,
+    "startedUnix": 1791698906.184597,
+    "wallSeconds": 9.74746298789978,
+    "exitCode": 0,
+    "status": "complete",
+    "samples": [
+      {
+        "editIndex": 0,
+        "operation": "open",
+        "dispatchMs": 21.99458336830139,
+        "observedHeading": "BENCH_START",
+        "verifiedSource": true,
+        "elapsedMs": 53.79474997520447,
+        "type": "sample"
+      },
+      {
+        "editIndex": 1,
+        "operation": "edit",
+        "dispatchMs": 1.4009582996368408,
+        "observedHeading": "EE1BF838F01",
+        "verifiedSource": true,
+        "elapsedMs": 28.59975004196167,
+        "type": "sample"
+      },
+      {
+        "editIndex": 2,
+        "operation": "edit",
+        "dispatchMs": 2.8471667766571045,
+        "observedHeading": "EE1BF838F02",
+        "verifiedSource": true,
+        "elapsedMs": 33.94012498855591,
+        "type": "sample"
+      },
+      {
+        "editIndex": 3,
+        "operation": "edit",
+        "dispatchMs": 1.1424999237060547,
+        "observedHeading": "EE1BF838F03",
+        "verifiedSource": true,
+        "elapsedMs": 14.675125122070312,
+        "type": "sample"
+      }
+    ],
+    "errors": []
+  },
+  {
+    "app": "ultralight-bounded",
+    "fixture": "prose-1048576.md",
+    "round": 1,
+    "runId": "ultralight-bounded-1791698871174844000-prose-r2",
+    "requestedEdits": 3,
+    "inputSHA256": "3af127c0e280539e0b9c25ff88d1bcbad800aac2d8a5d7e17fa6f64a4c9bb4c3",
+    "privateInputPath": "/private/tmp/astra-comrak-port-benchmark/inputs/ultralight-bounded-1048576-r1-ultralight-bounded-1791698871174844000-prose-r2.md",
+    "pristineFixtureUnchanged": true,
+    "startedUnix": 1791698916.951344,
+    "wallSeconds": 9.850883960723877,
+    "exitCode": 0,
+    "status": "complete",
+    "samples": [
+      {
+        "editIndex": 0,
+        "operation": "open",
+        "dispatchMs": 30.475375175476074,
+        "observedHeading": "BENCH_START",
+        "verifiedSource": true,
+        "elapsedMs": 65.20945835113525,
+        "type": "sample"
+      },
+      {
+        "editIndex": 1,
+        "operation": "edit",
+        "dispatchMs": 3.010499954223633,
+        "observedHeading": "EAAF230A101",
+        "verifiedSource": true,
+        "elapsedMs": 58.52900004386902,
+        "type": "sample"
+      },
+      {
+        "editIndex": 2,
+        "operation": "edit",
+        "dispatchMs": 2.436166524887085,
+        "observedHeading": "EAAF230A102",
+        "verifiedSource": true,
+        "elapsedMs": 51.19099998474121,
+        "type": "sample"
+      },
+      {
+        "editIndex": 3,
+        "operation": "edit",
+        "dispatchMs": 2.4459166526794434,
+        "observedHeading": "EAAF230A103",
+        "verifiedSource": true,
+        "elapsedMs": 54.32908344268799,
+        "type": "sample"
+      }
+    ],
+    "errors": []
+  },
+  {
+    "app": "ultralight-bounded",
+    "fixture": "prose-8388608.md",
+    "round": 1,
+    "runId": "ultralight-bounded-1791698871174844000-prose-r2",
+    "requestedEdits": 3,
+    "inputSHA256": "8e8db8d9ee856bec38d3ae32da8c6c8079ae441c72a71f461c8f7ad044e429ab",
+    "privateInputPath": "/private/tmp/astra-comrak-port-benchmark/inputs/ultralight-bounded-8388608-r1-ultralight-bounded-1791698871174844000-prose-r2.md",
+    "pristineFixtureUnchanged": true,
+    "startedUnix": 1791698927.835798,
+    "wallSeconds": 10.556217193603516,
+    "exitCode": 0,
+    "status": "complete",
+    "samples": [
+      {
+        "editIndex": 0,
+        "operation": "open",
+        "dispatchMs": 74.6643750667572,
+        "observedHeading": "BENCH_START",
+        "verifiedSource": true,
+        "elapsedMs": 390.1642916202545,
+        "type": "sample"
+      },
+      {
+        "editIndex": 1,
+        "operation": "edit",
+        "dispatchMs": 1.5311665534973145,
+        "observedHeading": "EB47DA22B01",
+        "verifiedSource": true,
+        "elapsedMs": 205.46066641807556,
+        "type": "sample"
+      },
+      {
+        "editIndex": 2,
+        "operation": "edit",
+        "dispatchMs": 1.4324584007263184,
+        "observedHeading": "EB47DA22B02",
+        "verifiedSource": true,
+        "elapsedMs": 204.8163332939148,
+        "type": "sample"
+      },
+      {
+        "editIndex": 3,
+        "operation": "edit",
+        "dispatchMs": 1.2352499961853027,
+        "observedHeading": "EB47DA22B03",
+        "verifiedSource": true,
+        "elapsedMs": 196.41529154777527,
+        "type": "sample"
+      }
+    ],
+    "errors": []
+  },
+  {
+    "app": "ultralight-bounded",
+    "fixture": "prose-65536.md",
+    "round": 1,
+    "runId": "ultralight-bounded-1791698871174844000-prose-r3",
+    "requestedEdits": 3,
+    "inputSHA256": "f6f7e3711e99aeac4cea1ba4e98524070881b535be3f075c1394d0fc1ccb1185",
+    "privateInputPath": "/private/tmp/astra-comrak-port-benchmark/inputs/ultralight-bounded-65536-r1-ultralight-bounded-1791698871174844000-prose-r3.md",
+    "pristineFixtureUnchanged": true,
+    "startedUnix": 1791698939.415067,
+    "wallSeconds": 9.846020936965942,
+    "exitCode": 0,
+    "status": "complete",
+    "samples": [
+      {
+        "editIndex": 0,
+        "operation": "open",
+        "dispatchMs": 41.61058330535889,
+        "observedHeading": "BENCH_START",
+        "verifiedSource": true,
+        "elapsedMs": 92.08175015449524,
+        "type": "sample"
+      },
+      {
+        "editIndex": 1,
+        "operation": "edit",
+        "dispatchMs": 3.199291467666626,
+        "observedHeading": "E2086F26A01",
+        "verifiedSource": true,
+        "elapsedMs": 49.444541692733765,
+        "type": "sample"
+      },
+      {
+        "editIndex": 2,
+        "operation": "edit",
+        "dispatchMs": 3.2594168186187744,
+        "observedHeading": "E2086F26A02",
+        "verifiedSource": true,
+        "elapsedMs": 37.84487509727478,
+        "type": "sample"
+      },
+      {
+        "editIndex": 3,
+        "operation": "edit",
+        "dispatchMs": 3.0481667518615723,
+        "observedHeading": "E2086F26A03",
+        "verifiedSource": true,
+        "elapsedMs": 23.16966676712036,
+        "type": "sample"
+      }
+    ],
+    "errors": []
+  },
+  {
+    "app": "ultralight-bounded",
+    "fixture": "prose-1048576.md",
+    "round": 1,
+    "runId": "ultralight-bounded-1791698871174844000-prose-r3",
+    "requestedEdits": 3,
+    "inputSHA256": "3af127c0e280539e0b9c25ff88d1bcbad800aac2d8a5d7e17fa6f64a4c9bb4c3",
+    "privateInputPath": "/private/tmp/astra-comrak-port-benchmark/inputs/ultralight-bounded-1048576-r1-ultralight-bounded-1791698871174844000-prose-r3.md",
+    "pristineFixtureUnchanged": true,
+    "startedUnix": 1791698950.2851672,
+    "wallSeconds": 9.930771827697754,
+    "exitCode": 0,
+    "status": "complete",
+    "samples": [
+      {
+        "editIndex": 0,
+        "operation": "open",
+        "dispatchMs": 47.7915415763855,
+        "observedHeading": "BENCH_START",
+        "verifiedSource": true,
+        "elapsedMs": 83.675541639328,
+        "type": "sample"
+      },
+      {
+        "editIndex": 1,
+        "operation": "edit",
+        "dispatchMs": 2.998875379562378,
+        "observedHeading": "E8FFC745801",
+        "verifiedSource": true,
+        "elapsedMs": 58.10758352279663,
+        "type": "sample"
+      },
+      {
+        "editIndex": 2,
+        "operation": "edit",
+        "dispatchMs": 1.2953331470489502,
+        "observedHeading": "E8FFC745802",
+        "verifiedSource": true,
+        "elapsedMs": 64.17795825004578,
+        "type": "sample"
+      },
+      {
+        "editIndex": 3,
+        "operation": "edit",
+        "dispatchMs": 2.2422916889190674,
+        "observedHeading": "E8FFC745803",
+        "verifiedSource": true,
+        "elapsedMs": 54.745625019073486,
+        "type": "sample"
+      }
+    ],
+    "errors": []
+  },
+  {
+    "app": "ultralight-bounded",
+    "fixture": "prose-8388608.md",
+    "round": 1,
+    "runId": "ultralight-bounded-1791698871174844000-prose-r3",
+    "requestedEdits": 3,
+    "inputSHA256": "8e8db8d9ee856bec38d3ae32da8c6c8079ae441c72a71f461c8f7ad044e429ab",
+    "privateInputPath": "/private/tmp/astra-comrak-port-benchmark/inputs/ultralight-bounded-8388608-r1-ultralight-bounded-1791698871174844000-prose-r3.md",
+    "pristineFixtureUnchanged": true,
+    "startedUnix": 1791698961.2490802,
+    "wallSeconds": 10.56266975402832,
+    "exitCode": 0,
+    "status": "complete",
+    "samples": [
+      {
+        "editIndex": 0,
+        "operation": "open",
+        "dispatchMs": 70.98395848274231,
+        "observedHeading": "BENCH_START",
+        "verifiedSource": true,
+        "elapsedMs": 359.83570861816406,
+        "type": "sample"
+      },
+      {
+        "editIndex": 1,
+        "operation": "edit",
+        "dispatchMs": 1.5438334941864014,
+        "observedHeading": "E7E581B8F01",
+        "verifiedSource": true,
+        "elapsedMs": 211.72858333587646,
+        "type": "sample"
+      },
+      {
+        "editIndex": 2,
+        "operation": "edit",
+        "dispatchMs": 1.3280835151672363,
+        "observedHeading": "E7E581B8F02",
+        "verifiedSource": true,
+        "elapsedMs": 227.8950834274292,
+        "type": "sample"
+      },
+      {
+        "editIndex": 3,
+        "operation": "edit",
+        "dispatchMs": 1.2397501468658447,
+        "observedHeading": "E7E581B8F03",
+        "verifiedSource": true,
+        "elapsedMs": 193.69708347320557,
+        "type": "sample"
+      }
+    ],
+    "errors": []
   }
 ]

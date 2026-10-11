@@ -165,7 +165,7 @@ func exportProfileRecording(_ path:UnsafePointer<CChar>) {
     | Feature | Implementation |
     | :--- | :--- |
     | Editing | AppKit and TextKit |
-    | Preview | WebKit |
+    | Preview | Ultralight |
     | Syntax | Comrak |
 
     ## Mathematics

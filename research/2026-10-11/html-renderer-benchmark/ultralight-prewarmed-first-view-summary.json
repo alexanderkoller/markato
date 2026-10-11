@@ -1,0 +1,23 @@
+[
+  {
+    "source_bytes": 65536,
+    "shell_ready_ms": 0.549667,
+    "first_content_ms": 1.23321,
+    "first_content_min_ms": 1.21804,
+    "first_content_max_ms": 1.28038
+  },
+  {
+    "source_bytes": 1048576,
+    "shell_ready_ms": 0.541459,
+    "first_content_ms": 1.23458,
+    "first_content_min_ms": 1.21617,
+    "first_content_max_ms": 1.28896
+  },
+  {
+    "source_bytes": 8388608,
+    "shell_ready_ms": 0.533791,
+    "first_content_ms": 1.24117,
+    "first_content_min_ms": 1.21217,
+    "first_content_max_ms": 1.38483
+  }
+]

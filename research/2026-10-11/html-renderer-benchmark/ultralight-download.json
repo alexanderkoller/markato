@@ -1,0 +1,8 @@
+{
+  "download_page": "https://ultralig.ht/download",
+  "version": "2.0.0-beta.2",
+  "platform": "macos-arm64",
+  "edition": "free",
+  "filename": "ul-sdk-2.0.0-beta.2-mac-arm64-free.7z",
+  "sha256": "87c679eba7d00eacfb81549a24754c1d87868dcfa82800b8be2719a74971b91c"
+}

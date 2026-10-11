@@ -1,5 +1,5 @@
 :root { color-scheme:light dark; font:14px -apple-system,BlinkMacSystemFont,sans-serif; }
-html,body { margin:0; padding:0; overflow:hidden; overflow-anchor:none; background:Canvas; }
+html,body { margin:0; padding:0; overflow-anchor:none; background:Canvas; }
 body { color:CanvasText; }
 #preview { position:relative; padding:16px; display:flow-root; }
 section { margin:0 0 12px; overflow-wrap:anywhere; display:flow-root; }

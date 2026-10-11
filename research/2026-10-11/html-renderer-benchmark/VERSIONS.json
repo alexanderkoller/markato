@@ -1,0 +1,33 @@
+{
+  "host": {
+    "os": "macOS 26.6.2 (25G83)",
+    "architecture": "arm64",
+    "xcode": "27.0 (27A266a)"
+  },
+  "webkit": {
+    "component": "system WKWebView"
+  },
+  "ultralight": {
+    "version": "2.0.0-beta.2 free SDK",
+    "platform": "macos-arm64",
+    "sdk_sha256": "87c679eba7d00eacfb81549a24754c1d87868dcfa82800b8be2719a74971b91c",
+    "reported_webkit": "615.1.18.100.1"
+  },
+  "sciter": {
+    "version": "6.0.5.1",
+    "commit": "2a890cde76e178cd159fbfbe696cc0959621e4b7",
+    "archive_sha256": "39643e1e3bb9554d22bbf05e08c8597803edaa20dcde1c3a4a31dafc368d785a"
+  },
+  "litehtml": {
+    "branch": "master",
+    "commit": "4a651c5226b62bd58fc8c07dac7374171dea4a1e"
+  },
+  "affineui": {
+    "branch": "main",
+    "commit": "d9c5fda6ddb84900f8890ed69c20bbead020c665"
+  },
+  "screened_not_timed": {
+    "servo": "Public macOS app exists, but a stable prebuilt C ABI for embedding is still under development.",
+    "glint": "v0.1; its HTML parser is listed as planned, so it cannot consume the benchmark HTML."
+  }
+}

@@ -1,6 +1,6 @@
 #if DEBUG
 import AppKit
-import WebKit
+import HTMLPreview
 import MarkdownCore
 
 /// Runs against an actual window and TextKit network, without modifying user documents.
@@ -60,8 +60,64 @@ import MarkdownCore
             }
             wait(3000);return
         }
+        if !CommandLine.arguments.contains("--integration-legacy-webkit") {
+            verifyUltralightPreview(controller,document:document);return
+        }
         if !CommandLine.arguments.contains("--integration-source-paint") {verifyNativeComposition()}
         waitForDemoTop(controller,document:document,remaining:100)
+    }
+    private static func verifyUltralightPreview(_ controller:EditorWindowController,document:MarkdownDocument) {
+        let preview=controller.preview,source=controller.source
+        func wait(_ remaining:Int,_ ready:@escaping()->Bool,_ failure:String,_ completion:@escaping()->Void) {
+            guard remaining>0 else{fail("\(failure): \(preview.debugGeometry())")}
+            if ready() {completion()}
+            else {DispatchQueue.main.asyncAfter(deadline:.now()+0.01){wait(remaining-1,ready,failure,completion)}}
+        }
+        wait(500,{controller.hasPreparedViewport && preview.lastRevision==document.revision &&
+            preview.webView.debugText.contains("AstraMarkdown")},"Ultralight did not publish the first viewport") {
+            check(preview.coversSourceViewport,"The first Ultralight window must cover the source viewport")
+            check(preview.preparedFragmentCount<350,"The first Ultralight window must remain bounded")
+            check(preview.webView.debugCount("section[data-id]")==preview.preparedFragmentCount,
+                "Ultralight DOM and retained presentation must contain the same blocks")
+            check(preview.webView.debugRect("h1",containing:"AstraMarkdown") != nil,
+                "The first heading must have measured Ultralight geometry")
+            check(preview.webView.debugCount(".katex")>0,"Ultralight must retain Comrak's KaTeX output")
+            check(preview.webView.debugCount("tbody tr")>0,"Ultralight must render complete table markup")
+            check(preview.webView.debugCount("img")>0 && (preview.webView.debugRect("img")?.height ?? 0)>0,
+                "Ultralight must resolve and lay out the bundled local image")
+            let startupCount=preview.preparedFragmentCount
+            source.reveal(document.source.count,alignTop:false)
+            wait(800,{preview.coversSourceViewport && !preview.isShowingLoadingState &&
+                preview.displayedSourceRange.map{NSMaxRange($0)>=document.source.count-1}==true},
+                "A cached deep jump did not publish") {
+                check(preview.preparedFragmentCount<350,"A deep jump must keep the mounted DOM bounded")
+                check(controller.hasPreparedDocument,"The deep jump should use the fully prepared retained tree")
+                let editRevision=document.revision+1
+                document.replace(NSRange(location:document.source.count,length:0),with:"\n\n## ULTRALIGHT_EDIT\n\nVisible edit.\n")
+                source.reveal(document.source.count,alignTop:false)
+                wait(800,{document.revision==editRevision && preview.lastRevision==editRevision &&
+                    preview.webView.debugText.contains("ULTRALIGHT_EDIT")},"Visible edit did not update Ultralight") {
+                    check(preview.preparedFragmentCount<350,"A visible edit must not expand the mounted DOM")
+                    let oldWidth=preview.bounds.width
+                    preview.frame.size.width=max(320,oldWidth-73)
+                    preview.layoutSubtreeIfNeeded()
+                    wait(300,{abs((preview.webView.geometry()?.width ?? 0)-preview.bounds.width)<=1},
+                        "Ultralight did not settle after resize") {
+                        source.reveal(0,alignTop:true)
+                        wait(800,{preview.coversSourceViewport && preview.webView.debugText.contains("AstraMarkdown")},
+                            "Return to the cached first viewport failed") {
+                            check(preview.preparedFragmentCount<350,"Returning to the top must remain bounded")
+                            check(startupCount>0,"Startup must mount semantic entries")
+                            print("INTEGRATION PASSED: Ultralight bounded first view, cached deep jump, retained-tree edit, resize, and return-to-top scrolling")
+                            if CommandLine.arguments.contains("--diagnostics") {
+                                try? TimingDiagnostics.shared.snapshot().json().write(to:URL(fileURLWithPath:"/private/tmp/astra-ultralight-integration-timings.json"),options:.atomic)
+                            }
+                            exit(EXIT_SUCCESS)
+                        }
+                    }
+                }
+            }
+        }
     }
     private static func verifyLayoutIndex() {
         let doc=MarkdownDocument();fixtureDocuments.append(doc)
@@ -165,30 +221,62 @@ import MarkdownCore
         if controller.hasPreparedDocument,!controller.hasCompleteSourceLayout {
             _ = controller.source.completePreparedLayout()
         }
-        guard controller.hasPreparedDocument,controller.hasCompleteSourceLayout else {
+        guard controller.hasPreparedDocument,controller.hasCompleteSourceLayout,
+              controller.preview.displaysCompleteDocument else {
             DispatchQueue.main.asyncAfter(deadline:.now()+0.02){waitForIdlePreparation(controller,remaining:remaining-1,completion:completion)};return
         }
         completion()
     }
 
     private static func verifyReadOnlyScrolling(_ controller:EditorWindowController,document:MarkdownDocument,completion:@escaping()->Void) {
-        let source=controller.source
+        let source=controller.source,preview=controller.preview
         check(source.hasAppliedHighlights(in:source.visibleSourceRange),"Visible source syntax must be ready before scrolling")
         let requests=controller.parserRequests,highlights=source.highlightApplications
         let end=max(0,source.contentHeight-source.scroll.contentSize.height)
-        let positions=Array(0...160)+Array((0...160).reversed())
+        var forward=Array(stride(from:CGFloat(0),through:end,by:128))
+        if forward.last != end {forward.append(end)}
+        let positions=forward+Array(forward.reversed())
+        var loadingObservations=0
+        var loadingEpisodes=[String](),wasLoading=false
         source.beginScrollGesture()
+        func waitForActiveViewport(_ remaining:Int,_ ready:@escaping()->Void) {
+            guard remaining>0 else {fail("Scrolling did not paint the prepared source and preview before gesture end: source=\(source.hasAppliedHighlights(in:source.visibleSourceRange)), \(preview.debugGeometry())")}
+            if source.hasAppliedHighlights(in:source.visibleSourceRange),preview.coversSourceViewport,
+               !preview.isShowingLoadingState,!preview.isPreparingPresentation,!preview.isRenderingPresentation {
+                ready();return
+            }
+            DispatchQueue.main.asyncAfter(deadline:.now()+0.01){waitForActiveViewport(remaining-1,ready)}
+        }
         func step(_ index:Int) {
             if index==positions.count {
-                source.endScrollGesture()
-                check(controller.parserRequests>=requests && source.highlightApplications>=highlights,
-                      "Viewport-driven syntax preparation counters must remain monotonic")
-                print("READ-ONLY SCROLL: full forward/reverse traversal; \(controller.parserRequests-requests) prepared-AST viewport queries, \(source.highlightApplications-highlights) visible style applications")
-                completion();return
+                waitForActiveViewport(200) {
+                    let patches=preview.patchCount,origin=preview.clipOrigin
+                    source.endScrollGesture()
+                    DispatchQueue.main.asyncAfter(deadline:.now()+0.15) {
+                        check(preview.patchCount==patches,"Ending a prepared scroll gesture must not redraw the preview")
+                        check(abs(preview.clipOrigin-origin)<0.001,"Ending a prepared scroll gesture must not reposition the preview")
+                        check(controller.parserRequests>=requests && source.highlightApplications>=highlights,
+                              "Viewport-driven syntax preparation counters must remain monotonic")
+                        print("READ-ONLY SCROLL: full forward/reverse traversal; source and preview ready before release; no release redraw; loading=\(loadingObservations), episodes=\(loadingEpisodes); \(controller.parserRequests-requests) prepared-AST viewport queries, \(source.highlightApplications-highlights) visible style applications")
+                        completion()
+                    }
+                }
+                return
             }
-            source.scroll.contentView.scroll(to:NSPoint(x:0,y:end*CGFloat(positions[index])/160))
+            source.scroll.contentView.scroll(to:NSPoint(x:0,y:positions[index]))
             source.scroll.reflectScrolledClipView(source.scroll.contentView)
-            DispatchQueue.main.asyncAfter(deadline:.now()+0.002){step(index+1)}
+            DispatchQueue.main.asyncAfter(deadline:.now()+0.01) {
+                let loading=preview.isShowingLoadingState
+                if loading {
+                    loadingObservations += 1
+                    if !wasLoading {loadingEpisodes.append("step=\(index),y=\(positions[index]),\(preview.debugGeometry())")}
+                }
+                wasLoading=loading
+                // At the distant endpoint the gesture remains active. Both panes
+                // must become ready without relying on endScrollGesture().
+                if index==forward.count-1 {waitForActiveViewport(200){step(index+1)}}
+                else {step(index+1)}
+            }
         }
         step(0)
     }
@@ -454,8 +542,9 @@ import MarkdownCore
         }
         ready(300)
     }
-    /// Comrak's first publication fills the existing retained document trees;
-    /// navigation then uses the calibrated read-only scrolling path.
+    /// Comrak's first publication is viewport-bounded. Once the retained native
+    /// document is complete, WebKit is replaced with the complete document and
+    /// navigation uses the calibrated read-only scrolling path without patches.
     private static func verifyFullPreparation(completion:@escaping()->Void) {
         let document=MarkdownDocument();fixtureDocuments.append(document)
         document.setInitialText(String(repeating:"\n",count:100)+(0..<240).map{"## Prepared passage \($0)\n\nText for passage \($0).\n\n"}.joined()+String(repeating:"\n",count:100))
@@ -465,23 +554,28 @@ import MarkdownCore
         check(controller.window?.isVisible==false,"Opening must wait for complete parsing and a ready preview")
         @MainActor func wait(_ remaining:Int) {
             guard remaining>0 else{fail("Complete first presentation did not prepare: viewport=\(controller.hasPreparedViewport), document=\(controller.hasPreparedDocument), \(controller.preview.debugGeometry())")}
-            guard controller.hasPreparedViewport,controller.hasPreparedDocument else {
+            guard controller.hasPreparedViewport,controller.hasPreparedDocument,
+                  controller.preview.displaysCompleteDocument else {
                 DispatchQueue.main.asyncAfter(deadline:.now()+0.02){wait(remaining-1)};return
             }
             let preview=controller.preview,source=controller.source
-            check(source.hasAppliedHighlights(in:source.visibleSourceRange),"Visible syntax must be ready with the retained document")
+            let visibleText=document.source.string(in:source.visibleSourceRange)
+            if !visibleText.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty {
+                check(source.hasAppliedHighlights(in:source.visibleSourceRange),"Visible syntax must be ready with the retained document")
+            }
             check(controller.window?.isVisible==true,"A complete ready revision must show its window")
             let requests=controller.parserRequests,patches=preview.patchCount
             preview.webView.evaluateJavaScript("({headings:[...document.querySelectorAll('h2')].map(n=>n.textContent).join('|'),maximumFanout:Math.max(...[document.getElementById('preview'),...document.querySelectorAll('.paint-group')].map(n=>n.children.length)),blocks:document.querySelectorAll('section[data-id]').length})") {value,error in
                 let result=value as? [String:Any]
                 check((result?["maximumFanout"] as? Int ?? 100)>0 && (result?["maximumFanout"] as? Int ?? 100)<=32,"Paint hierarchy must have bounded fanout")
-                check((result?["blocks"] as? Int ?? 0)>0 && (result?["blocks"] as? Int ?? 0)<480,"First presentation must keep WebKit bounded to the viewport")
-                check(error==nil && (result?["headings"] as? String)?.contains("Prepared passage 0")==true,"First view must contain its prepared destination")
+                check((result?["blocks"] as? Int ?? 0)>=480,"Settled presentation must contain the complete prepared document")
+                let headings=result?["headings"] as? String ?? ""
+                check(error==nil && headings.contains("Prepared passage 0") && headings.contains("Prepared passage 239"),"Settled presentation must contain both document ends")
                 source.reveal(document.source.count)
                 DispatchQueue.main.asyncAfter(deadline:.now()+0.1) {
                     check(controller.hasPreparedViewport && controller.parserRequests==requests,"Deep cached navigation must not request another parse")
-                    check(preview.patchCount>patches,"Deep cached navigation must publish its retained destination")
-                    print("COMPLETE PREPARATION: one retained native revision, cached deep jump, viewport-bounded WebKit presentation")
+                    check(preview.patchCount==patches,"Deep cached navigation through the complete WebKit document must not patch the DOM")
+                    print("COMPLETE PREPARATION: bounded first view, complete retained WebKit document after background preparation, cached deep jump with no patch")
                     controller.window?.close();completion()
                 }
             }
@@ -493,13 +587,13 @@ import MarkdownCore
         if pane.lastRevision==revision {completion()}
         else {DispatchQueue.main.asyncAfter(deadline:.now()+0.05) {waitForPane(pane,revision:revision,remaining:remaining-1,completion:completion)}}
     }
-    private static func visiblePreviews(_ pane:PreviewPane)->[WKWebView] {
+    private static func visiblePreviews(_ pane:PreviewPane)->[HTMLPreviewView] {
         pane.subviews.compactMap{$0 as? NSClipView}.filter{!$0.isHidden}
-            .flatMap{$0.documentView?.subviews ?? []}.compactMap{$0 as? WKWebView}.filter{!$0.isHidden}
+            .flatMap{$0.documentView?.subviews ?? []}.compactMap{$0 as? HTMLPreviewView}.filter{!$0.isHidden}
     }
-    private static func inactivePreview(_ pane:PreviewPane)->WKWebView {
+    private static func inactivePreview(_ pane:PreviewPane)->HTMLPreviewView {
         guard let view=pane.subviews.compactMap({$0 as? NSClipView})
-            .flatMap({$0.documentView?.subviews ?? []}).compactMap({$0 as? WKWebView}).first(where:{$0 !== pane.webView}) else {
+            .flatMap({$0.documentView?.subviews ?? []}).compactMap({$0 as? HTMLPreviewView}).first(where:{$0 !== pane.webView}) else {
             fail("Missing inactive presentation surface")
         }
         return view
@@ -689,7 +783,7 @@ import MarkdownCore
             pane.webView.evaluateJavaScript("const r=document.images[0].getBoundingClientRect();JSON.stringify({x:r.left+8,y:r.top+8,base:new URL(document.images[0].src).searchParams.get('base')})") {value,error in
                 guard error==nil,let string=value as? String,let data=string.data(using:.utf8),let image=(try? JSONSerialization.jsonObject(with:data)) as? [String:Any],let x=image["x"] as? Double,let y=image["y"] as? Double else {fail("Cannot inspect relative asset")}
                 check(image["base"] as? String==directories[index].absoluteString,"Asset resource keys must include the captured document directory")
-                let snapshot=WKSnapshotConfiguration();snapshot.rect=NSRect(x:x,y:y,width:2,height:2);snapshot.afterScreenUpdates=false
+                let snapshot=HTMLPreviewSnapshotConfiguration(rect:NSRect(x:x,y:y,width:2,height:2),afterScreenUpdates:false)
                 pane.webView.takeSnapshot(with:snapshot) {picture,error in
                     guard error==nil,let data=picture?.tiffRepresentation,let bitmap=NSBitmapImageRep(data:data),let color=bitmap.colorAt(x:0,y:0)?.usingColorSpace(.deviceRGB) else {fail("Cannot inspect painted asset")}
                     check(index==0 ? color.redComponent>0.8 && color.blueComponent<0.2:color.blueComponent>0.8 && color.redComponent<0.2,"Changing the document directory must paint the new asset, not a cached image from the old directory")
@@ -708,8 +802,7 @@ import MarkdownCore
         waitForPane(pane,revision:8) {inspect(0)}
     }
     private static func verifyPaintedReplacement(_ pane:PreviewPane,completion:@escaping()->Void) {
-        let snapshot=WKSnapshotConfiguration()
-        snapshot.rect=NSRect(x:460,y:20,width:4,height:4);snapshot.afterScreenUpdates=false
+        let snapshot=HTMLPreviewSnapshotConfiguration(rect:NSRect(x:460,y:20,width:4,height:4),afterScreenUpdates:false)
         pane.webView.takeSnapshot(with:snapshot) {image,error in
             guard error==nil,let data=image?.tiffRepresentation,let bitmap=NSBitmapImageRep(data:data),
                   let color=bitmap.colorAt(x:0,y:0)?.usingColorSpace(.deviceRGB) else {fail("Cannot inspect the painted replacement")}
@@ -886,9 +979,14 @@ import MarkdownCore
         let origin=preview.clipOrigin
         DispatchQueue.main.asyncAfter(deadline:.now()+0.2) {
             check(preview.isScrollMappingFrozen,"A pause must not synthesize a gesture end")
+            let beforeEnd=preview.clipOrigin
+            check(abs(beforeEnd-origin)<0.001,
+                "Frozen pause repositioned the preview by \(beforeEnd-origin): \(preview.debugGeometry())")
             center.post(name:NSScrollView.didEndLiveScrollNotification,object:source.scroll)
             check(!source.isScrolling && !preview.isScrollMappingFrozen,"Native live-scroll end must release the map immediately")
-            check(abs(preview.clipOrigin-origin)<0.001,"Gesture end must not reposition the preview")
+            let afterEnd=preview.clipOrigin
+            check(abs(afterEnd-beforeEnd)<0.001,
+                "Gesture end repositioned the preview by \(afterEnd-beforeEnd): \(preview.debugGeometry())")
             print("LIVE SCROLL: native start/end notifications, no idle timer or gesture-end correction")
             completion()
         }
@@ -1100,10 +1198,11 @@ import MarkdownCore
     }
     private static let burstPassages=["## Section 20","| 500 |","## Section 60"]
     private static var passageObservations=[0,0,0]
+    private static var burstLoadingObservations=0
     private static func beginBurstScroll(_ controller:EditorWindowController,caseIndex:Int) {
         guard caseIndex<burstPassages.count else {
             print("PASSAGE OBSERVATIONS: prose/table/image=\(passageObservations)")
-            print("BURST SCROLL: 600 coverage observations across prose, table and image windows, including reversal and gesture handoffs")
+            print("BURST SCROLL: 600 coverage observations across prose, table and image windows, including reversal and gesture handoffs; loading=\(burstLoadingObservations)")
             pollPreparedDocument(controller,remaining:100);return
         }
         controller.window?.setContentSize(NSSize(width:1730,height:1190))
@@ -1185,6 +1284,7 @@ import MarkdownCore
                 if !preview.coversSourceViewport {
                     check(preview.isShowingLoadingState,"An incomplete source viewport must display its loading state")
                 }
+                if preview.isShowingLoadingState {burstLoadingObservations += 1}
                 observeBurstScroll(controller,caseIndex:caseIndex,step:step+1)
             }
         }

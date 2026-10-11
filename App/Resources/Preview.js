@@ -1,17 +1,23 @@
 const root=document.getElementById('preview'),nodes=new Map();
 let revision=0,measurement=0,scheduled=false,assetBase=null,orderedNodes=[];
+const frozenNodes=new Set();
 const groups=new Map(),fanout=32;
 function geometry(){
   // The native clip owns vertical scrolling. Browser selection restoration and
   // scroll anchoring must not introduce a second origin inside the web view.
-  if(window.scrollX||window.scrollY)window.scrollTo(0,0);
   const frame=root.getBoundingClientRect(),origin=frame.top;
-  return {revision,measurement:++measurement,width:frame.width,height:root.offsetHeight,items:orderedNodes.map(n=>{
+  const result={revision,measurement:++measurement,width:frame.width,height:root.offsetHeight,items:orderedNodes.map(n=>{
     const box=n.getBoundingClientRect();
+    n._height=box.height;
     const reference=n._reference;
     return {id:n.dataset.id,y:box.top-origin,height:box.height,
       landmarkY:reference?reference.getBoundingClientRect().top-origin:null};
   })};
+  // Retain the measured hierarchy as a coarse layout index. An edit can then
+  // isolate the unchanged suffix in O(log n) groups instead of applying a
+  // containment style to every following section.
+  for(const group of groups.values())group._height=group.getBoundingClientRect().height;
+  return result;
 }
 function report(){scheduled=false;window.webkit.messageHandlers.geometry.postMessage(geometry());}
 function changed(){if(!scheduled){scheduled=true;requestAnimationFrame(report);}}
@@ -35,11 +41,29 @@ function fill(n,item,base){
   }
   return false;
 }
-window.astraPatch=(items,version,points,base,suffixIndex,shift,debugMeasure=false)=>{
+function thaw(){
+  for(const n of frozenNodes){n.style.height='';n.style.contain='';}
+  frozenNodes.clear();
+}
+function freeze(n){
+  if(!Number.isFinite(n._height))return false;
+  n.style.height=n._height+'px';n.style.contain='size layout paint';frozenNodes.add(n);return true;
+}
+function freezeFollowing(n,index){
+  for(const child of n.children){
+    if(child._lastIndex<=index)continue;
+    if(child._firstIndex>=index){freeze(child);continue;}
+    if(child.classList.contains('paint-group'))freezeFollowing(child,index);
+  }
+}
+window.astraPatch=(items,version,points,base,suffixIndex,shift,debugMeasure=false,freezeSuffix=false)=>{
   // BEGIN DEBUG
   const started=debugMeasure?performance.now():0;let changedHTML=0;
   // END DEBUG
   revision=version;document.documentElement.style.fontSize=points+'px';
+  if(freezeSuffix){
+    thaw();freezeFollowing(root,suffixIndex);
+  }else thaw();
   for(const item of items){
     const old=orderedNodes[item.index];
     let n=old;
@@ -53,7 +77,7 @@ window.astraPatch=(items,version,points,base,suffixIndex,shift,debugMeasure=fals
     if(changedBlock)changedHTML++;
     // END DEBUG
   }
-  if(shift)for(let i=suffixIndex;i<orderedNodes.length;i++){
+  if(shift&&!freezeSuffix)for(let i=suffixIndex;i<orderedNodes.length;i++){
     orderedNodes[i]._from+=shift;orderedNodes[i]._to+=shift;
   }
   if(root._lastBlock!==orderedNodes.at(-1)){
@@ -61,14 +85,15 @@ window.astraPatch=(items,version,points,base,suffixIndex,shift,debugMeasure=fals
     root._lastBlock=orderedNodes.at(-1);root._lastBlock?.classList.add('last-block');
   }
   // BEGIN DEBUG
-  if(debugMeasure)return {timing:{patchMs:performance.now()-started,changedHTML,mounted:orderedNodes.length}};
+  if(debugMeasure)return {timing:{patchMs:performance.now()-started,changedHTML,mounted:orderedNodes.length,
+    frozen:frozenNodes.size}};
   // END DEBUG
 };
 window.astraUpdate=(items,version,points,base="",measure=false)=>{
   // BEGIN DEBUG
   const started=measure?performance.now():0;let changedHTML=0;
   // END DEBUG
-  revision=version;document.documentElement.style.fontSize=points+'px';
+  revision=version;document.documentElement.style.fontSize=points+'px';thaw();
   if(assetBase!==base){root.replaceChildren();nodes.clear();groups.clear();assetBase=base;}
   const retained=new Set(items.map(x=>x.id));
   for(const [id,n] of nodes)if(!retained.has(id)){n.remove();nodes.delete(id);}
@@ -85,6 +110,7 @@ window.astraUpdate=(items,version,points,base="",measure=false)=>{
     ordered.push(n);
   }
   orderedNodes=ordered;
+  for(let i=0;i<ordered.length;i++)ordered[i]._firstIndex=i,ordered[i]._lastIndex=i+1;
   // The native view spans the complete document. A flat block list makes
   // each paint tile traverse every sibling. Bound the fanout and contain
   // paint so a tile can reject whole distant branches.
@@ -107,7 +133,9 @@ window.astraUpdate=(items,version,points,base="",measure=false)=>{
       const key=depth+':'+start/fanout;used.add(key);
       let group=groups.get(key);
       if(!group){group=document.createElement('div');group.className='paint-group';groups.set(key,group);}
-      arrange(group,level.slice(start,start+fanout));parents.push(group);
+      const children=level.slice(start,start+fanout);
+      group._firstIndex=children[0]._firstIndex;group._lastIndex=children.at(-1)._lastIndex;
+      arrange(group,children);parents.push(group);
     }
     level=parents;depth++;
   }
@@ -174,6 +202,5 @@ window.astraRestoreViewState=state=>{
   selection.removeAllRanges();if(anchor&&focus)selection.setBaseAndExtent(...anchor,...focus);
 };
 new ResizeObserver(changed).observe(root);
-window.addEventListener('scroll',()=>{if(window.scrollX||window.scrollY)window.scrollTo(0,0)});
 document.addEventListener('load',changed,true);
 document.fonts.ready.then(changed);

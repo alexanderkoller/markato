@@ -9,6 +9,12 @@ public struct RenderedPage: Sendable {
     public var range:NSRange
     public var entries:[RenderedEntry]
 }
+public struct RenderedWindow: Sendable {
+    public let range:NSRange
+    public let entries:[RenderedEntry]
+    public let previewTop:Double
+    public let previewHeight:Double
+}
 
 /// One revision's ordered blocks, prepared styles and measured source lines.
 /// Both panes use these block identities and source coordinates. Scrolling reads
@@ -23,7 +29,11 @@ public final class PreparedDocument {
         weak var parent: BlockNode?
         var firstGap: Int?
         var depth=1,count=1,preparedCount=0,lazyShift=0
+        var previewSum:Double=0
         init(_ block:PreparedBlock,start:Int,end:Int) {self.block=block;self.start=start;self.end=end}
+        var effectivePreviewHeight:Double {
+            previewHeight ?? max(24,ceil(Double(max(1,end-start))/80)*24+12)
+        }
         func shift(_ delta:Int) {
             guard delta != 0 else{return}
             block=PreparedBlock(id:block.id,kind:block.kind,from:block.from+delta,to:block.to+delta)
@@ -40,6 +50,7 @@ public final class PreparedDocument {
             count=1+(left?.count ?? 0)+(right?.count ?? 0)
             preparedCount=(left?.preparedCount ?? 0)+(fragment == nil ? 0:1)+(right?.preparedCount ?? 0)
             firstGap=left?.firstGap ?? (fragment==nil ? start:nil) ?? right?.firstGap
+            previewSum=(left?.previewSum ?? 0)+effectivePreviewHeight+(right?.previewSum ?? 0)
         }
     }
     private final class StyleRecords {
@@ -97,6 +108,7 @@ public final class PreparedDocument {
     public private(set) var revision = -1
     public private(set) var length=0
     public var count:Int {ordered.count}
+    public var hasCompleteFragments:Bool {(root?.preparedCount ?? 0)==ordered.count}
     public var styleCoverage:[NSRange] {syntax.map(\.range)}
     public var byteCost:Int {ordered.reduce(0){$0+($1.fragment?.markdown.utf8.count ?? 0)+($1.fragment?.html?.utf8.count ?? 0)}}
     public init() {}
@@ -343,11 +355,61 @@ public final class PreparedDocument {
         guard blocks.allSatisfy({$0.fragment != nil}) else{return nil}
         return blocks.map{RenderedEntry(id:$0.block.id,fragment:$0.fragment!)}
     }
+    /// Prepared entries in the manifest interval replaced by an edit. Missing
+    /// entries remain invalid and are filled by background preparation.
+    public func preparedEntries(for change:PreparedBlockChange)->[(index:Int,entry:RenderedEntry)] {
+        let end=ordered.count-change.suffix
+        guard change.prefix>=0,end>=change.prefix,end<=ordered.count else{return []}
+        return ordered[change.prefix..<end].enumerated().compactMap {offset,node in
+            guard node.fragment != nil else{return nil}
+            materialize(node)
+            return (change.prefix+offset,RenderedEntry(id:node.block.id,fragment:node.fragment!))
+        }
+    }
     public func page(covering range:NSRange)->RenderedPage? {
         let blocks=selected(range)
         guard let first=blocks.first,let last=blocks.last,blocks.allSatisfy({$0.fragment != nil}) else{return nil}
         return RenderedPage(range:NSRange(location:first.start,length:last.end-first.start),
             entries:blocks.map{RenderedEntry(id:$0.block.id,fragment:$0.fragment!)})
+    }
+    /// Returns cached blocks around a source viewport. The tree supplies the
+    /// global preview extent; no document-sized placeholder enters the HTML engine.
+    public func window(covering range:NSRange,before:Double,after:Double)->RenderedWindow? {
+        var blocks=selected(range)
+        guard let visibleFirst=blocks.first,let visibleLast=blocks.last,
+              blocks.allSatisfy({$0.fragment != nil}) else{return nil}
+        func predecessor(_ node:BlockNode)->BlockNode? {
+            materialize(node)
+            if var n=node.left {while true {n.push();if let right=n.right {n=right}else{return n}}}
+            var child=node,current=node.parent
+            while let parent=current {if parent.right === child {return parent};child=parent;current=parent.parent}
+            return nil
+        }
+        func successor(_ node:BlockNode)->BlockNode? {
+            materialize(node)
+            if var n=node.right {while true {n.push();if let left=n.left {n=left}else{return n}}}
+            var child=node,current=node.parent
+            while let parent=current {if parent.left === child {return parent};child=parent;current=parent.parent}
+            return nil
+        }
+        var remaining=before,cursor=visibleFirst
+        while remaining>0,let previous=predecessor(cursor),previous.fragment != nil {
+            blocks.insert(previous,at:0);remaining -= previous.effectivePreviewHeight;cursor=previous
+        }
+        remaining=after;cursor=visibleLast
+        while remaining>0,let next=successor(cursor),next.fragment != nil {
+            blocks.append(next);remaining -= next.effectivePreviewHeight;cursor=next
+        }
+        let first=blocks[0],last=blocks[blocks.count-1]
+        materialize(first)
+        var top=first.left?.previewSum ?? 0,child=first,current=first.parent
+        while let parent=current {
+            if parent.right === child {top += (parent.left?.previewSum ?? 0)+parent.effectivePreviewHeight}
+            child=parent;current=parent.parent
+        }
+        return RenderedWindow(range:NSRange(location:first.start,length:last.end-first.start),
+            entries:blocks.map{RenderedEntry(id:$0.block.id,fragment:$0.fragment!)},
+            previewTop:16+top,previewHeight:32+(root?.previewSum ?? 0))
     }
     public var allPages:[RenderedPage] {
         #if DEBUG
@@ -389,7 +451,13 @@ public final class PreparedDocument {
     }
     public func recordPreviewHeights(_ heights:[String:Double],revision:Int) {
         guard revision==self.revision else{return}
-        for (id,height) in heights {if let node=nodes[id] {materialize(node);node.previewHeight=height}}
+        for (id,height) in heights where height.isFinite && height>0 {
+            if let node=nodes[id] {
+                materialize(node);node.previewHeight=height
+                var ancestor:BlockNode?=node
+                while let current=ancestor {current.update();ancestor=current.parent}
+            }
+        }
     }
     public func heights(for id:String)->(source:Double?,preview:Double?)? {
         guard let n=nodes[id] else{return nil}

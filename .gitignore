@@ -1,5 +1,7 @@
 .build/
 dist/
 .DS_Store
+Vendor/Ultralight/*
+!Vendor/Ultralight/README.md
 Parser/node_modules/
 *.xcodeproj/xcuserdata/

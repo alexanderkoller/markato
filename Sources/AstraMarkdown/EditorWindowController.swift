@@ -22,6 +22,8 @@ final class EditorWindowController: NSWindowController, NSSplitViewDelegate, NSS
     private let preparedDocument=PreparedDocument()
     private var backgroundRevision = -1
     private var presentationPending=false
+    private var completePresentationPendingRevision:Int?
+    private var completeEditRevision:Int?
     private var isClosed=false
     private var openingRequested=false
     private var hasShownWindow=false
@@ -89,14 +91,27 @@ final class EditorWindowController: NSWindowController, NSSplitViewDelegate, NSS
         source.scrollGestureChanged = { [weak self] active in
             if active {self?.preview.beginScrollGesture()}else{
                 self?.preview.endScrollGesture()
-                if let self,self.presentationPending {self.showPreparedDocument(revision:self.markdownDocument.revision)}
+                if let self {
+                    if self.presentationPending {self.showPreparedDocument(revision:self.markdownDocument.revision)}
+                    else if self.completePresentationPendingRevision==self.markdownDocument.revision {
+                        self.showCompletePreparedDocument(revision:self.markdownDocument.revision)
+                    }
+                }
             }
         }
         preview.preparedDocument=preparedDocument
         preview.presentationSettled = { [weak self] in
             guard let self,!self.isClosed,let document=self.document as? MarkdownDocument else{return}
             if self.openingRequested {self.showWindow(nil)}
-            if self.presentationPending,!self.preview.isScrollMappingFrozen {self.showPreparedDocument(revision:document.revision)}
+            // A settled render frees the renderer for the latest coalesced
+            // viewport even during a gesture. PreviewPane keeps the landmark
+            // map frozen while it prepares and atomically anchors the new window.
+            if self.preview.displaysCompleteDocument,self.preview.displayedDocumentRevision==document.revision {
+                self.presentationPending=false;self.completePresentationPendingRevision=nil
+            } else if self.presentationPending {self.showPreparedDocument(revision:document.revision)}
+            else if self.completePresentationPendingRevision==document.revision {
+                self.showCompletePreparedDocument(revision:document.revision)
+            }
             self.prepareDocument(rope:document.source,revision:document.revision)
         }
         source.geometryChanged = { [weak self] in self?.preview.sourceLayoutChanged() }
@@ -109,7 +124,14 @@ final class EditorWindowController: NSWindowController, NSSplitViewDelegate, NSS
         preview.baseURL = document.fileURL?.deletingLastPathComponent()
         document.edited = { [weak self] selection,_,edit in
             guard let self,!self.isClosed else { return }
-            if let presented=self.presentationRange {
+            self.completePresentationPendingRevision=nil
+            if self.preview.displaysCompleteDocument {
+                // Retain the complete DOM. Once Comrak publishes the manifest
+                // delta and the changed visible fragment, patch that block in
+                // place; its suffix geometry is refreshed asynchronously.
+                self.completeEditRevision=document.revision
+                self.presentationRange=nil;self.preservedEditPresentationRevision=nil
+            } else if let presented=self.presentationRange {
                 let range=presented.1,editEnd=NSMaxRange(edit.range),rangeEnd=NSMaxRange(range)
                 let delta=edit.insertedLength-edit.range.length
                 let shifted:NSRange
@@ -128,7 +150,7 @@ final class EditorWindowController: NSWindowController, NSSplitViewDelegate, NSS
             self.lastRequest = nil
             self.source.endScrollGesture()
             self.presentationPending=false
-            self.preview.invalidate()
+            if self.completeEditRevision != document.revision {self.preview.invalidate()}
             self.source.documentEdited(selection:selection,edit:edit)
         }
         layoutContent(); split.setPosition(window.frame.width*0.5,ofDividerAt:0)
@@ -192,7 +214,10 @@ final class EditorWindowController: NSWindowController, NSSplitViewDelegate, NSS
                 if !source.hasAppliedHighlights(in:margin) {applyingHighlights=true;source.applyHighlights(styles,in:margin);applyingHighlights=false}
                 // Cached preparation and displayed coverage are separate. A
                 // new destination must publish even if no parsing is needed.
-                if !preview.coversSourceViewport {showPreparedDocument(revision:doc.revision)}
+                if !preview.coversSourceViewport ||
+                   (preview.isScrollMappingFrozen && preview.needsWindowReplenishment) {
+                    showPreparedDocument(revision:doc.revision)
+                }
                 return
         }
         let firstVisibleLine=rope.line(at:visible.location),lastVisibleLine=rope.line(at:NSMaxRange(visible))
@@ -233,69 +258,88 @@ final class EditorWindowController: NSWindowController, NSSplitViewDelegate, NSS
                 }
                 self.applyingHighlights=false
                 self.preview.baseURL = self.markdownDocument.fileURL?.deletingLastPathComponent()
-                self.showPreparedDocument(revision:revision)
+                if self.completeEditRevision==revision,parsed.blockChange != nil {
+                    // The native tree already contains every retained fragment
+                    // and height. Publish its cached viewport on the spare
+                    // HTML surface; keep the stale complete surface visible
+                    // until that bounded replacement is painted. This avoids
+                    // asking the renderer to repaint a document-sized view for one
+                    // changed block.
+                    self.completeEditRevision=nil;self.preview.invalidate()
+                    self.showPreparedDocument(revision:revision)
+                    if self.preparedDocument.hasCompleteFragments {
+                        DispatchQueue.main.asyncAfter(deadline:.now()+0.5) { [weak self] in
+                            guard let self,self.markdownDocument.revision==revision else{return}
+                            self.showCompletePreparedDocument(revision:revision)
+                        }
+                    } else {self.prepareDocument(rope:rope,revision:revision)}
+                } else if self.completeEditRevision==revision {
+                    // Whole-document replacement has no local manifest splice.
+                    // Publish its prepared viewport, then fill the new tree.
+                    self.completeEditRevision=nil;self.preview.invalidate()
+                    self.showPreparedDocument(revision:revision)
+                    self.prepareDocument(rope:rope,revision:revision)
+                }
+                else {self.showPreparedDocument(revision:revision)}
                 self.source.needsLayout = true
                 self.prepareDocument(rope:rope,revision:revision)
             case .failure(let error): NSLog("Markdown parsing failed: %@",error.localizedDescription)
             }
         }
     }
-    private func showPreparedDocument(revision:Int,background:Bool=false) {
+    private func showPreparedDocument(revision:Int) {
         guard !isClosed else{return}
-        if background,preview.isPreparingPresentation {
-            // Background progress is additive, not a reason to reject the
-            // complete foreground presentation currently awaiting paint.
+        if preview.displaysCompleteDocument,preview.displayedDocumentRevision==revision {
+            presentationPending=false;completePresentationPendingRevision=nil
+            preview.moveViewport();return
+        }
+        if preview.isRenderingPresentation,preview.displayedDocumentRevision==revision {
+            // Keep one same-revision window in flight and coalesce movement to
+            // the latest source viewport after that presentation settles.
             presentationPending=true
             return
         }
-        let rope=markdownDocument.source
         let visible=source.visibleSourceRange
         let requestedRange:NSRange
         let usesPreservedEditRange=preservedEditPresentationRevision==revision
+        let reusesPresentedWindow:Bool
         if usesPreservedEditRange,let presented=presentationRange,presented.0==revision,
            presented.1.location<=visible.location,NSMaxRange(presented.1)>=NSMaxRange(visible),
            preparedDocument.entries(covering:presented.1) != nil {
             requestedRange=presented.1
+            reusesPresentedWindow=true
         } else if let request=lastRequest,request.0==revision,
            request.1.location<=visible.location,NSMaxRange(request.1)>=NSMaxRange(visible) {
             requestedRange=request.1
-        } else {requestedRange=visible}
-        guard let page=preparedDocument.page(covering:requestedRange) else {
+            reusesPresentedWindow=false
+        } else {requestedRange=visible;reusesPresentedWindow=false}
+        // presentationRange already includes the scroll reserve. Re-expanding
+        // it after every edit changes the DOM shape and prevents the renderer
+        // from replacing only the changed block at its stable index.
+        let reach=reusesPresentedWindow ? 0 : max(1,Double(preview.bounds.height))*24
+        guard let window=preparedDocument.window(covering:requestedRange,before:reach,after:reach) else {
             viewportChanged(visible);return
         }
-        let pages=[page]
-        presentationRange=(revision,page.range)
+        presentationRange=(revision,window.range)
         if usesPreservedEditRange {preservedEditPresentationRevision=nil}
-        var entries=[RenderedEntry](),position=0
-        // Unprepared intervals occupy their document position. Foreground
-        // rendering fills the destination rather than replacing a moving window.
-        func gap(_ from:Int,_ to:Int,_ id:String) {
-            guard to>from else{return}
-            let lines=max(1,rope.line(at:to)-rope.line(at:from))
-            let height=Double(lines)*24
-            let fragment=PreviewFragment(kind:"Pending",from:from,to:to,
-                markdown:"",html:"<div aria-busy='true' style='height:\(height)px'></div>")
-            entries.append(RenderedEntry(id:"pending:\(id)",fragment:fragment))
-        }
-        for page in pages {
-            gap(position,page.range.location,"before:\(page.entries.first?.id ?? "end")")
-            entries.append(contentsOf:page.entries)
-            position=max(position,NSMaxRange(page.range))
-        }
-        gap(position,rope.count,"after:\(pages.last?.entries.last?.id ?? "start")")
-        // Progress outside an already rendered viewport waits for the gesture.
-        // Only outrunning the displayed preparation may publish during scrolling.
-        if preview.isScrollMappingFrozen,preview.coversSourceViewport,preview.displayedDocumentRevision==revision {
-            presentationPending=true
+        // A covered viewport with adequate reserve needs no new publication.
+        // Outrunning the mounted window continues through the live render queue.
+        if preview.isScrollMappingFrozen,preview.coversSourceViewport,
+           !preview.needsWindowReplenishment,preview.displayedDocumentRevision==revision {
+            // The mounted window already contains the viewport and its reserve.
+            // There is no deferred publication to replay at gesture end.
+            presentationPending=false
             return
         }
         presentationPending=false
-        preview.show(entries,revision:revision)
+        preview.show(window.entries,revision:revision,sourceRange:window.range,
+            previewTop:window.previewTop,previewHeight:window.previewHeight)
     }
-    private func prepareDocument(rope:TextRope,revision:Int) {
+    private func prepareDocument(rope:TextRope,revision:Int,allowUnpresented:Bool=false) {
         guard !isClosed else{return}
-        guard preparedDocument.revision==revision,backgroundRevision != revision,preview.displayedDocumentRevision==revision,
-              !preview.isShowingLoadingState else{return}
+        guard preparedDocument.revision==revision,backgroundRevision != revision,
+              (allowUnpresented || preview.displayedDocumentRevision==revision),
+              (allowUnpresented || !preview.isShowingLoadingState) else{return}
         backgroundRevision=revision
         enqueueBackgroundPreparation { [weak self] in self?.prepareBatch(rope:rope,revision:revision,from:0) }
     }
@@ -304,8 +348,7 @@ final class EditorWindowController: NSWindowController, NSSplitViewDelegate, NSS
         let from=preparedDocument.firstUnpreparedOffset(from:from)
         guard markdownDocument.revision==revision else{return}
         guard from<rope.count else {
-            showPreparedDocument(revision:revision,background:true)
-            return
+            showCompletePreparedDocument(revision:revision);return
         }
         let line=rope.line(at:from),batchRange=rope.lines(line,min(rope.lineCount,line+100))
         let includeFragments=preparedDocument.entries(covering:batchRange)==nil
@@ -319,6 +362,20 @@ final class EditorWindowController: NSWindowController, NSSplitViewDelegate, NSS
             case .failure(let error):NSLog("Background preview preparation failed: %@",error.localizedDescription)
             }
         }
+    }
+    private func showCompletePreparedDocument(revision:Int) {
+        guard !isClosed,markdownDocument.revision==revision,
+              preparedDocument.revision==revision,
+              preparedDocument.hasCompleteFragments else{return}
+        if source.isScrolling || preview.isRenderingPresentation {
+            completePresentationPendingRevision=revision;return
+        }
+        completePresentationPendingRevision=nil;presentationPending=false
+        completeEditRevision=nil
+        // Completion means every semantic unit is cached in PreparedDocument.
+        // Keep the mounted HTML bounded; scrolling can now refill it entirely
+        // from the retained tree without parsing or rendering Markdown.
+        showPreparedDocument(revision:revision)
     }
     @objc func undo(_ sender:Any?) { markdownDocument.undoManager?.undo() }
     @objc func redo(_ sender:Any?) { markdownDocument.undoManager?.redo() }

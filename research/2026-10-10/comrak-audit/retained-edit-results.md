@@ -1,6 +1,25 @@
 # Retained Comrak edit results
 
-The measured release snapshot is `comrak-retained-window-final`; the authoritative snapshot `comrak-retained-window-final2` adds only a range-boundary correction for edits immediately outside the viewport. `comrak-viewport-final` is the preserved comparison. All parse the complete Markdown revision with Comrak and retain the same Swift block and layout trees. The final build additionally overlaps initial parsing with rope construction, publishes the full prepared viewport-plus-overscan unit, preserves that unit across one revision-changing edit, and patches the displayed DOM in place.
+## Cached WebKit window
+
+The current release snapshot is `comrak-cached-window-editfix`. It keeps every prepared HTML fragment and measured preview height in `PreparedDocument`, while WebKit receives only the cached blocks around the viewport. The native tree supplies the approximate whole-document extent and O(log n) prefix position. Background preparation only fills the tree; it no longer republishes the current WebKit window. During live scrolling, replacement starts with four viewports of rendered reserve, and same-revision requests coalesce to one active render plus the latest destination. An edit reuses that already-overscanned window exactly, instead of applying overscan to it a second time.
+
+These values use the same fresh-process open and three-edit protocol as the saved comparisons. Open values are medians of three processes; edit values are medians of nine visible-H1 edits. MacDown 3000 values are the existing measurements and were not rerun.
+
+| Fixture | Operation | Cached window | Prior retained window | MacDown 3000 | Cached-window range |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 64 KiB dense | open | 122.6 ms | 127.1 ms | 205.8 ms | 120.4–124.9 |
+| 64 KiB dense | edit | 30.2 ms | 28.3 ms | 52.7 ms | 27.4–47.0 |
+| 1 MiB dense | open | 131.6 ms | 123.9 ms | 2,542.0 ms | 127.0–144.7 |
+| 1 MiB dense | edit | 49.1 ms | 69.7 ms | 2,004.1 ms | 33.9–67.2 |
+| 8 MiB dense | open | 390.2 ms | 1,322.8 ms | — | 370.2–393.4 |
+| 8 MiB dense | edit | 194.3 ms | 539.1 ms | — | 186.7–266.4 |
+
+The 8 MiB startup distribution remains in the former fast mode: all three observations were 370–393 ms. This removes the roughly 1.3 s mode caused by laying out a document-sized WebKit surface. The result is 3.4× faster than the prior retained-window median. At 64 KiB and 1 MiB, startup remains close to constant. The edit-window correction cuts the 64 KiB median from 67.0 to 30.2 ms, the 1 MiB median from 78.3 to 49.1 ms, and the 8 MiB median from 224.8 to 194.3 ms.
+
+The native integration run mounted bounded cached windows while retaining 398 prepared pages in the tree. It passed 149 heading alignments in both directions, a 400-step paced table traversal with zero observed displacement, exact top and EOF navigation, and 600 burst-scroll coverage observations across prose, table and image destinations. Cached two-line movement issued no JavaScript patch.
+
+The earlier retained-window release snapshot is `comrak-retained-window-final`; `comrak-retained-window-final2` adds only a range-boundary correction for edits immediately outside the viewport. `comrak-viewport-final` is its preserved comparison. All parse the complete Markdown revision with Comrak and retain the same Swift block and layout trees. The retained-window build additionally overlaps initial parsing with rope construction, publishes the full prepared viewport-plus-overscan unit, preserves that unit across one revision-changing edit, and patches the displayed DOM in place.
 
 The table uses an alternating A/B run. Open values are medians of three fresh processes. Edit values are medians of nine verified visible-H1 insertions. Ranges include all observations. The offscreen 8 MiB opening measurement has a two-state WebKit/AppKit launch distribution around 0.39 s and 1.3 s in both snapshots; paired medians therefore show parity rather than a stable startup improvement.
 

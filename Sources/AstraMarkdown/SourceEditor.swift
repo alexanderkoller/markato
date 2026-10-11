@@ -523,7 +523,11 @@ final class SourceEditor:NSView,NSTextViewDelegate,NSTextStorageDelegate,ScrollS
     }
     #endif
     func applyHighlights(_ spans:[SyntaxSpan],in requestedRange:NSRange) {
-        if isScrolling || textView.hasMarkedText() || nativeLayoutRevision != nil {
+        // Syntax colors are temporary layout-manager attributes and cannot
+        // change glyph metrics. Apply them while scrolling so the newly visible
+        // source does not remain unpainted until the gesture ends. Native text
+        // transactions still defer them because their coordinates are unstable.
+        if textView.hasMarkedText() || nativeLayoutRevision != nil {
             deferredHighlights.append((document.revision,spans,requestedRange));return
         }
         applyHighlightBatch([(spans,requestedRange)])

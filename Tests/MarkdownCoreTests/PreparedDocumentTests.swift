@@ -90,3 +90,24 @@ private func prepared(_ id:String,_ from:Int,_ to:Int,_ text:String)->PreviewFra
     #expect(doc.firstUnpreparedOffset(from:0)==10000)
     #expect(doc.allPages.count==1)
 }
+
+@Test func renderedWindowsUseCachedHeightPrefixesAndStopAtCacheHoles() {
+    let doc=PreparedDocument()
+    let blocks=(0..<6).map{PreparedBlock(id:"\($0)",kind:"Paragraph",from:$0*10,to:($0+1)*10)}
+    doc.adopt(blocks,revision:1,length:60)
+    let fragments=(0..<5).map{prepared("\($0)",$0*10,($0+1)*10,"\($0)")}
+    doc.store(ParseResult(revision:1,spans:[],fragments:fragments),range:NSRange(location:0,length:50))
+    doc.recordPreviewHeights(["0":10,"1":20,"2":30,"3":40,"4":50],revision:1)
+
+    let single=doc.window(covering:NSRange(location:20,length:10),before:0,after:0)
+    #expect(single?.entries.map(\.id)==["2"])
+    #expect(single?.previewTop==46)
+    // The unrendered final node still contributes an estimated scrollbar
+    // extent, but can never enter the WebKit window.
+    #expect(single?.previewHeight==218)
+
+    let expanded=doc.window(covering:NSRange(location:20,length:10),before:25,after:500)
+    #expect(expanded?.entries.map(\.id)==["0","1","2","3","4"])
+    #expect(expanded?.range==NSRange(location:0,length:50))
+    #expect(expanded?.previewTop==16)
+}

@@ -7,6 +7,16 @@ if [[ "$build_configuration" != release && "$build_configuration" != debug ]]; t
     exit 2
 fi
 bash scripts/build-native.sh
+default_ultralight_sdk="$PWD/Vendor/Ultralight"
+if [[ ! -d "$default_ultralight_sdk/include" ]]; then
+    default_ultralight_sdk="$PWD/research/2026-10-11/html-renderer-benchmark/third_party/ultralight"
+fi
+ultralight_sdk="${ASTRA_ULTRALIGHT_SDK:-$default_ultralight_sdk}"
+if [[ ! -f "$ultralight_sdk/bin/libUltralight.dylib" || ! -f "$ultralight_sdk/resources/icudt67l.dat" ]]; then
+    echo "Ultralight SDK not found at $ultralight_sdk (set ASTRA_ULTRALIGHT_SDK)" >&2
+    exit 1
+fi
+export ASTRA_ULTRALIGHT_SDK="$ultralight_sdk"
 swift build -c "$build_configuration" --disable-sandbox --cache-path .build/cache --config-path .build/config --security-path .build/security
 app_parent="$PWD/dist"
 if [[ "$build_configuration" == debug ]]; then app_parent="$app_parent/debug"; fi
@@ -16,25 +26,23 @@ app_path="$app_parent/AstraMarkdown.app"
 stage_dir="$(mktemp -d "$app_parent/.app-build.XXXXXX")"
 trap 'rm -rf "$stage_dir"' EXIT
 staged_app="$stage_dir/AstraMarkdown.app"
-mkdir -p "$staged_app/Contents/MacOS" "$staged_app/Contents/Resources"
+mkdir -p "$staged_app/Contents/MacOS" "$staged_app/Contents/Resources" "$staged_app/Contents/Frameworks"
 cp App/Info.plist "$staged_app/Contents/Info.plist"
 cp ".build/$build_configuration/AstraMarkdown" "$staged_app/Contents/MacOS/"
-for resource in Preview.css Preview.js KaTeX.css Example.md ExampleImage.png; do
+for resource in Example.md ExampleImage.png; do
     cp "App/Resources/$resource" "$staged_app/Contents/Resources/"
 done
 cp -R App/Resources/ThirdPartyNotices "$staged_app/Contents/Resources/"
+cp "$ultralight_sdk/bin/"*.dylib "$staged_app/Contents/Frameworks/"
+mkdir -p "$staged_app/Contents/Resources/Ultralight/resources" "$staged_app/Contents/Resources/ThirdPartyNotices/Ultralight"
+cp "$ultralight_sdk/resources/"* "$staged_app/Contents/Resources/Ultralight/resources/"
+cp "$ultralight_sdk/license/"* "$staged_app/Contents/Resources/ThirdPartyNotices/Ultralight/"
 core_bundle="$staged_app/Contents/Resources/AstraMarkdown_MarkdownCore.bundle"
 mkdir -p "$core_bundle/Contents/Resources"
 cp ".build/$build_configuration/AstraMarkdown_MarkdownCore.bundle/Contents/Info.plist" "$core_bundle/Contents/Info.plist"
 cp "Sources/MarkdownCore/Resources/katex.js" "$core_bundle/Contents/Resources/"
+cp -R ".build/$build_configuration/AstraMarkdown_HTMLPreview.bundle" "$staged_app/Contents/Resources/"
 if [[ "$build_configuration" == release ]]; then
-    # The source JS remains directly runnable in debug. Release omits its timing
-    # blocks and optional measurement argument, without another JS build tool.
-    awk '
-        /\/\/ BEGIN DEBUG/ { debug_block=1; next }
-        /\/\/ END DEBUG/ { debug_block=0; next }
-        !debug_block { gsub(",measure=false", ""); print }
-    ' App/Resources/Preview.js > "$staged_app/Contents/Resources/Preview.js"
     bash scripts/check-release.sh "$staged_app"
     strip -S "$staged_app/Contents/MacOS/AstraMarkdown"
 fi

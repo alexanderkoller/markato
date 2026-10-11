@@ -1,9 +1,9 @@
 // Shared in-process observer/driver for temporary copies of both release apps.
 // Does not swizzle methods or substitute any editor/parser/rendering code.
 #import <AppKit/AppKit.h>
-#import <WebKit/WebKit.h>
 #import <mach/mach.h>
 #import <dlfcn.h>
+#import <objc/message.h>
 
 static double clockMS(void) { return NSProcessInfo.processInfo.systemUptime * 1000; }
 static NSDictionary *env;
@@ -33,7 +33,9 @@ static void findViews(NSView *view) {
     if (view.hidden) return;
     if ([view isKindOfClass:NSTextView.class] && [(NSTextView *)view isEditable])
         editor = (NSTextView *)view;
-    if ([view isKindOfClass:WKWebView.class] || [view isKindOfClass:NSClassFromString(@"WebView")]) {
+    NSString *name=NSStringFromClass(view.class);
+    if ([name isEqualToString:@"WKWebView"] || [name isEqualToString:@"WebView"] ||
+        [name hasSuffix:@"HTMLPreviewView"]) {
         web = view;
         return;
     }
@@ -46,14 +48,18 @@ static void readHeading(void (^completion)(NSString *, NSError *)) {
     if (!web) { completion(@"", nil); return; }
     // A short result and the same forced visible-element geometry read in both apps.
     NSString *js = @"(function(){var h=document.querySelector('h1');if(!h)return '';var r=h.getBoundingClientRect();return r.height>0?h.textContent:''})()";
-    if ([web isKindOfClass:WKWebView.class]) {
-        [(WKWebView *)web evaluateJavaScript:js completionHandler:^(id value, NSError *error) {
+    if ([web respondsToSelector:NSSelectorFromString(@"benchmarkVisibleText")]) {
+        completion([web valueForKey:@"benchmarkVisibleText"] ?: @"",nil);
+    } else if ([NSStringFromClass(web.class) isEqualToString:@"WKWebView"]) {
+        typedef void (*Evaluate)(id,SEL,id,id);
+        ((Evaluate)objc_msgSend)(web,NSSelectorFromString(@"evaluateJavaScript:completionHandler:"),js,^(id value, NSError *error) {
             completion([value isKindOfClass:NSString.class] ? value : @"", error);
-        }];
+        });
     } else {
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wdeprecated-declarations"
-        completion([(WebView *)web stringByEvaluatingJavaScriptFromString:js], nil);
+        typedef id (*EvaluateLegacy)(id,SEL,id);
+        completion(((EvaluateLegacy)objc_msgSend)(web,NSSelectorFromString(@"stringByEvaluatingJavaScriptFromString:"),js),nil);
 #pragma clang diagnostic pop
     }
 }

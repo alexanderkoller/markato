@@ -1,0 +1,23 @@
+[
+  {
+    "rows": 100,
+    "html_bytes": 7105,
+    "initial_view_ms": 30.484,
+    "measure_ms": 0.004209,
+    "rss_bytes": 56246272
+  },
+  {
+    "rows": 1000,
+    "html_bytes": 69205,
+    "initial_view_ms": 36.7013,
+    "measure_ms": 0.003333,
+    "rss_bytes": 67600384
+  },
+  {
+    "rows": 10000,
+    "html_bytes": 699205,
+    "initial_view_ms": 132.988,
+    "measure_ms": 0.004,
+    "rss_bytes": 190709760
+  }
+]

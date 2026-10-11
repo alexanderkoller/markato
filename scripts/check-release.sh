@@ -25,7 +25,10 @@ fi
 while IFS= read -r resource; do
     relative="${resource#"$app_path/Contents/Resources/"}"
     case "$relative" in
-        Preview.css|Preview.js|KaTeX.css|Example.md|ExampleImage.png|ThirdPartyNotices/*.txt) ;;
+        Example.md|ExampleImage.png|ThirdPartyNotices/*.txt|ThirdPartyNotices/Ultralight/*) ;;
+        Ultralight/resources/*) ;;
+        AstraMarkdown_HTMLPreview.bundle/Info.plist|AstraMarkdown_HTMLPreview.bundle/*.css) ;;
+        AstraMarkdown_HTMLPreview.bundle/Contents/Info.plist|AstraMarkdown_HTMLPreview.bundle/Contents/Resources/*.css) ;;
         AstraMarkdown_MarkdownCore.bundle/Contents/Info.plist|AstraMarkdown_MarkdownCore.bundle/Info.plist) ;;
         AstraMarkdown_MarkdownCore.bundle/Contents/Resources/katex.js) ;;
         AstraMarkdown_MarkdownCore.bundle/katex.js) ;;
@@ -33,8 +36,8 @@ while IFS= read -r resource; do
         *) echo "Unexpected release resource: $relative" >&2; exit 1 ;;
     esac
 done < <(find "$app_path/Contents/Resources" -type f)
-if rg 'BEGIN DEBUG|END DEBUG|performance\.now|patchMs|layoutMs|changedHTML|measure=false' "$app_path/Contents/Resources/Preview.js"; then
-    echo "Release preview contains timing instrumentation" >&2
-    exit 1
+if [[ -f "$app_path/Contents/Resources/Preview.js" ]] &&
+   rg 'BEGIN DEBUG|END DEBUG|performance\.now|patchMs|layoutMs|changedHTML|measure=false' "$app_path/Contents/Resources/Preview.js"; then
+    echo "Release preview contains timing instrumentation" >&2;exit 1
 fi
 echo "Release audit passed: no test runner, test controls, recorder, or development artifacts."

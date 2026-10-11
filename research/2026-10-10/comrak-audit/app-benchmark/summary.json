@@ -121,6 +121,126 @@
   },
   {
     "fixture": "prose-1048576.md",
+    "app": "comrak-cached-window",
+    "operation": "edit",
+    "experiment": "comrak-cached-window-1791659951998221000-prose-r1",
+    "n": 3,
+    "medianMs": 84.1967499256134,
+    "minMs": 84.17095828056335,
+    "maxMs": 85.36633324623108
+  },
+  {
+    "fixture": "prose-1048576.md",
+    "app": "comrak-cached-window",
+    "operation": "edit",
+    "experiment": "comrak-cached-window-1791659951998221000-prose-r2",
+    "n": 3,
+    "medianMs": 62.355250120162964,
+    "minMs": 61.27837514877319,
+    "maxMs": 77.57870841026306
+  },
+  {
+    "fixture": "prose-1048576.md",
+    "app": "comrak-cached-window",
+    "operation": "edit",
+    "experiment": "comrak-cached-window-1791659951998221000-prose-r3",
+    "n": 3,
+    "medianMs": 78.25049996376038,
+    "minMs": 68.41479158401489,
+    "maxMs": 89.79712510108948
+  },
+  {
+    "fixture": "prose-1048576.md",
+    "app": "comrak-cached-window",
+    "operation": "open",
+    "experiment": "comrak-cached-window-1791659951998221000-prose-r1",
+    "n": 1,
+    "medianMs": 122.31854176521301,
+    "minMs": 122.31854176521301,
+    "maxMs": 122.31854176521301
+  },
+  {
+    "fixture": "prose-1048576.md",
+    "app": "comrak-cached-window",
+    "operation": "open",
+    "experiment": "comrak-cached-window-1791659951998221000-prose-r2",
+    "n": 1,
+    "medianMs": 124.37854170799255,
+    "minMs": 124.37854170799255,
+    "maxMs": 124.37854170799255
+  },
+  {
+    "fixture": "prose-1048576.md",
+    "app": "comrak-cached-window",
+    "operation": "open",
+    "experiment": "comrak-cached-window-1791659951998221000-prose-r3",
+    "n": 1,
+    "medianMs": 124.6265001296997,
+    "minMs": 124.6265001296997,
+    "maxMs": 124.6265001296997
+  },
+  {
+    "fixture": "prose-1048576.md",
+    "app": "comrak-cached-window-editfix",
+    "operation": "edit",
+    "experiment": "comrak-cached-window-editfix-1791660995477872000-prose-r1",
+    "n": 3,
+    "medianMs": 49.1425416469574,
+    "minMs": 45.81566667556763,
+    "maxMs": 67.157541513443
+  },
+  {
+    "fixture": "prose-1048576.md",
+    "app": "comrak-cached-window-editfix",
+    "operation": "edit",
+    "experiment": "comrak-cached-window-editfix-1791660995477872000-prose-r2",
+    "n": 3,
+    "medianMs": 45.60733342170715,
+    "minMs": 33.85529184341431,
+    "maxMs": 61.59266686439514
+  },
+  {
+    "fixture": "prose-1048576.md",
+    "app": "comrak-cached-window-editfix",
+    "operation": "edit",
+    "experiment": "comrak-cached-window-editfix-1791660995477872000-prose-r3",
+    "n": 3,
+    "medianMs": 52.55116677284241,
+    "minMs": 45.20924997329712,
+    "maxMs": 58.83620810508728
+  },
+  {
+    "fixture": "prose-1048576.md",
+    "app": "comrak-cached-window-editfix",
+    "operation": "open",
+    "experiment": "comrak-cached-window-editfix-1791660995477872000-prose-r1",
+    "n": 1,
+    "medianMs": 144.66987466812134,
+    "minMs": 144.66987466812134,
+    "maxMs": 144.66987466812134
+  },
+  {
+    "fixture": "prose-1048576.md",
+    "app": "comrak-cached-window-editfix",
+    "operation": "open",
+    "experiment": "comrak-cached-window-editfix-1791660995477872000-prose-r2",
+    "n": 1,
+    "medianMs": 131.6214165687561,
+    "minMs": 131.6214165687561,
+    "maxMs": 131.6214165687561
+  },
+  {
+    "fixture": "prose-1048576.md",
+    "app": "comrak-cached-window-editfix",
+    "operation": "open",
+    "experiment": "comrak-cached-window-editfix-1791660995477872000-prose-r3",
+    "n": 1,
+    "medianMs": 126.99845838546753,
+    "minMs": 126.99845838546753,
+    "maxMs": 126.99845838546753
+  },
+  {
+    "fixture": "prose-1048576.md",
     "app": "comrak-clean-restored",
     "operation": "edit",
     "experiment": "ab-comrak-viewport-final-vs-comrak-clean-restored-1791649423973895000-prose-pair1",
@@ -178,6 +298,246 @@
     "medianMs": 123.14129185676575,
     "minMs": 123.14129185676575,
     "maxMs": 123.14129185676575
+  },
+  {
+    "fixture": "prose-1048576.md",
+    "app": "comrak-complete-dom",
+    "operation": "edit",
+    "experiment": "comrak-complete-dom-1791662863189459000-prose-r1",
+    "n": 3,
+    "medianMs": 384.6040415763855,
+    "minMs": 365.13804173469543,
+    "maxMs": 576.6566665172577
+  },
+  {
+    "fixture": "prose-1048576.md",
+    "app": "comrak-complete-dom",
+    "operation": "open",
+    "experiment": "comrak-complete-dom-1791662863189459000-prose-r1",
+    "n": 1,
+    "medianMs": 120.55379176139832,
+    "minMs": 120.55379176139832,
+    "maxMs": 120.55379176139832
+  },
+  {
+    "fixture": "prose-1048576.md",
+    "app": "comrak-complete-dom-delta",
+    "operation": "edit",
+    "experiment": "comrak-complete-dom-delta-1791694196293977000-prose-r1",
+    "n": 3,
+    "medianMs": 142.84066677093506,
+    "minMs": 53.51495838165283,
+    "maxMs": 1413.9406249523163
+  },
+  {
+    "fixture": "prose-1048576.md",
+    "app": "comrak-complete-dom-delta",
+    "operation": "open",
+    "experiment": "comrak-complete-dom-delta-1791694196293977000-prose-r1",
+    "n": 1,
+    "medianMs": 122.53979182243347,
+    "minMs": 122.53979182243347,
+    "maxMs": 122.53979182243347
+  },
+  {
+    "fixture": "prose-1048576.md",
+    "app": "comrak-complete-dom-delta-debug",
+    "operation": "edit",
+    "experiment": "comrak-complete-dom-delta-debug-1791694596522560000-prose-r1",
+    "n": 3,
+    "medianMs": 703.1552500724792,
+    "minMs": 665.0883750915527,
+    "maxMs": 1223.4849581718445
+  },
+  {
+    "fixture": "prose-1048576.md",
+    "app": "comrak-complete-dom-delta-debug",
+    "operation": "open",
+    "experiment": "comrak-complete-dom-delta-debug-1791694596522560000-prose-r1",
+    "n": 1,
+    "medianMs": 225.0869584083557,
+    "minMs": 225.0869584083557,
+    "maxMs": 225.0869584083557
+  },
+  {
+    "fixture": "prose-1048576.md",
+    "app": "comrak-complete-dom-delta-debug2",
+    "operation": "edit",
+    "experiment": "comrak-complete-dom-delta-debug2-1791694721056217000-prose-r1",
+    "n": 3,
+    "medianMs": 283.35933351516724,
+    "minMs": 82.12479186058044,
+    "maxMs": 860.0360832214355
+  },
+  {
+    "fixture": "prose-1048576.md",
+    "app": "comrak-complete-dom-delta-debug2",
+    "operation": "open",
+    "experiment": "comrak-complete-dom-delta-debug2-1791694721056217000-prose-r1",
+    "n": 1,
+    "medianMs": 173.88120818138123,
+    "minMs": 173.88120818138123,
+    "maxMs": 173.88120818138123
+  },
+  {
+    "fixture": "prose-1048576.md",
+    "app": "comrak-complete-dom-delta2",
+    "operation": "edit",
+    "experiment": "comrak-complete-dom-delta2-1791694288468375000-prose-r1",
+    "n": 3,
+    "medianMs": 115.0313332080841,
+    "minMs": 90.28233337402344,
+    "maxMs": 4780.519375324249
+  },
+  {
+    "fixture": "prose-1048576.md",
+    "app": "comrak-complete-dom-delta2",
+    "operation": "open",
+    "experiment": "comrak-complete-dom-delta2-1791694288468375000-prose-r1",
+    "n": 1,
+    "medianMs": 113.62050008773804,
+    "minMs": 113.62050008773804,
+    "maxMs": 113.62050008773804
+  },
+  {
+    "fixture": "prose-1048576.md",
+    "app": "comrak-complete-dom-delta3",
+    "operation": "edit",
+    "experiment": "comrak-complete-dom-delta3-1791694482972036000-prose-r1",
+    "n": 3,
+    "medianMs": 1151.8536248207092,
+    "minMs": 1139.2241666316986,
+    "maxMs": 1522.4619998931885
+  },
+  {
+    "fixture": "prose-1048576.md",
+    "app": "comrak-complete-dom-delta3",
+    "operation": "open",
+    "experiment": "comrak-complete-dom-delta3-1791694482972036000-prose-r1",
+    "n": 1,
+    "medianMs": 137.17637491226196,
+    "minMs": 137.17637491226196,
+    "maxMs": 137.17637491226196
+  },
+  {
+    "fixture": "prose-1048576.md",
+    "app": "comrak-complete-dom-delta4",
+    "operation": "edit",
+    "experiment": "comrak-complete-dom-delta4-1791694548509975000-prose-r1",
+    "n": 3,
+    "medianMs": 66.72058367729187,
+    "minMs": 48.19149994850159,
+    "maxMs": 1374.9672501087189
+  },
+  {
+    "fixture": "prose-1048576.md",
+    "app": "comrak-complete-dom-delta4",
+    "operation": "open",
+    "experiment": "comrak-complete-dom-delta4-1791694548509975000-prose-r1",
+    "n": 1,
+    "medianMs": 148.89333319664001,
+    "minMs": 148.89333319664001,
+    "maxMs": 148.89333319664001
+  },
+  {
+    "fixture": "prose-1048576.md",
+    "app": "comrak-complete-dom-delta5",
+    "operation": "edit",
+    "experiment": "comrak-complete-dom-delta5-1791694662019709000-prose-r1",
+    "n": 3,
+    "medianMs": 478.28725004196167,
+    "minMs": 97.71708369255066,
+    "maxMs": 772.2802498340607
+  },
+  {
+    "fixture": "prose-1048576.md",
+    "app": "comrak-complete-dom-delta5",
+    "operation": "open",
+    "experiment": "comrak-complete-dom-delta5-1791694662019709000-prose-r1",
+    "n": 1,
+    "medianMs": 148.43237495422363,
+    "minMs": 148.43237495422363,
+    "maxMs": 148.43237495422363
+  },
+  {
+    "fixture": "prose-1048576.md",
+    "app": "comrak-complete-dom-delta6",
+    "operation": "edit",
+    "experiment": "comrak-complete-dom-delta6-1791694816385849000-prose-r1",
+    "n": 3,
+    "medianMs": 1251.2343747615814,
+    "minMs": 236.77700018882751,
+    "maxMs": 1599.432166814804
+  },
+  {
+    "fixture": "prose-1048576.md",
+    "app": "comrak-complete-dom-delta6",
+    "operation": "open",
+    "experiment": "comrak-complete-dom-delta6-1791694816385849000-prose-r1",
+    "n": 1,
+    "medianMs": 132.7768750190735,
+    "minMs": 132.7768750190735,
+    "maxMs": 132.7768750190735
+  },
+  {
+    "fixture": "prose-1048576.md",
+    "app": "comrak-complete-dom-delta7",
+    "operation": "edit",
+    "experiment": "comrak-complete-dom-delta7-1791694920042461000-prose-r1",
+    "n": 3,
+    "medianMs": 441.05362486839294,
+    "minMs": 440.0061249732971,
+    "maxMs": 471.48383355140686
+  },
+  {
+    "fixture": "prose-1048576.md",
+    "app": "comrak-complete-dom-delta7",
+    "operation": "open",
+    "experiment": "comrak-complete-dom-delta7-1791694920042461000-prose-r1",
+    "n": 1,
+    "medianMs": 127.97916674613953,
+    "minMs": 127.97916674613953,
+    "maxMs": 127.97916674613953
+  },
+  {
+    "fixture": "prose-1048576.md",
+    "app": "comrak-complete-dom-editrestore",
+    "operation": "edit",
+    "experiment": "comrak-complete-dom-editrestore-1791663150859160000-prose-r1",
+    "n": 3,
+    "medianMs": 420.9752082824707,
+    "minMs": 383.72666668891907,
+    "maxMs": 497.6088750362396
+  },
+  {
+    "fixture": "prose-1048576.md",
+    "app": "comrak-complete-dom-editrestore",
+    "operation": "open",
+    "experiment": "comrak-complete-dom-editrestore-1791663150859160000-prose-r1",
+    "n": 1,
+    "medianMs": 134.37254166603088,
+    "minMs": 134.37254166603088,
+    "maxMs": 134.37254166603088
+  },
+  {
+    "fixture": "prose-1048576.md",
+    "app": "comrak-complete-dom-inplace",
+    "operation": "edit",
+    "experiment": "comrak-complete-dom-inplace-1791663336391220000-prose-r1",
+    "n": 3,
+    "medianMs": 108.27724981307983,
+    "minMs": 102.27329158782959,
+    "maxMs": 136.7280831336975
+  },
+  {
+    "fixture": "prose-1048576.md",
+    "app": "comrak-complete-dom-inplace",
+    "operation": "open",
+    "experiment": "comrak-complete-dom-inplace-1791663336391220000-prose-r1",
+    "n": 1,
+    "medianMs": 133.83362531661987,
+    "minMs": 133.83362531661987,
+    "maxMs": 133.83362531661987
   },
   {
     "fixture": "prose-1048576.md",
@@ -2480,6 +2840,66 @@
     "maxMs": 2556.138500213623
   },
   {
+    "fixture": "prose-1048576.md",
+    "app": "ultralight-bounded",
+    "operation": "edit",
+    "experiment": "ultralight-bounded-1791698871174844000-prose-r1",
+    "n": 3,
+    "medianMs": 54.31933331489563,
+    "minMs": 37.614874839782715,
+    "maxMs": 55.69633364677429
+  },
+  {
+    "fixture": "prose-1048576.md",
+    "app": "ultralight-bounded",
+    "operation": "edit",
+    "experiment": "ultralight-bounded-1791698871174844000-prose-r2",
+    "n": 3,
+    "medianMs": 54.32908344268799,
+    "minMs": 51.19099998474121,
+    "maxMs": 58.52900004386902
+  },
+  {
+    "fixture": "prose-1048576.md",
+    "app": "ultralight-bounded",
+    "operation": "edit",
+    "experiment": "ultralight-bounded-1791698871174844000-prose-r3",
+    "n": 3,
+    "medianMs": 58.10758352279663,
+    "minMs": 54.745625019073486,
+    "maxMs": 64.17795825004578
+  },
+  {
+    "fixture": "prose-1048576.md",
+    "app": "ultralight-bounded",
+    "operation": "open",
+    "experiment": "ultralight-bounded-1791698871174844000-prose-r1",
+    "n": 1,
+    "medianMs": 79.51345825195312,
+    "minMs": 79.51345825195312,
+    "maxMs": 79.51345825195312
+  },
+  {
+    "fixture": "prose-1048576.md",
+    "app": "ultralight-bounded",
+    "operation": "open",
+    "experiment": "ultralight-bounded-1791698871174844000-prose-r2",
+    "n": 1,
+    "medianMs": 65.20945835113525,
+    "minMs": 65.20945835113525,
+    "maxMs": 65.20945835113525
+  },
+  {
+    "fixture": "prose-1048576.md",
+    "app": "ultralight-bounded",
+    "operation": "open",
+    "experiment": "ultralight-bounded-1791698871174844000-prose-r3",
+    "n": 1,
+    "medianMs": 83.675541639328,
+    "minMs": 83.675541639328,
+    "maxMs": 83.675541639328
+  },
+  {
     "fixture": "prose-65536.md",
     "app": "baseline",
     "operation": "edit",
@@ -2601,6 +3021,126 @@
   },
   {
     "fixture": "prose-65536.md",
+    "app": "comrak-cached-window",
+    "operation": "edit",
+    "experiment": "comrak-cached-window-1791659951998221000-prose-r1",
+    "n": 3,
+    "medianMs": 66.95458340644836,
+    "minMs": 59.5295832157135,
+    "maxMs": 89.48687481880188
+  },
+  {
+    "fixture": "prose-65536.md",
+    "app": "comrak-cached-window",
+    "operation": "edit",
+    "experiment": "comrak-cached-window-1791659951998221000-prose-r2",
+    "n": 3,
+    "medianMs": 64.91404175758362,
+    "minMs": 59.461416721343994,
+    "maxMs": 68.56783318519592
+  },
+  {
+    "fixture": "prose-65536.md",
+    "app": "comrak-cached-window",
+    "operation": "edit",
+    "experiment": "comrak-cached-window-1791659951998221000-prose-r3",
+    "n": 3,
+    "medianMs": 80.43616652488708,
+    "minMs": 56.71870827674866,
+    "maxMs": 99.11591672897339
+  },
+  {
+    "fixture": "prose-65536.md",
+    "app": "comrak-cached-window",
+    "operation": "open",
+    "experiment": "comrak-cached-window-1791659951998221000-prose-r1",
+    "n": 1,
+    "medianMs": 124.99750018119812,
+    "minMs": 124.99750018119812,
+    "maxMs": 124.99750018119812
+  },
+  {
+    "fixture": "prose-65536.md",
+    "app": "comrak-cached-window",
+    "operation": "open",
+    "experiment": "comrak-cached-window-1791659951998221000-prose-r2",
+    "n": 1,
+    "medianMs": 127.60183334350586,
+    "minMs": 127.60183334350586,
+    "maxMs": 127.60183334350586
+  },
+  {
+    "fixture": "prose-65536.md",
+    "app": "comrak-cached-window",
+    "operation": "open",
+    "experiment": "comrak-cached-window-1791659951998221000-prose-r3",
+    "n": 1,
+    "medianMs": 121.80687499046326,
+    "minMs": 121.80687499046326,
+    "maxMs": 121.80687499046326
+  },
+  {
+    "fixture": "prose-65536.md",
+    "app": "comrak-cached-window-editfix",
+    "operation": "edit",
+    "experiment": "comrak-cached-window-editfix-1791660948475853000-prose-r1",
+    "n": 3,
+    "medianMs": 28.157458066940308,
+    "minMs": 27.393583297729492,
+    "maxMs": 44.829874992370605
+  },
+  {
+    "fixture": "prose-65536.md",
+    "app": "comrak-cached-window-editfix",
+    "operation": "edit",
+    "experiment": "comrak-cached-window-editfix-1791660948475853000-prose-r2",
+    "n": 3,
+    "medianMs": 30.22683358192444,
+    "minMs": 29.55150008201599,
+    "maxMs": 31.79337501525879
+  },
+  {
+    "fixture": "prose-65536.md",
+    "app": "comrak-cached-window-editfix",
+    "operation": "edit",
+    "experiment": "comrak-cached-window-editfix-1791660948475853000-prose-r3",
+    "n": 3,
+    "medianMs": 32.34712505340576,
+    "minMs": 30.176291704177856,
+    "maxMs": 46.97112512588501
+  },
+  {
+    "fixture": "prose-65536.md",
+    "app": "comrak-cached-window-editfix",
+    "operation": "open",
+    "experiment": "comrak-cached-window-editfix-1791660948475853000-prose-r1",
+    "n": 1,
+    "medianMs": 122.57187509536743,
+    "minMs": 122.57187509536743,
+    "maxMs": 122.57187509536743
+  },
+  {
+    "fixture": "prose-65536.md",
+    "app": "comrak-cached-window-editfix",
+    "operation": "open",
+    "experiment": "comrak-cached-window-editfix-1791660948475853000-prose-r2",
+    "n": 1,
+    "medianMs": 124.93258333206177,
+    "minMs": 124.93258333206177,
+    "maxMs": 124.93258333206177
+  },
+  {
+    "fixture": "prose-65536.md",
+    "app": "comrak-cached-window-editfix",
+    "operation": "open",
+    "experiment": "comrak-cached-window-editfix-1791660948475853000-prose-r3",
+    "n": 1,
+    "medianMs": 120.36183309555054,
+    "minMs": 120.36183309555054,
+    "maxMs": 120.36183309555054
+  },
+  {
+    "fixture": "prose-65536.md",
     "app": "comrak-clean-restored",
     "operation": "edit",
     "experiment": "ab-comrak-viewport-final-vs-comrak-clean-restored-1791649423973895000-prose-pair1",
@@ -2658,6 +3198,26 @@
     "medianMs": 100.19916653633118,
     "minMs": 100.19916653633118,
     "maxMs": 100.19916653633118
+  },
+  {
+    "fixture": "prose-65536.md",
+    "app": "comrak-complete-dom",
+    "operation": "edit",
+    "experiment": "comrak-complete-dom-1791662863189459000-prose-r1",
+    "n": 3,
+    "medianMs": 75.1210834980011,
+    "minMs": 59.72541666030884,
+    "maxMs": 89.50154185295105
+  },
+  {
+    "fixture": "prose-65536.md",
+    "app": "comrak-complete-dom",
+    "operation": "open",
+    "experiment": "comrak-complete-dom-1791662863189459000-prose-r1",
+    "n": 1,
+    "medianMs": 163.16970825195312,
+    "minMs": 163.16970825195312,
+    "maxMs": 163.16970825195312
   },
   {
     "fixture": "prose-65536.md",
@@ -4840,6 +5400,186 @@
     "maxMs": 219.89962482452393
   },
   {
+    "fixture": "prose-65536.md",
+    "app": "ultralight-bounded",
+    "operation": "edit",
+    "experiment": "ultralight-bounded-1791698871174844000-prose-r1",
+    "n": 3,
+    "medianMs": 35.012333393096924,
+    "minMs": 16.507833242416382,
+    "maxMs": 47.18816661834717
+  },
+  {
+    "fixture": "prose-65536.md",
+    "app": "ultralight-bounded",
+    "operation": "edit",
+    "experiment": "ultralight-bounded-1791698871174844000-prose-r2",
+    "n": 3,
+    "medianMs": 28.59975004196167,
+    "minMs": 14.675125122070312,
+    "maxMs": 33.94012498855591
+  },
+  {
+    "fixture": "prose-65536.md",
+    "app": "ultralight-bounded",
+    "operation": "edit",
+    "experiment": "ultralight-bounded-1791698871174844000-prose-r3",
+    "n": 3,
+    "medianMs": 37.84487509727478,
+    "minMs": 23.16966676712036,
+    "maxMs": 49.444541692733765
+  },
+  {
+    "fixture": "prose-65536.md",
+    "app": "ultralight-bounded",
+    "operation": "open",
+    "experiment": "ultralight-bounded-1791698871174844000-prose-r1",
+    "n": 1,
+    "medianMs": 140.47258353233337,
+    "minMs": 140.47258353233337,
+    "maxMs": 140.47258353233337
+  },
+  {
+    "fixture": "prose-65536.md",
+    "app": "ultralight-bounded",
+    "operation": "open",
+    "experiment": "ultralight-bounded-1791698871174844000-prose-r2",
+    "n": 1,
+    "medianMs": 53.79474997520447,
+    "minMs": 53.79474997520447,
+    "maxMs": 53.79474997520447
+  },
+  {
+    "fixture": "prose-65536.md",
+    "app": "ultralight-bounded",
+    "operation": "open",
+    "experiment": "ultralight-bounded-1791698871174844000-prose-r3",
+    "n": 1,
+    "medianMs": 92.08175015449524,
+    "minMs": 92.08175015449524,
+    "maxMs": 92.08175015449524
+  },
+  {
+    "fixture": "prose-8388608.md",
+    "app": "comrak-cached-window",
+    "operation": "edit",
+    "experiment": "comrak-cached-window-1791659951998221000-prose-r1",
+    "n": 3,
+    "medianMs": 224.18220829963684,
+    "minMs": 210.79270839691162,
+    "maxMs": 243.63808345794678
+  },
+  {
+    "fixture": "prose-8388608.md",
+    "app": "comrak-cached-window",
+    "operation": "edit",
+    "experiment": "comrak-cached-window-1791659951998221000-prose-r2",
+    "n": 3,
+    "medianMs": 224.7546248435974,
+    "minMs": 198.59475016593933,
+    "maxMs": 242.09862518310547
+  },
+  {
+    "fixture": "prose-8388608.md",
+    "app": "comrak-cached-window",
+    "operation": "edit",
+    "experiment": "comrak-cached-window-1791659951998221000-prose-r3",
+    "n": 3,
+    "medianMs": 226.41687488555908,
+    "minMs": 203.53787517547607,
+    "maxMs": 242.84245824813843
+  },
+  {
+    "fixture": "prose-8388608.md",
+    "app": "comrak-cached-window",
+    "operation": "open",
+    "experiment": "comrak-cached-window-1791659951998221000-prose-r1",
+    "n": 1,
+    "medianMs": 362.33300018310547,
+    "minMs": 362.33300018310547,
+    "maxMs": 362.33300018310547
+  },
+  {
+    "fixture": "prose-8388608.md",
+    "app": "comrak-cached-window",
+    "operation": "open",
+    "experiment": "comrak-cached-window-1791659951998221000-prose-r2",
+    "n": 1,
+    "medianMs": 366.12870812416077,
+    "minMs": 366.12870812416077,
+    "maxMs": 366.12870812416077
+  },
+  {
+    "fixture": "prose-8388608.md",
+    "app": "comrak-cached-window",
+    "operation": "open",
+    "experiment": "comrak-cached-window-1791659951998221000-prose-r3",
+    "n": 1,
+    "medianMs": 357.936083316803,
+    "minMs": 357.936083316803,
+    "maxMs": 357.936083316803
+  },
+  {
+    "fixture": "prose-8388608.md",
+    "app": "comrak-cached-window-editfix",
+    "operation": "edit",
+    "experiment": "comrak-cached-window-editfix-1791660995477872000-prose-r1",
+    "n": 3,
+    "medianMs": 205.11825013160706,
+    "minMs": 187.07029175758362,
+    "maxMs": 211.72195839881897
+  },
+  {
+    "fixture": "prose-8388608.md",
+    "app": "comrak-cached-window-editfix",
+    "operation": "edit",
+    "experiment": "comrak-cached-window-editfix-1791660995477872000-prose-r2",
+    "n": 3,
+    "medianMs": 193.9965000152588,
+    "minMs": 187.05554151535034,
+    "maxMs": 266.366375207901
+  },
+  {
+    "fixture": "prose-8388608.md",
+    "app": "comrak-cached-window-editfix",
+    "operation": "edit",
+    "experiment": "comrak-cached-window-editfix-1791660995477872000-prose-r3",
+    "n": 3,
+    "medianMs": 194.32874989509583,
+    "minMs": 186.69162487983704,
+    "maxMs": 213.393000125885
+  },
+  {
+    "fixture": "prose-8388608.md",
+    "app": "comrak-cached-window-editfix",
+    "operation": "open",
+    "experiment": "comrak-cached-window-editfix-1791660995477872000-prose-r1",
+    "n": 1,
+    "medianMs": 390.24595832824707,
+    "minMs": 390.24595832824707,
+    "maxMs": 390.24595832824707
+  },
+  {
+    "fixture": "prose-8388608.md",
+    "app": "comrak-cached-window-editfix",
+    "operation": "open",
+    "experiment": "comrak-cached-window-editfix-1791660995477872000-prose-r2",
+    "n": 1,
+    "medianMs": 393.4472916126251,
+    "minMs": 393.4472916126251,
+    "maxMs": 393.4472916126251
+  },
+  {
+    "fixture": "prose-8388608.md",
+    "app": "comrak-cached-window-editfix",
+    "operation": "open",
+    "experiment": "comrak-cached-window-editfix-1791660995477872000-prose-r3",
+    "n": 1,
+    "medianMs": 370.15645837783813,
+    "minMs": 370.15645837783813,
+    "maxMs": 370.15645837783813
+  },
+  {
     "fixture": "prose-8388608.md",
     "app": "comrak-clean-restored",
     "operation": "edit",
@@ -4898,6 +5638,26 @@
     "medianMs": 375.2476668357849,
     "minMs": 375.2476668357849,
     "maxMs": 375.2476668357849
+  },
+  {
+    "fixture": "prose-8388608.md",
+    "app": "comrak-complete-dom",
+    "operation": "edit",
+    "experiment": "comrak-complete-dom-1791662863189459000-prose-r1",
+    "n": 3,
+    "medianMs": 177.9918749332428,
+    "minMs": 169.03037476539612,
+    "maxMs": 180.55241680145264
+  },
+  {
+    "fixture": "prose-8388608.md",
+    "app": "comrak-complete-dom",
+    "operation": "open",
+    "experiment": "comrak-complete-dom-1791662863189459000-prose-r1",
+    "n": 1,
+    "medianMs": 375.1064167022705,
+    "minMs": 375.1064167022705,
+    "maxMs": 375.1064167022705
   },
   {
     "fixture": "prose-8388608.md",
@@ -7618,6 +8378,66 @@
     "medianMs": 357.60758328437805,
     "minMs": 357.60758328437805,
     "maxMs": 357.60758328437805
+  },
+  {
+    "fixture": "prose-8388608.md",
+    "app": "ultralight-bounded",
+    "operation": "edit",
+    "experiment": "ultralight-bounded-1791698871174844000-prose-r1",
+    "n": 3,
+    "medianMs": 208.08291673660278,
+    "minMs": 195.5760416984558,
+    "maxMs": 239.9430000782013
+  },
+  {
+    "fixture": "prose-8388608.md",
+    "app": "ultralight-bounded",
+    "operation": "edit",
+    "experiment": "ultralight-bounded-1791698871174844000-prose-r2",
+    "n": 3,
+    "medianMs": 204.8163332939148,
+    "minMs": 196.41529154777527,
+    "maxMs": 205.46066641807556
+  },
+  {
+    "fixture": "prose-8388608.md",
+    "app": "ultralight-bounded",
+    "operation": "edit",
+    "experiment": "ultralight-bounded-1791698871174844000-prose-r3",
+    "n": 3,
+    "medianMs": 211.72858333587646,
+    "minMs": 193.69708347320557,
+    "maxMs": 227.8950834274292
+  },
+  {
+    "fixture": "prose-8388608.md",
+    "app": "ultralight-bounded",
+    "operation": "open",
+    "experiment": "ultralight-bounded-1791698871174844000-prose-r1",
+    "n": 1,
+    "medianMs": 355.95250034332275,
+    "minMs": 355.95250034332275,
+    "maxMs": 355.95250034332275
+  },
+  {
+    "fixture": "prose-8388608.md",
+    "app": "ultralight-bounded",
+    "operation": "open",
+    "experiment": "ultralight-bounded-1791698871174844000-prose-r2",
+    "n": 1,
+    "medianMs": 390.1642916202545,
+    "minMs": 390.1642916202545,
+    "maxMs": 390.1642916202545
+  },
+  {
+    "fixture": "prose-8388608.md",
+    "app": "ultralight-bounded",
+    "operation": "open",
+    "experiment": "ultralight-bounded-1791698871174844000-prose-r3",
+    "n": 1,
+    "medianMs": 359.83570861816406,
+    "minMs": 359.83570861816406,
+    "maxMs": 359.83570861816406
   },
   {
     "fixture": "sparse-prose-1048576.md",
