@@ -9,19 +9,10 @@ public struct HTMLPreviewGeometry: Equatable, Sendable {
         public let height:CGFloat
         public let landmark:CGFloat?
     }
-    public let measurement:Int
     public let width:CGFloat
     public let height:CGFloat
     public let items:[Item]
 }
-
-#if DEBUG
-public struct HTMLPreviewSnapshotConfiguration:Sendable {
-    public var rect:NSRect
-    public var afterScreenUpdates:Bool
-    public init(rect:NSRect,afterScreenUpdates:Bool) {self.rect=rect;self.afterScreenUpdates=afterScreenUpdates}
-}
-#endif
 
 /// The complete HTML-engine boundary for AstraMarkdown. The rest of the app
 /// supplies retained semantic entries and consumes geometry plus pixels; it
@@ -82,8 +73,11 @@ public struct HTMLPreviewSnapshotConfiguration:Sendable {
         if let value=ProcessInfo.processInfo.environment["ASTRA_ULTRALIGHT_SDK"] {return URL(fileURLWithPath:value)}
         if let resources=Bundle.main.resourceURL?.appendingPathComponent("Ultralight"),
            FileManager.default.fileExists(atPath:resources.appendingPathComponent("resources/icudt67l.dat").path) {return resources}
-        return URL(fileURLWithPath:FileManager.default.currentDirectoryPath)
-            .appendingPathComponent("research/2026-10-11/html-renderer-benchmark/third_party/ultralight")
+        let vendor=URL(fileURLWithPath:FileManager.default.currentDirectoryPath)
+            .appendingPathComponent("Vendor/Ultralight")
+        precondition(FileManager.default.fileExists(atPath:vendor.appendingPathComponent("resources/icudt67l.dat").path),
+            "Ultralight runtime not found; bundle the runtime or set ASTRA_ULTRALIGHT_SDK")
+        return vendor
     }
 
     public func present(_ next:[RenderedEntry],fontSize:CGFloat,baseURL:URL?=nil)->HTMLPreviewGeometry? {
@@ -104,23 +98,6 @@ public struct HTMLPreviewSnapshotConfiguration:Sendable {
         return geometry()
     }
 
-    public func patch(_ replacements:[(index:Int,entry:RenderedEntry)])->HTMLPreviewGeometry? {
-        guard let engine else{return nil}
-        for replacement in replacements {
-            guard replacement.index>=0,replacement.index<entries.count,
-                  let html=replacement.entry.fragment.html else{return nil}
-            let resolved=resolveAssets(in:html,baseURL:baseURL)
-            let success=replacement.entry.id.withCString {id in resolved.withCString {body in
-                astra_ul_surface_patch_entry(engine,replacement.index,id,body)
-            }}
-            guard success else{return nil}
-            entries[replacement.index]=replacement.entry
-        }
-        didRender()
-        refreshImage()
-        return geometry()
-    }
-
     public func geometry()->HTMLPreviewGeometry? {
         guard let engine else{return nil}
         var value=AstraULGeometry()
@@ -132,8 +109,7 @@ public struct HTMLPreviewSnapshotConfiguration:Sendable {
             items.append(.init(id:entries[index].id,y:item.y,height:item.height,
                 landmark:item.has_landmark ? item.landmark_y:nil))
         }
-        return HTMLPreviewGeometry(measurement:Int(value.measurement),width:value.width,
-            height:value.height,items:items)
+        return HTMLPreviewGeometry(width:value.width,height:value.height,items:items)
     }
 
     private func resolveAssets(in html:String,baseURL:URL?)->String {
@@ -267,14 +243,6 @@ public struct HTMLPreviewSnapshotConfiguration:Sendable {
     }
 
     #if DEBUG
-    /// Transitional hook for explicitly selected legacy integration tests.
-    /// The default integration path uses renderer-neutral native probes.
-    public func evaluateJavaScript(_ script:String,completionHandler:((Any?,Error?)->Void)?=nil) {
-        let error=NSError(domain:"AstraMarkdown.HTMLPreview",code:1,
-            userInfo:[NSLocalizedDescriptionKey:"JavaScript probes are unavailable in the Ultralight preview module"])
-        completionHandler?(nil,error)
-    }
-
     public var debugText:String {
         guard let engine,let raw=astra_ul_surface_text(engine) else{return ""}
         defer {astra_ul_string_free(raw)};return String(cString:raw)
@@ -293,18 +261,6 @@ public struct HTMLPreviewSnapshotConfiguration:Sendable {
         return found ? NSRect(x:x,y:y,width:width,height:height):nil
     }
 
-    public func takeSnapshot(with configuration:HTMLPreviewSnapshotConfiguration,completionHandler:@escaping(NSImage?,Error?)->Void) {
-        guard let image else {
-            completionHandler(nil,NSError(domain:"AstraMarkdown.HTMLPreview",code:2,
-                userInfo:[NSLocalizedDescriptionKey:"Preview has no painted frame"]));return
-        }
-        let full=NSImage(cgImage:image,size:bounds.size)
-        guard configuration.rect != bounds,let cg=full.cgImage(forProposedRect:nil,context:nil,hints:nil),
-              let cropped=cg.cropping(to:NSRect(x:configuration.rect.minX,
-                y:bounds.height-configuration.rect.maxY,width:configuration.rect.width,
-                height:configuration.rect.height)) else {completionHandler(full,nil);return}
-        completionHandler(NSImage(cgImage:cropped,size:configuration.rect.size),nil)
-    }
     #endif
 
     public override func scrollWheel(with event:NSEvent) {

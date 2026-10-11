@@ -35,14 +35,8 @@ final class EditorWindowController: NSWindowController, NSSplitViewDelegate, NSS
     private var openingRequested=false
     private var hasShownWindow=false
     #if DEBUG
-    // Debug checks can stop preparation at an exact source boundary.
-    var scheduleBackgroundPreparation: (@escaping ()->Void)->Void = { work in
-        DispatchQueue.main.asyncAfter(deadline:.now()+0.005,execute:work)
-    }
-    private(set) var parserRequests=0
-    var cachedPageCount:Int {preparedDocument.count}
+    var cachedBlockCount:Int {preparedDocument.count}
     var cachedByteCost:Int {preparedDocument.byteCost}
-    var hasCompleteSourceLayout:Bool {source.hasCompletePreparedLayout}
     var hasPreparedViewport:Bool {
         guard source.hasMeasuredLayout else{return false}
         let visible=source.visibleSourceRange
@@ -51,11 +45,7 @@ final class EditorWindowController: NSWindowController, NSSplitViewDelegate, NSS
     }
     #endif
     private func enqueueBackgroundPreparation(_ work:@escaping ()->Void) {
-        #if DEBUG
-        scheduleBackgroundPreparation(work)
-        #else
         DispatchQueue.main.asyncAfter(deadline:.now()+0.005,execute:work)
-        #endif
     }
     var hasPreparedDocument:Bool {preparedDocument.revision==markdownDocument.revision && preparedDocument.firstUnpreparedOffset(from:0)>=markdownDocument.source.count}
     private var markdownDocument: MarkdownDocument { document as! MarkdownDocument }
@@ -213,7 +203,7 @@ final class EditorWindowController: NSWindowController, NSSplitViewDelegate, NSS
         guard !isClosed else{return}
         #if DEBUG
         let work=TimingDiagnostics.shared.begin("viewport.prepare")
-        defer {TimingDiagnostics.shared.end(work,values:["revision":Double(markdownDocument.revision),"cachePages":Double(preparedDocument.count)])}
+        defer {TimingDiagnostics.shared.end(work,values:["revision":Double(markdownDocument.revision),"cachedBlocks":Double(preparedDocument.count)])}
         #endif
         viewportScheduled = false
         guard let visible = pendingViewport else { return }; pendingViewport = nil
@@ -241,9 +231,6 @@ final class EditorWindowController: NSWindowController, NSSplitViewDelegate, NSS
         lastRequest = (doc.revision,range)
         let cached=preparedDocument.revision==doc.revision ? preparedDocument.entries(covering:range):nil
         let revision = doc.revision
-        #if DEBUG
-        parserRequests += 1
-        #endif
         doc.parser.request(rope:rope,revision:revision,visible:range,renderHTML:cached==nil,includeFragments:cached==nil) { [weak self] result in
             guard let self,!self.isClosed, self.markdownDocument.revision == revision, self.lastRequest?.0 == revision, self.lastRequest?.1 == range else { return }
             switch result {
@@ -293,7 +280,10 @@ final class EditorWindowController: NSWindowController, NSSplitViewDelegate, NSS
                 else {self.showPreparedDocument(revision:revision)}
                 self.source.needsLayout = true
                 self.prepareDocument(rope:rope,revision:revision)
-            case .failure(let error): NSLog("Markdown parsing failed: %@",error.localizedDescription)
+            case .failure(let error):
+                // A failed request must not permanently suppress this range.
+                self.lastRequest=nil
+                NSLog("Markdown parsing failed: %@",error.localizedDescription)
             }
         }
     }
@@ -371,7 +361,10 @@ final class EditorWindowController: NSWindowController, NSSplitViewDelegate, NSS
                 self.preparedDocument.store(parsed,range:range)
                 let next=NSMaxRange(range)
                 self.enqueueBackgroundPreparation { [weak self] in self?.prepareBatch(rope:rope,revision:revision,from:max(from+1,next)) }
-            case .failure(let error):NSLog("Background preview preparation failed: %@",error.localizedDescription)
+            case .failure(let error):
+                // Let the next foreground success restart background filling.
+                self.backgroundRevision = -1
+                NSLog("Background preview preparation failed: %@",error.localizedDescription)
             }
         }
     }

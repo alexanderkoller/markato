@@ -79,8 +79,6 @@ final class SourceEditor:NSView,NSTextViewDelegate,NSTextStorageDelegate,ScrollS
         let range:NSRange,rect:NSRect
     }
     #if DEBUG
-    private(set) var highlightApplications=0
-    var preparedLayoutLength:Int {prepared.sourceLayout.length}
     var debugFirstLineViewportY:CGFloat {
         guard textView.string.count>0 else{return textView.frame.minY+textView.textContainerInset.height-scroll.contentView.bounds.minY}
         let glyph=textView.layoutManager!.glyphIndexForCharacter(at:0)
@@ -234,7 +232,8 @@ final class SourceEditor:NSView,NSTextViewDelegate,NSTextStorageDelegate,ScrollS
     private func updateDimensions() {
         #if DEBUG
         let work=TimingDiagnostics.shared.begin("source.layout")
-        defer {TimingDiagnostics.shared.end(work,values:["documentCharacters":Double(document.source.count),"width":Double(scroll.contentSize.width)])}
+        var timingValues=["documentCharacters":Double(document.source.count),"width":Double(scroll.contentSize.width)]
+        defer {TimingDiagnostics.shared.end(work,values:timingValues)}
         #endif
         let width=max(1,scroll.contentSize.width-32)
         if abs(width-measuredWidth)>0.001 {
@@ -291,7 +290,8 @@ final class SourceEditor:NSView,NSTextViewDelegate,NSTextStorageDelegate,ScrollS
         }
         self.dirtyRange=nil
         #if DEBUG
-        TimingDiagnostics.shared.reported("source.layout.lines",milliseconds:0,values:["measured":Double(lines.count),"retainedCharacters":Double(prepared.sourceLayout.length-lines.reduce(0){$0+$1.length})])
+        timingValues["measuredLines"]=Double(lines.count)
+        timingValues["retainedCharacters"]=Double(prepared.sourceLayout.length-lines.reduce(0){$0+$1.length})
         #endif
         let frameHeight:CGFloat
         if replacingCompleteIndex {
@@ -542,22 +542,6 @@ final class SourceEditor:NSView,NSTextViewDelegate,NSTextStorageDelegate,ScrollS
         dirtyRange=rope.lines(0,min(rope.lineCount,80))
         relayoutPreservingViewport {}
     }
-    #if DEBUG
-    /// The exhaustive integration check freezes one complete source/preview
-    /// coordinate frame before testing the calibrated scrolling equations.
-    var hasCompletePreparedLayout:Bool {
-        let whole=NSRange(location:0,length:prepared.sourceLayout.length)
-        return !prepared.sourceLayout.hasEstimates(in:whole)
-    }
-    @discardableResult func completePreparedLayout()->Bool {
-        let whole=NSRange(location:0,length:prepared.sourceLayout.length)
-        guard whole.length>0,prepared.sourceLayout.hasEstimates(in:whole) else{return true}
-        guard nativeLayoutRevision==nil,!localEdit,!isScrolling else{return false}
-        dirtyRange=whole
-        relayoutPreservingViewport {}
-        return true
-    }
-    #endif
     func applyHighlights(_ spans:[SyntaxSpan],in requestedRange:NSRange) {
         // Syntax colors are temporary layout-manager attributes and cannot
         // change glyph metrics. Apply them while scrolling so the newly visible
@@ -582,7 +566,6 @@ final class SourceEditor:NSView,NSTextViewDelegate,NSTextStorageDelegate,ScrollS
         }
         guard !changes.isEmpty else{return}
         #if DEBUG
-        highlightApplications += 1
         let work=TimingDiagnostics.shared.begin("source.highlight")
         defer {TimingDiagnostics.shared.end(work,values:["spans":Double(changes.reduce(0){$0+$1.0.count}),"batches":Double(changes.count)])}
         #endif

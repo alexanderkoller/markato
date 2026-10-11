@@ -82,8 +82,18 @@ struct Region {
     shift: isize,
 }
 
-fn shifted(offset: usize, edit: Edit) -> usize {
+fn shifted_start(offset: usize, edit: Edit) -> usize {
     if offset <= edit.from {
+        offset
+    } else if offset >= edit.to {
+        offset.saturating_add_signed(edit.inserted as isize - (edit.to - edit.from) as isize)
+    } else {
+        edit.from
+    }
+}
+
+fn shifted_end(offset: usize, edit: Edit) -> usize {
+    if offset < edit.from {
         offset
     } else if offset >= edit.to {
         offset.saturating_add_signed(edit.inserted as isize - (edit.to - edit.from) as isize)
@@ -123,8 +133,8 @@ fn edit_region(document: &Document, edits: &[Edit]) -> Option<Region> {
         last,
         first_owner,
         last_owner,
-        new_from: shifted(old_from, edit),
-        new_to: shifted(old_to, edit),
+        new_from: shifted_start(old_from, edit),
+        new_to: shifted_end(old_to, edit),
         shift: edit.inserted as isize - (edit.to - edit.from) as isize,
     })
 }
@@ -747,13 +757,11 @@ struct Fragment<'a> {
     kind: &'a str,
     from: usize,
     to: usize,
-    markdown: &'a str,
     html: Option<&'a str>,
 }
 #[derive(Serialize)]
 struct Response<'a> {
     revision: i64,
-    complete: bool,
     spans: Vec<Span>,
     fragments: Vec<Fragment<'a>>,
     blocks: Option<Vec<Manifest<'a>>>,
@@ -813,7 +821,6 @@ fn query(
                 kind: &b.kind,
                 from: b.from,
                 to: b.to,
-                markdown: &b.markdown,
                 html: html.then_some(&b.html),
             })
             .collect()
@@ -846,7 +853,6 @@ fn query(
     });
     serde_json::to_string(&Response {
         revision,
-        complete: false,
         spans,
         fragments,
         blocks,
@@ -971,8 +977,8 @@ fn update_region(
             if used[relative] {
                 continue;
             }
-            let from = shifted(prior.from, edit);
-            let to = shifted(prior.to, edit);
+            let from = shifted_start(prior.from, edit);
+            let to = shifted_end(prior.to, edit);
             if from == block.from
                 && to == block.to
                 && prior.kind == block.kind

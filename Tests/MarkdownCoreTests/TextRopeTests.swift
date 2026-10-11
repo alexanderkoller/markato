@@ -34,7 +34,7 @@ import Testing
     let result: ParseResult = try await withCheckedThrowingContinuation { continuation in
         worker.request(rope:source, revision:0, visible:NSRange(location:0,length:80)) { continuation.resume(with:$0) }
     }
-    #expect(result.complete==false && result.blocks?.count==1000)
+    #expect(result.blocks?.count==1000)
     #expect(result.fragments.count<10)
     #expect(result.fragments.allSatisfy{$0.from<80})
     #expect(result.spans.contains{$0.kind == "StrongEmphasis"})

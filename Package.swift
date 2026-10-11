@@ -3,10 +3,7 @@ import Foundation
 import PackageDescription
 
 let vendoredUltralightSDK = Context.packageDirectory + "/Vendor/Ultralight"
-let experimentUltralightSDK = Context.packageDirectory + "/research/2026-10-11/html-renderer-benchmark/third_party/ultralight"
-let defaultUltralightSDK = FileManager.default.fileExists(atPath:vendoredUltralightSDK + "/include")
-    ? vendoredUltralightSDK : experimentUltralightSDK
-let ultralightSDK = ProcessInfo.processInfo.environment["ASTRA_ULTRALIGHT_SDK"] ?? defaultUltralightSDK
+let ultralightSDK = ProcessInfo.processInfo.environment["ASTRA_ULTRALIGHT_SDK"] ?? vendoredUltralightSDK
 
 let package = Package(
     name: "AstraMarkdown",

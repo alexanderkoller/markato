@@ -55,7 +55,7 @@ func exportProfileRecording(_ path:UnsafePointer<CChar>) {
                 metadata["previewWidth"]=String(Double(editor.preview.bounds.width))
                 metadata["previewHeight"]=String(Double(editor.preview.bounds.height))
                 metadata["mountedFragments"]=String(editor.preview.preparedFragmentCount)
-                metadata["cachedPages"]=String(editor.cachedPageCount)
+                metadata["cachedBlocks"]=String(editor.cachedBlockCount)
                 metadata["cacheBytes"]=String(editor.cachedByteCost)
             }
             let reportMetadata=metadata

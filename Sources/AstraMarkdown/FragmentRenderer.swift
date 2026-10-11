@@ -23,10 +23,6 @@ private final class PreviewClipView:NSClipView {
     let web:HTMLPreviewView
     var ready=false
     var request:PreviewRequest?
-    var observed:PreviewGeometry?
-    var preparedContent:PreviewContent?
-    var preparedAssetBase:String?
-    var ignoresGeometry=false
     private(set) var logicalOrigin:CGFloat=0
     private var localOrigin:CGFloat?
     private(set) var windowTop:CGFloat=0
@@ -104,34 +100,12 @@ private struct PreviewGeometry:Equatable {
         let height:CGFloat
         let landmark:CGFloat?
     }
-    let requestID:Int
-    let measurement:Int
     let width:CGFloat
     let height:CGFloat
     let items:[Item]
-    init?(_ value:Any?,request:PreviewRequest) {
-        guard let object=value as? [String:Any],let id=object["revision"] as? Int,id==request.id,
-              let measurement=object["measurement"] as? Int,measurement>=0,
-              let width=object["width"] as? Double,width.isFinite,abs(width-Double(request.width))<=1,
-              let height=object["height"] as? Double,height.isFinite,height>=0,
-              let raw=object["items"] as? [[String:Any]],raw.count==request.entries.count else{return nil}
-        var items=[Item]()
-        for (object,entry) in zip(raw,request.entries) {
-            guard let id=object["id"] as? String,id==entry.id,
-                  let y=object["y"] as? Double,y.isFinite,
-                  let h=object["height"] as? Double,h.isFinite,h>=0 else{return nil}
-            let reference=object["landmarkY"] as? Double
-            guard reference?.isFinite != false else{return nil}
-            items.append(Item(id:id,y:CGFloat(y),height:CGFloat(h),landmark:reference.map{CGFloat($0)}))
-        }
-        requestID=id;self.measurement=measurement;self.width=CGFloat(width);self.height=CGFloat(height);self.items=items
-    }
-    init(_ value:HTMLPreviewGeometry,request:PreviewRequest) {
-        requestID=request.id;measurement=value.measurement;width=value.width;height=value.height
+    init(_ value:HTMLPreviewGeometry) {
+        width=value.width;height=value.height
         items=value.items.map{Item(id:$0.id,y:$0.y,height:$0.height,landmark:$0.landmark)}
-    }
-    func sameLayout(as other:PreviewGeometry)->Bool {
-        requestID==other.requestID && width==other.width && height==other.height && items==other.items
     }
 }
 
@@ -196,7 +170,6 @@ private struct CommittedPresentation {
         return committed.request.revision
     }
     var preparedFragmentCount:Int {committed?.request.entries.count ?? 0}
-    var hasPendingContent:Bool {committed?.request.entries.contains{$0.fragment.kind=="Pending"} == true}
     var displayedDocumentRevision:Int {committed?.request.revision ?? -1}
     var displaysCompleteDocument:Bool {
         guard let content=committed?.request.content else{return false}
@@ -256,9 +229,6 @@ private struct CommittedPresentation {
     }
     #if DEBUG
     private(set) var patchCount=0
-    var scrollLandmarkCount:Int {committed?.map?.points.count ?? 0}
-    var semanticLandmarkOffsets:[Int] {committed?.map?.points.filter{!$0.boundary}.map(\.offset) ?? []}
-    var debugScrollLandmarks:[ScrollLandmark] {committed?.map?.points ?? []}
     #endif
     override init(frame:NSRect) {
         func makeSurface()->PreviewSurface {PreviewSurface(web:HTMLPreviewView(frame:.zero))}
@@ -350,21 +320,6 @@ private struct CommittedPresentation {
         resizePinnedOrigin=nil;resizePinnedSourceOrigin=nil
         endScrollGesture();version += 1;content=nil;desired=nil;updateLoadingState()
     }
-    /// Apply an equal-cardinality manifest splice immediately to the complete
-    /// displayed DOM. Its old geometry/map remain the last committed snapshot;
-    /// the caller follows with a normal full measurement and commit.
-    func patchCompleteDocument(_ change:PreparedBlockChange,entries:[(index:Int,entry:RenderedEntry)],completion:@escaping(Bool)->Void) {
-        guard let committed,displaysCompleteDocument,rendering==nil,
-              change.prefix+change.suffix<=committed.request.entries.count,
-              committed.request.entries.count-change.prefix-change.suffix==change.blocks.count else {
-            completion(false);return
-        }
-        let surface=committed.surface
-        surface.ignoresGeometry=true
-        let geometry=surface.web.patch(entries)
-        surface.observed=geometry.map{PreviewGeometry($0,request:committed.request)}
-        completion(geometry != nil)
-    }
     func show(_ result:ParseResult) {
         let existing=Dictionary((content?.entries ?? []).map{($0.fragment.from,$0.id)},uniquingKeysWith:{first,_ in first})
         show(result.fragments.map{RenderedEntry(id:$0.id ?? existing[$0.from] ?? UUID().uuidString,fragment:$0)},revision:result.revision)
@@ -449,8 +404,7 @@ private struct CommittedPresentation {
         }
         let displayedPatch=displayedPatch(request)
         let surface:PreviewSurface
-        if canExtendDisplayedDocument(request) ||
-            (displayedPatch != nil && committed?.surface.ignoresGeometry != true) {surface=displayed}
+        if canExtendDisplayedDocument(request) || displayedPatch != nil {surface=displayed}
         else if let ready=surfaces.first(where:{$0.ready && $0 !== committed?.surface}) {surface=ready}
         else {
             // Background cache growth is optional while the committed window
@@ -471,7 +425,7 @@ private struct CommittedPresentation {
         }
         rendering=request
         if surface !== committed?.surface {surface.setVisible(false)}
-        surface.request=request;surface.observed=nil;surface.ignoresGeometry=false
+        surface.request=request
         surface.size(contentHeight:max(1,committed?.totalHeight ?? 0),windowTop:committed?.windowTop ?? 0,
             windowHeight:committed?.geometry.height,width:request.width,viewportHeight:bounds.height)
         #if DEBUG
@@ -481,8 +435,7 @@ private struct CommittedPresentation {
         guard isCurrent(request,surface:surface),let measured=surface.web.present(request.entries,fontSize:request.fontSize,baseURL:request.baseURL) else {
             finishPreparation(request);return
         }
-        surface.preparedContent=request.content;surface.preparedAssetBase=request.baseURL?.absoluteString ?? ""
-        let geometry=PreviewGeometry(measured,request:request);surface.observed=geometry
+        let geometry=PreviewGeometry(measured)
         guard let position=presentationPosition(request,geometry:geometry) else {finishPreparation(request);return}
         surface.size(contentHeight:position.totalHeight,windowTop:position.windowTop,
             windowHeight:geometry.height,width:request.width,viewportHeight:bounds.height)
@@ -655,17 +608,6 @@ private struct CommittedPresentation {
         CATransaction.commit()
     }
     #if DEBUG
-    func webViewWebContentProcessDidTerminate(_ view:HTMLPreviewView) {
-        // Ultralight is in-process and has no WebContent process. Keep this
-        // hook until the old process-crash integration case is retired.
-        requestPresentation()
-    }
-    #endif
-    #if DEBUG
-    var debugAlignmentDrift:Double {
-        guard let committed,let source,let target=committed.map?.previewY(for:Double(source.viewportOrigin)) else{return 0}
-        return Double(visiblePreviewRange.lowerBound)-target
-    }
     var debugFirstHeadingViewportY:CGFloat? {
         guard let committed,let rect=committed.surface.web.debugRect("h1",containing:"AstraMarkdown") else{return nil}
         return committed.surface.web.frame.minY-committed.surface.clip.bounds.minY+rect.minY

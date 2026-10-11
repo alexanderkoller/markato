@@ -124,18 +124,4 @@ public struct TextRope: Sendable {
         return NSRange(location: a, length: max(0, b - a))
     }
     public var treeHeight: Int { root.height }
-    public func estimatedOffset(at y: Double, lineHeight: Double, columns: Double) -> Int {
-        let perCharacter = lineHeight / max(columns, 1)
-        func height(_ n: Node) -> Double { Double(n.breaks) * lineHeight + Double(n.count) * perCharacter }
-        func seek(_ n: Node, _ remaining: Double) -> Int {
-            switch n {
-            case .branch(let l, let r, _, _, _, _): return remaining < height(l) ? seek(l, remaining) : l.count + seek(r, remaining-height(l))
-            case .leaf(let a, _, _):
-                var used = 0.0
-                for (i,u) in a.enumerated() { used += perCharacter + (u == 10 ? lineHeight : 0); if used >= remaining { return i } }
-                return a.count
-            }
-        }
-        return seek(root, max(0,y))
-    }
 }

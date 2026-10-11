@@ -5,10 +5,6 @@ public struct RenderedEntry: Equatable, Sendable {
     public let fragment:PreviewFragment
     public init(id:String,fragment:PreviewFragment) { self.id=id;self.fragment=fragment }
 }
-public struct RenderedPage: Sendable {
-    public var range:NSRange
-    public var entries:[RenderedEntry]
-}
 public struct RenderedWindow: Sendable {
     public let range:NSRange
     public let entries:[RenderedEntry]
@@ -38,7 +34,7 @@ public final class PreparedDocument {
             guard delta != 0 else{return}
             block=PreparedBlock(id:block.id,kind:block.kind,from:block.from+delta,to:block.to+delta)
             start += delta;end += delta;firstGap=firstGap.map{$0+delta};lazyShift += delta
-            if let f=fragment {fragment=PreviewFragment(kind:f.kind,from:f.from+delta,to:f.to+delta,markdown:f.markdown,html:f.html,id:f.id)}
+            if let f=fragment {fragment=PreviewFragment(kind:f.kind,from:f.from+delta,to:f.to+delta,html:f.html,id:f.id)}
         }
         func push() {
             guard lazyShift != 0 else{return}
@@ -110,7 +106,7 @@ public final class PreparedDocument {
     public var count:Int {ordered.count}
     public var hasCompleteFragments:Bool {(root?.preparedCount ?? 0)==ordered.count}
     public var styleCoverage:[NSRange] {syntax.map(\.range)}
-    public var byteCost:Int {ordered.reduce(0){$0+($1.fragment?.markdown.utf8.count ?? 0)+($1.fragment?.html?.utf8.count ?? 0)}}
+    public var byteCost:Int {ordered.reduce(0){$0+($1.fragment?.html?.utf8.count ?? 0)}}
     public init() {}
 
     private func build(_ items:[BlockNode],_ from:Int,_ to:Int)->BlockNode? {
@@ -194,7 +190,7 @@ public final class PreparedDocument {
             let end=i==blocks.count-1 ? length:block.to
             let n=BlockNode(block,start:start,end:end)
             if let old=previous[block.id],let f=old.fragment {
-                n.fragment=PreviewFragment(kind:block.kind,from:block.from,to:block.to,markdown:f.markdown,html:f.html,id:block.id)
+                n.fragment=PreviewFragment(kind:block.kind,from:block.from,to:block.to,html:f.html,id:block.id)
                 n.previewHeight=old.previewHeight
             }
             if let old=previous[block.id] {
@@ -241,7 +237,7 @@ public final class PreparedDocument {
             let node=BlockNode(block,start:previousTo,end:isLast ? length:block.to)
             if let old=removedByID[block.id] {
                 materialize(old)
-                if let f=old.fragment {node.fragment=PreviewFragment(kind:block.kind,from:block.from,to:block.to,markdown:f.markdown,html:f.html,id:block.id)}
+                if let f=old.fragment {node.fragment=PreviewFragment(kind:block.kind,from:block.from,to:block.to,html:f.html,id:block.id)}
                 node.previewHeight=old.previewHeight
             }
             node.update();inserted.append(node);previousTo=block.to
@@ -355,23 +351,6 @@ public final class PreparedDocument {
         guard blocks.allSatisfy({$0.fragment != nil}) else{return nil}
         return blocks.map{RenderedEntry(id:$0.block.id,fragment:$0.fragment!)}
     }
-    /// Prepared entries in the manifest interval replaced by an edit. Missing
-    /// entries remain invalid and are filled by background preparation.
-    public func preparedEntries(for change:PreparedBlockChange)->[(index:Int,entry:RenderedEntry)] {
-        let end=ordered.count-change.suffix
-        guard change.prefix>=0,end>=change.prefix,end<=ordered.count else{return []}
-        return ordered[change.prefix..<end].enumerated().compactMap {offset,node in
-            guard node.fragment != nil else{return nil}
-            materialize(node)
-            return (change.prefix+offset,RenderedEntry(id:node.block.id,fragment:node.fragment!))
-        }
-    }
-    public func page(covering range:NSRange)->RenderedPage? {
-        let blocks=selected(range)
-        guard let first=blocks.first,let last=blocks.last,blocks.allSatisfy({$0.fragment != nil}) else{return nil}
-        return RenderedPage(range:NSRange(location:first.start,length:last.end-first.start),
-            entries:blocks.map{RenderedEntry(id:$0.block.id,fragment:$0.fragment!)})
-    }
     /// Returns cached blocks around a source viewport. The tree supplies the
     /// global preview extent; no document-sized placeholder enters the HTML engine.
     public func window(covering range:NSRange,before:Double,after:Double)->RenderedWindow? {
@@ -410,28 +389,6 @@ public final class PreparedDocument {
         return RenderedWindow(range:NSRange(location:first.start,length:last.end-first.start),
             entries:blocks.map{RenderedEntry(id:$0.block.id,fragment:$0.fragment!)},
             previewTop:16+top,previewHeight:32+(root?.previewSum ?? 0))
-    }
-    public var allPages:[RenderedPage] {
-        #if DEBUG
-        let work=TimingDiagnostics.shared.begin("prepared.all-pages")
-        defer {TimingDiagnostics.shared.end(work,values:["blocks":Double(ordered.count)])}
-        #endif
-        var pages=[RenderedPage]()
-        func visit(_ n:BlockNode?) {
-            guard let n,n.preparedCount>0 else{return}
-            n.push();visit(n.left)
-            if let fragment=n.fragment {
-            let entry=RenderedEntry(id:n.block.id,fragment:fragment)
-            let last=pages.count-1
-            if last>=0,NSMaxRange(pages[last].range)==n.start {
-                pages[last].range.length=n.end-pages[last].range.location
-                pages[last].entries.append(entry)
-            } else {pages.append(RenderedPage(range:NSRange(location:n.start,length:n.end-n.start),entries:[entry]))}
-            }
-            visit(n.right)
-        }
-        visit(root)
-        return pages
     }
     public func firstUnpreparedOffset(from position:Int)->Int {
         let htmlGap:Int

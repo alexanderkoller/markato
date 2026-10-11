@@ -79,7 +79,6 @@ struct AstraULSurface {
   dom::Document document;
   dom::Element root;
   bool ready = false;
-  uint64_t measurement = 0;
   std::vector<Entry> entries;
   std::vector<std::pair<std::string, std::string>> pending;
   double pending_font_size = 14;
@@ -148,7 +147,6 @@ struct AstraULSurface {
     auto html = document.documentElement();
     html.setAttribute("style", "font-size:" + std::to_string(pending_font_size) + "px");
     render();
-    ++measurement;
     return true;
   }
 };
@@ -164,13 +162,10 @@ AstraULSurface* astra_ul_surface_create(const char* sdk_root, const char* css,
 }
 
 void astra_ul_surface_destroy(AstraULSurface* surface) { delete surface; }
-bool astra_ul_surface_ready(AstraULSurface* surface) { return surface && surface->ready; }
-
 void astra_ul_surface_resize(AstraULSurface* surface, uint32_t width,
                              uint32_t height, double device_scale) {
   if (!surface) return;
   surface->view->Resize(std::max(1u, width), std::max(1u, height), device_scale);
-  ++surface->measurement;
 }
 
 bool astra_ul_surface_render(AstraULSurface* surface) {
@@ -197,25 +192,12 @@ bool astra_ul_surface_commit_update(AstraULSurface* surface) {
   return surface && surface->commit();
 }
 
-bool astra_ul_surface_patch_entry(AstraULSurface* surface, size_t index,
-                                  const char* id, const char* html) {
-  if (!surface || index >= surface->entries.size() ||
-      surface->entries[index].id != (id ? id : "")) return false;
-  auto& entry = surface->entries[index];
-  entry.html = html ? html : "";
-  entry.element.innerHTML = entry.html;
-  surface->render();
-  ++surface->measurement;
-  return true;
-}
-
 bool astra_ul_surface_geometry(AstraULSurface* surface,
                                AstraULGeometry* geometry) {
   if (!surface || !geometry || !surface->ready) return false;
   auto rect = surface->root.getBoundingClientRect();
   geometry->width = rect.width;
   geometry->height = surface->root.offsetHeight();
-  geometry->measurement = surface->measurement;
   geometry->item_count = surface->entries.size();
   return true;
 }

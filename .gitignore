@@ -5,3 +5,6 @@ Vendor/Ultralight/*
 !Vendor/Ultralight/README.md
 Parser/node_modules/
 *.xcodeproj/xcuserdata/
+/Native/Comrak/target/
+/default/
+__pycache__/

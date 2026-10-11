@@ -3,7 +3,7 @@ import Testing
 @testable import MarkdownCore
 
 private func prepared(_ id:String,_ from:Int,_ to:Int,_ text:String)->PreviewFragment {
-    PreviewFragment(kind:"Paragraph",from:from,to:to,markdown:text,html:"<p>\(text)</p>",id:id)
+    PreviewFragment(kind:"Paragraph",from:from,to:to,html:"<p>\(text)</p>",id:id)
 }
 @Test func sharedBlocksRetainHTMLAndMeasuredHeightsAcrossOffsetChanges() {
     let doc=PreparedDocument()
@@ -14,12 +14,12 @@ private func prepared(_ id:String,_ from:Int,_ to:Int,_ text:String)->PreviewFra
     #expect(doc.firstUnpreparedOffset(from:0)==13)
     #expect(doc.heights(for:"b")?.preview==30)
     doc.adopt([.init(id:"new",kind:"Paragraph",from:0,to:10),.init(id:"b",kind:"Paragraph",from:12,to:17)],revision:2,length:18)
-    #expect(doc.entries(covering:NSRange(location:12,length:5))?.first?.fragment.markdown=="last")
+    #expect(doc.entries(covering:NSRange(location:12,length:5))?.first?.fragment.html=="<p>last</p>")
     #expect(doc.entries(covering:NSRange(location:12,length:5))?.first?.fragment.from==12)
     #expect(doc.entries(covering:NSRange(location:0,length:10))==nil)
     #expect(doc.styles(in:NSRange(location:12,length:5))?.isEmpty==true)
     #expect(doc.heights(for:"b")?.preview==30)
-    #expect(doc.allPages.first?.range==NSRange(location:10,length:8))
+    #expect(doc.window(covering:NSRange(location:12,length:5),before:0,after:0)?.range==NSRange(location:10,length:8))
 }
 @Test func manifestSpliceRetainsUnaffectedNodesCachesAndShiftedCoordinates() {
     let doc=PreparedDocument()
@@ -32,8 +32,8 @@ private func prepared(_ id:String,_ from:Int,_ to:Int,_ text:String)->PreviewFra
     doc.recordPreviewHeights(["c":31],revision:1)
     doc.apply(.init(prefix:1,suffix:1,shift:3,
         blocks:[.init(id:"new",kind:"Paragraph",from:7,to:15)]),revision:2,length:23)
-    #expect(doc.entries(covering:NSRange(location:0,length:5))?.first?.fragment.markdown=="a")
-    #expect(doc.entries(covering:NSRange(location:17,length:5))?.first?.fragment.markdown=="c")
+    #expect(doc.entries(covering:NSRange(location:0,length:5))?.first?.fragment.html=="<p>a</p>")
+    #expect(doc.entries(covering:NSRange(location:17,length:5))?.first?.fragment.html=="<p>c</p>")
     #expect(doc.entries(covering:NSRange(location:17,length:5))?.first?.fragment.from==17)
     #expect(doc.entries(covering:NSRange(location:7,length:8))==nil)
     #expect(doc.heights(for:"c")?.preview==31)
@@ -88,7 +88,7 @@ private func prepared(_ id:String,_ from:Int,_ to:Int,_ text:String)->PreviewFra
     #expect(doc.firstUnpreparedOffset(from:5560)==10000)
     doc.store(ParseResult(revision:1,spans:[],fragments:[prepared("555",5550,5560,"filled")]),range:NSRange(location:5550,length:10))
     #expect(doc.firstUnpreparedOffset(from:0)==10000)
-    #expect(doc.allPages.count==1)
+    #expect(doc.hasCompleteFragments)
 }
 
 @Test func renderedWindowsUseCachedHeightPrefixesAndStopAtCacheHoles() {

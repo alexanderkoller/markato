@@ -143,8 +143,8 @@ public final class ComrakWorker: @unchecked Sendable {
                 let change=decoded.blockChange.map{PreparedBlockChange(prefix:$0.prefix,suffix:$0.suffix,shift:$0.shift,blocks:$0.blocks.map(block))}
                 if let full {manifestBlocks=full}
                 let result=ParseResult(revision:decoded.revision,spans:decoded.spans,
-                    fragments:decoded.fragments.map{PreviewFragment(kind:$0.kind,from:$0.from,to:$0.to,markdown:$0.markdown,html:$0.html,id:$0.id.map{identity+":"+$0})},
-                    blocks:full != nil ? manifestBlocks:nil,blockChange:change,complete:false)
+                    fragments:decoded.fragments.map{PreviewFragment(kind:$0.kind,from:$0.from,to:$0.to,html:$0.html,id:$0.id.map{identity+":"+$0})},
+                    blocks:full != nil ? manifestBlocks:nil,blockChange:change)
                 #if DEBUG
                 TimingDiagnostics.shared.end(records)
                 #endif
@@ -185,10 +185,10 @@ public final class ComrakWorker: @unchecked Sendable {
                 let data=Data(bytes:json,count:strlen(json))
                 let decoded=try JSONDecoder().decode(ParseResult.self,from:data)
                 let fragments=decoded.fragments.map {fragment in
-                    PreviewFragment(kind:fragment.kind,from:fragment.from,to:fragment.to,markdown:fragment.markdown,
+                    PreviewFragment(kind:fragment.kind,from:fragment.from,to:fragment.to,
                         html:fragment.html,id:fragment.id.map{identity+":"+$0})
                 }
-                let result=ParseResult(revision:decoded.revision,spans:decoded.spans,fragments:fragments,complete:false)
+                let result=ParseResult(revision:decoded.revision,spans:decoded.spans,fragments:fragments)
                 DispatchQueue.main.async {completion(.success((result,range)))}
             } catch {DispatchQueue.main.async {completion(.failure(error))}}
         }

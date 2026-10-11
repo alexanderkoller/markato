@@ -515,6 +515,32 @@ fn run_production_candidate(case: &Case) -> (bool, Vec<BlockSnapshot>, Vec<Block
 }
 
 #[test]
+fn production_regional_update_includes_an_insertion_at_eof() {
+    let before = "# One\n\nTwo.\n";
+    let after = "# One\n\nTwo.\n\nThree.\n";
+    let edit = Edit {
+        from: utf16_len(before),
+        to: utf16_len(before),
+        inserted: utf16_len("\nThree.\n"),
+    };
+    let mut document = parsed(before);
+    let region = edit_region(&document, &[edit]).expect("EOF insertion should be regional");
+
+    assert_eq!(region.new_to, utf16_len(after));
+    assert!(update_region(
+        &mut document,
+        source_slice(after, region.new_from, region.new_to).to_owned(),
+        region.new_from,
+        utf16_len(after),
+        &[edit],
+        None,
+        std::ptr::null_mut(),
+    )
+    .unwrap());
+    assert_eq!(snapshots(&document), snapshots(&parsed(after)));
+}
+
+#[test]
 fn production_regional_update_matches_full_parse_for_representative_local_edits() {
     let yes = Outcome {
         subtree: true,

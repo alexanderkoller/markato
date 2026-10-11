@@ -21,7 +21,6 @@ typedef struct {
 typedef struct {
   double width;
   double height;
-  uint64_t measurement;
   size_t item_count;
 } AstraULGeometry;
 
@@ -31,7 +30,6 @@ AstraULSurface* astra_ul_surface_create(const char* sdk_root, const char* css,
                                         uint32_t width, uint32_t height,
                                         double device_scale);
 void astra_ul_surface_destroy(AstraULSurface* surface);
-bool astra_ul_surface_ready(AstraULSurface* surface);
 void astra_ul_surface_resize(AstraULSurface* surface, uint32_t width,
                              uint32_t height, double device_scale);
 // Apply all pending view/DOM/scroll mutations in one renderer update. Returns
@@ -43,9 +41,6 @@ void astra_ul_surface_begin_update(AstraULSurface* surface, size_t count,
 void astra_ul_surface_add_entry(AstraULSurface* surface, const char* id,
                                 const char* html);
 bool astra_ul_surface_commit_update(AstraULSurface* surface);
-bool astra_ul_surface_patch_entry(AstraULSurface* surface, size_t index,
-                                  const char* id, const char* html);
-
 bool astra_ul_surface_geometry(AstraULSurface* surface,
                                AstraULGeometry* geometry);
 bool astra_ul_surface_geometry_item(AstraULSurface* surface, size_t index,

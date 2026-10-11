@@ -29,8 +29,7 @@ public final class TimingDiagnostics: @unchecked Sendable {
             return try encoder.encode(Report(schemaVersion:1,started:started,elapsedMs:elapsedMs,recording:recording,droppedEvents:dropped,metadata:metadata,notes:[
                 "Native intervals use monotonic uptime. Nested intervals overlap; totals must not be added across categories.",
                 "Durations are elapsed time, not CPU time; asynchronous image preparation includes I/O waits. Only completed intervals are retained.",
-                "WebKit reported-duration events are timestamped at native receipt, not at their JavaScript execution start. JavaScript clock resolution may be about 1 ms.",
-                "Clip movement, DOM layout, JavaScript callbacks and requestAnimationFrame do not measure actual displayed-frame presentation.",
+                "Bitmap copy and renderer intervals do not measure actual displayed-frame presentation.",
                 "main.queue.wait samples dispatch delay about ten times per second; it is not a frame-rate measurement.",
                 "Only the most recent events are retained when the bounded recorder fills. No document text or file paths are included."
             ],summary:summary,events:events.sorted{$0.startMs<$1.startMs}))
@@ -70,11 +69,6 @@ public final class TimingDiagnostics: @unchecked Sendable {
         guard let interval else{return};let now=DispatchTime.now().uptimeNanoseconds
         lock.lock();defer{lock.unlock()};guard enabled,session==interval.session else{return}
         append(Event(name:interval.name,startMs:Double(interval.start-epoch)/1e6,durationMs:Double(now-interval.start)/1e6,thread:Thread.isMainThread ? "main":"worker",measurement:"native-interval",values:values()))
-    }
-    public func reported(_ name:String,milliseconds:Double,values:[String:Double]=[:]) {
-        guard milliseconds.isFinite,milliseconds>=0 else{return}
-        lock.lock();defer{lock.unlock()};guard enabled else{return}
-        append(Event(name:name,startMs:Double(DispatchTime.now().uptimeNanoseconds-epoch)/1e6,durationMs:milliseconds,thread:"web",measurement:"reported-duration",values:values))
     }
     private func append(_ event:Event) {
         total += 1

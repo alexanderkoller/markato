@@ -35,7 +35,7 @@ See [the scrolling algorithm and simplification review](docs/scrolling-algorithm
 
 The source model is an immutable AVL tree of bounded UTF-16 chunks. Indexed edits and line lookup avoid whole-document copying. Snapshots retain shared nodes for parser jobs and saves.
 
-The source editor retains the complete contiguous native glyph layout. Heading and image source positions come from measured line geometry rather than estimates outside a moving text window. Scrolling does not replace source text or change its coordinate frame. A measured AVL sequence indexes wrapped lines by source length and pixel height. Edits and batched syntax updates replace only affected paragraph measurements; unchanged prefix and suffix measurements remain cached, and subtree totals shift later positions. Model-driven edits and undo update the retained attributed text instead of reloading it. Width and font changes remeasure the document. Typography updates arriving during a gesture wait until it ends, and layout updates preserve the visible source anchor. Source coordinates are global. TextKit owns native selection and clipboard operations; the document model owns undo transactions. Beginning/end navigation reaches the actual document endpoints. Native layout and source memory now grow with document size; optimizing this remains separate from scroll correctness.
+The source editor retains the complete text while measuring exact TextKit geometry only for prepared and visible regions. A single AVL layout index combines those measured lines with estimated gaps in one stable global coordinate system. Navigation can use an estimate to reach a distant region, then replaces that region with native measurements without rebasing the document. Edits and syntax updates preserve unaffected measurements, and model-driven edits and undo update the retained attributed text instead of reloading it. TextKit owns native selection and clipboard operations; the document model owns undo transactions.
 
 Comrak runs as a pure parse operation on a serial native worker: a transient source string goes in and independently owned block records come out; no complete input buffer or parser state survives the call. Rope UTF-16 units cross directly into Rust, where they become UTF-8 without an intermediate Swift String. A single local edit reparses its affected top-level blocks plus one unchanged guard block on each side, then the adapter splices the verified records into the retained document. Initial parsing, coalesced edits, reference-link documents, and edits whose effects cross a guard fall back to one complete parse. Each parse and formatter traversal produces HTML and source-style records together. KaTeX receives only parser-recognized equations. A sparse Unicode/line index converts Comrak byte positions to Cocoa UTF-16 positions. Unchanged block IDs follow recorded edits, including duplicate paragraphs, only when both source and resolved HTML match. Stale delivery is rejected by revision/request generation.
 
@@ -74,7 +74,7 @@ The prototype has not established same-frame presentation at 60/120 Hz or comple
 
 ## Timing diagnostics
 
-Timing diagnostics, native test runners, test-only counters and the stalled-typography scheduler override are compiled only in debug builds. Release builds omit them entirely, including the JavaScript timing code. The debug app is packaged at `dist/debug/AstraMarkdown.app`, separately from `dist/AstraMarkdown.app`. Release packaging starts from a fresh allowlisted bundle and audits symbols, strings and resources with `scripts/check-release.sh`; a failed audit stops packaging. The bundled example remains a normal product resource.
+Timing diagnostics, native test runners and test-only counters are compiled only in debug builds. Release builds omit them entirely. The debug app is packaged at `dist/debug/AstraMarkdown.app`, separately from `dist/AstraMarkdown.app`. Release packaging starts from a fresh allowlisted bundle and audits symbols, strings and resources with `scripts/check-release.sh`; a failed audit stops packaging. The bundled example remains a normal product resource.
 
 Choose **Help → Start Timing Diagnostics**, reproduce the scrolling or editing problem,
 then choose **Help → Stop Timing Diagnostics** and **Help → Save Timing Report…**.
@@ -90,8 +90,7 @@ updates, worker queue waits, Comrak/input/record work, KaTeX, HTML presentation,
 and image preparation. A roughly 10 Hz probe samples main
 queue dispatch delays. These measurements help distinguish processing delays from
 discontinuous positioning; they do not measure actual displayed-frame latency.
-Native intervals use a monotonic clock. JavaScript durations are reported at native
-receipt and may have roughly 1 ms resolution. Nested interval totals overlap.
+Native intervals use a monotonic clock. Nested interval totals overlap.
 
 To include startup in a recording, launch the executable with `--diagnostics`.
 The instrumented integration check verifies event collection and JSON export:
@@ -100,7 +99,7 @@ The instrumented integration check verifies event collection and JSON export:
 dist/debug/AstraMarkdown.app/Contents/MacOS/AstraMarkdown --integration-test --diagnostics
 ```
 
-Its report is written to `/private/tmp/astra-timings.json`. A focused `--integration-layout-index` check independently compares the cached index with native glyph coordinates after local and coalesced edits, Unicode/CRLF insertion, deletion, append, typography, resize, and model-driven replacement.
+Its report is written to `/private/tmp/astra-ultralight-integration-timings.json`. A focused `--integration-layout-index` check independently compares the cached index with native glyph coordinates after local and coalesced edits, Unicode/CRLF insertion, deletion, append, typography, resize, and model-driven replacement.
 
 The [6 October performance profile](research/2026-10-06/performance/README.md)
 records CPU samples, before/after timing comparisons, the duplicate-highlighting
@@ -118,7 +117,7 @@ npm run build
 
 The application has no external Swift dependencies. Node library versions are pinned in package-lock.json. Comrak, Rust dependency and KaTeX license notices are packaged in the application. Earlier library experiments remain under `research/2026-10-05`.
 
-The complete preview regression gate runs debug and release core tests, packages and audits the release app, builds the separate debug app, and exercises native presentation, scrolling, failure, and recovery checks. Run it from a macOS graphical session:
+The complete preview regression gate runs debug and release core tests, packages and audits the release app, builds the separate debug app, and exercises bounded native presentation, editing, resizing, and cached navigation. Run it from a macOS graphical session:
 
 ```sh
 bash scripts/check-preview.sh

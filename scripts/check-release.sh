@@ -9,7 +9,7 @@ for inspect in symbols strings; do
     else
         captured="$(strings -a "$binary")"
     fi
-    if printf '%s\n' "$captured" | rg 'astra_timing_|IntegrationCheck|TimingDiagnostics|INTEGRATION FAILED|SOURCE PAINT|SMOKE:|--integration-test|--integration-source-paint|--integration-preview-jump|--smoke-test|--diagnostics|scheduleBackgroundPreparation|debugGeometry|debugAlignmentDrift|debugScrollLandmarks|patchCount|parserRequests|highlightApplications|debugMeasuredPosition|FixtureScrollSource|HTMLWorker|astraLocal'; then
+    if printf '%s\n' "$captured" | rg 'astra_timing_|IntegrationCheck|TimingDiagnostics|INTEGRATION FAILED|SMOKE:|--integration-test|--integration-preview-jump|--smoke-test|--diagnostics|debugGeometry|patchCount|debugMeasuredPosition'; then
         echo "Release contains development $inspect" >&2
         exit 1
     fi
@@ -36,8 +36,4 @@ while IFS= read -r resource; do
         *) echo "Unexpected release resource: $relative" >&2; exit 1 ;;
     esac
 done < <(find "$app_path/Contents/Resources" -type f)
-if [[ -f "$app_path/Contents/Resources/Preview.js" ]] &&
-   rg 'BEGIN DEBUG|END DEBUG|performance\.now|patchMs|layoutMs|changedHTML|measure=false' "$app_path/Contents/Resources/Preview.js"; then
-    echo "Release preview contains timing instrumentation" >&2;exit 1
-fi
 echo "Release audit passed: no test runner, test controls, recorder, or development artifacts."

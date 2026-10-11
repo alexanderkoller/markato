@@ -24,7 +24,8 @@ private func applying(_ change:PreparedBlockChange,to blocks:[PreparedBlock])->[
     rope = rope.replacing(second.range,with:"##"); worker.record(second,revision:2)
     let incremental = try await parse(worker,rope,2)
     let fresh = try await parse(ComrakWorker(),rope,2)
-    #expect(incremental.fragments.map{$0.markdown} == fresh.fragments.map{$0.markdown})
+    #expect(incremental.fragments.map{[$0.kind,"\($0.from)","\($0.to)",$0.html ?? ""]} ==
+        fresh.fragments.map{[$0.kind,"\($0.from)","\($0.to)",$0.html ?? ""]})
     #expect(incremental.spans.map{$0.kind} == fresh.spans.map{$0.kind})
     #expect(incremental.spans.map{$0.from} == fresh.spans.map{$0.from})
     let change=try #require(incremental.blockChange),initial=try #require((try await parse(ComrakWorker(),TextRope("# Title\n\nFirst **bold** paragraph.\n\nAnother *italic* paragraph.\n"),0)).blocks)

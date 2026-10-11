@@ -11,7 +11,6 @@ private func prepare(_ text:String,_ worker:ComrakWorker = ComrakWorker(),revisi
 @Test func firstPublicationReturnsCompleteManifestAndVisibleRecords() async throws {
     let text="# First\n\n"+(0..<200).map{"Paragraph \($0) **bold**.\n\n"}.joined()+"# Last\n"
     let result=try await prepare(text,range:NSRange(location:0,length:8))
-    #expect(result.complete==false)
     #expect(result.fragments.first?.html?.contains("<h1>First</h1>")==true)
     #expect(result.blocks?.count==202)
     #expect(result.fragments.count < (result.blocks?.count ?? 0))
@@ -32,7 +31,7 @@ private func prepare(_ text:String,_ worker:ComrakWorker = ComrakWorker(),revisi
     let result=try await prepare(text)
     let table=try #require(result.fragments.first(where:{$0.kind=="Table"}))
     #expect(table.html?.components(separatedBy:"<tr>").count==1002)
-    #expect(table.markdown.contains("999"))
+    #expect(table.html?.contains(">999</td>")==true)
     let html=result.fragments.compactMap{$0.html}.joined()
     #expect(html.contains("language-swift"))
     #expect(html.contains("$literal$"))
@@ -52,7 +51,7 @@ private func prepare(_ text:String,_ worker:ComrakWorker = ComrakWorker(),revisi
 }
 @Test func blankDocumentAndDistantReferencesHaveCompleteCoverage() async throws {
     let blank=try await prepare(String(repeating:"\n",count:300))
-    #expect(blank.complete==false && blank.fragments.first?.kind=="Empty")
+    #expect(blank.fragments.first?.kind=="Empty")
     let result=try await prepare("A [reference][r].\n\n"+String(repeating:"\n",count:300)+"[r]: https://example.com\n")
     #expect(result.fragments.first?.html?.contains("href=\"https://example.com\"")==true)
     #expect(result.blocks?.last?.kind=="LinkReference")

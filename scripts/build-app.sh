@@ -8,9 +8,6 @@ if [[ "$build_configuration" != release && "$build_configuration" != debug ]]; t
 fi
 bash scripts/build-native.sh
 default_ultralight_sdk="$PWD/Vendor/Ultralight"
-if [[ ! -d "$default_ultralight_sdk/include" ]]; then
-    default_ultralight_sdk="$PWD/research/2026-10-11/html-renderer-benchmark/third_party/ultralight"
-fi
 ultralight_sdk="${ASTRA_ULTRALIGHT_SDK:-$default_ultralight_sdk}"
 if [[ ! -f "$ultralight_sdk/bin/libUltralight.dylib" || ! -f "$ultralight_sdk/resources/icudt67l.dat" ]]; then
     echo "Ultralight SDK not found at $ultralight_sdk (set ASTRA_ULTRALIGHT_SDK)" >&2
