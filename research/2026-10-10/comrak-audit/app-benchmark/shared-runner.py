@@ -146,6 +146,12 @@ def run(rounds, sizes, run_id, start_round, edits, profile):
                                    BENCH_OUTPUT=str(output), BENCH_FIXTURE=str(private_input),
                                    BENCH_WARMUP=str(HERE / 'fixtures/warmup.md'),
                                    BENCH_APP_ID=snapshot['bundleId'], BENCH_EDITS=str(edits))
+                timing_directory = os.environ.get('BENCH_TIMING_DIRECTORY')
+                timing_output = None
+                if timing_directory:
+                    timing_output = Path(timing_directory) / f'{output.stem}.timings.json'
+                    timing_output.parent.mkdir(parents=True, exist_ok=True)
+                    process_env['BENCH_TIMING_OUTPUT'] = str(timing_output)
                 started = time.time()
                 print(f'RUN {label} {fixture.name} round={round_index + 1}', flush=True)
                 with stderr.open('w') as log:
@@ -169,15 +175,26 @@ def run(rounds, sizes, run_id, start_round, edits, profile):
                           'startedUnix': started, 'wallSeconds': time.time() - started,
                           'exitCode': code, 'status': 'complete' if complete else 'failed',
                           'samples': [r for r in records if r['type'] == 'sample'],
+                          'memory': next((r for r in records if r['type'] == 'memory'), None),
+                          'metadata': next((r for r in records if r['type'] == 'metadata'), None),
+                          'timingOutputPath': str(timing_output) if timing_output else None,
                           'errors': [r for r in records if r['type'] == 'error']}
                 results.append(result)
                 (HERE / 'runs.json').write_text(json.dumps(results, indent=2) + '\n')
                 rows = summarize(results)
-                print(json.dumps(result), flush=True)
+                if os.environ.get('BENCH_QUIET_SUMMARY') == '1':
+                    edits_ms = [r['elapsedMs'] for r in result['samples'] if r['operation'] == 'edit']
+                    print(json.dumps({'app': label, 'fixture': fixture.name,
+                                      'status': result['status'], 'edits': len(edits_ms),
+                                      'medianEditMs': statistics.median(edits_ms) if edits_ms else None,
+                                      'timingOutputPath': result['timingOutputPath']}), flush=True)
+                else:
+                    print(json.dumps(result), flush=True)
                 if not complete:
                     raise SystemExit('Probe failed; inspect its stderr before continuing.')
                 time.sleep(1)
-    print(json.dumps(rows, indent=2))
+    if os.environ.get('BENCH_QUIET_SUMMARY') != '1':
+        print(json.dumps(rows, indent=2))
 
 
 if __name__ == '__main__':

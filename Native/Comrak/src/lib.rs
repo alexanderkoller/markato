@@ -44,17 +44,25 @@ struct Block {
     kind: String,
     from: usize,
     to: usize,
-    bytes: std::ops::Range<usize>,
+    markdown: String,
     html: String,
     spans: Vec<Span>,
 }
+struct CapturedBlock {
+    block: Block,
+    bytes: std::ops::Range<usize>,
+}
 pub struct Document {
-    source: String,
     length: usize,
     has_references: bool,
     blocks: Vec<Block>,
     next_id: u64,
     change: Option<BlockChange>,
+}
+struct ParsedDocument {
+    length: usize,
+    has_references: bool,
+    blocks: Vec<Block>,
 }
 
 struct BlockChange {
@@ -209,7 +217,7 @@ impl Write for Output {
 struct Render<'s> {
     source: &'s str,
     index: Index,
-    blocks: Vec<Block>,
+    blocks: Vec<CapturedBlock>,
     spans: Vec<Span>,
     output: Output,
     math: MathRenderer,
@@ -435,14 +443,17 @@ fn format_node(
             let bytes = context.user.index.range(node, context.user.source);
             let from = context.user.index.utf16(bytes.start);
             let to = context.user.index.utf16(bytes.end);
-            context.user.blocks.push(Block {
-                id: 0,
-                kind: block_kind(node),
-                from,
-                to,
+            context.user.blocks.push(CapturedBlock {
                 bytes,
-                html: String::new(),
-                spans: vec![],
+                block: Block {
+                    id: 0,
+                    kind: block_kind(node),
+                    from,
+                    to,
+                    markdown: String::new(),
+                    html: String::new(),
+                    spans: vec![],
+                },
             });
         }
         context.user.observe(node);
@@ -508,20 +519,18 @@ fn format_node(
     if top && !entering {
         let html = std::mem::take(&mut context.user.output.0.borrow_mut().html);
         let spans = std::mem::take(&mut context.user.spans);
-        let block = context.user.blocks.last_mut().unwrap();
+        let block = &mut context.user.blocks.last_mut().unwrap().block;
         block.html = html;
         block.spans = spans;
     }
     Ok(result)
 }
 
-fn prepare(
+fn parse_source(
     source: String,
-    previous: Option<&Document>,
-    edits: &[Edit],
     callback: MathRenderer,
     opaque: *mut c_void,
-) -> Result<Document, String> {
+) -> Result<ParsedDocument, String> {
     let has_references = has_reference_syntax(&source);
     let mut options = Options::default();
     options.extension.table = true;
@@ -557,22 +566,24 @@ fn prepare(
     let mut position = 0;
     // Comrak removes reference definitions from its AST. Preserve their source
     // intervals as zero-output blocks so identities cover editing/navigation.
-    for block in state.blocks {
-        if block.bytes.start > position {
-            let gap = &source[position..block.bytes.start];
+    for captured in state.blocks {
+        if captured.bytes.start > position {
+            let gap = &source[position..captured.bytes.start];
             if !gap.trim().is_empty() {
                 blocks.push(Block {
                     id: 0,
                     kind: "LinkReference".into(),
                     from: index.utf16(position),
-                    to: index.utf16(block.bytes.start),
-                    bytes: position..block.bytes.start,
+                    to: index.utf16(captured.bytes.start),
+                    markdown: gap.to_owned(),
                     html: String::new(),
                     spans: vec![],
                 });
             }
         }
-        position = block.bytes.end;
+        position = captured.bytes.end;
+        let mut block = captured.block;
+        block.markdown = source[captured.bytes].to_owned();
         blocks.push(block);
     }
     if position < source.len() && !source[position..].trim().is_empty() {
@@ -581,7 +592,7 @@ fn prepare(
             kind: "LinkReference".into(),
             from: index.utf16(position),
             to: length,
-            bytes: position..source.len(),
+            markdown: source[position..].to_owned(),
             html: String::new(),
             spans: vec![],
         });
@@ -592,11 +603,30 @@ fn prepare(
             kind: "Empty".into(),
             from: 0,
             to: length,
-            bytes: 0..source.len(),
+            markdown: source.clone(),
             html: String::new(),
             spans: vec![],
         });
     }
+    Ok(ParsedDocument {
+        length,
+        has_references,
+        blocks,
+    })
+}
+
+fn prepare(
+    source: String,
+    previous: Option<&Document>,
+    edits: &[Edit],
+    callback: MathRenderer,
+    opaque: *mut c_void,
+) -> Result<Document, String> {
+    let ParsedDocument {
+        length,
+        has_references,
+        mut blocks,
+    } = parse_source(source, callback, opaque)?;
     let mut next_id = previous.map_or(0, |d| d.next_id);
     let mut positioned = HashMap::new();
     let mut contents: HashMap<(&str, &str, &str), VecDeque<usize>> = HashMap::new();
@@ -609,7 +639,7 @@ fn prepare(
             // and hash the complete document a second time.
             if edits.is_empty() {
                 contents
-                    .entry((&block.kind, &old.source[block.bytes.clone()], &block.html))
+                    .entry((&block.kind, &block.markdown, &block.html))
                     .or_default()
                     .push_back(i);
             }
@@ -630,7 +660,7 @@ fn prepare(
         }
         let mut used = vec![false; old.blocks.len()];
         for block in &mut blocks {
-            let key = (&*block.kind, &source[block.bytes.clone()], &*block.html);
+            let key = (&*block.kind, &*block.markdown, &*block.html);
             let mut retained = None;
             if let Some(&(i, to)) = positioned.get(&block.from) {
                 let prior = &old.blocks[i];
@@ -638,7 +668,7 @@ fn prepare(
                     && !used[i]
                     && prior.kind == block.kind
                     && prior.html == block.html
-                    && old.source[prior.bytes.clone()] == source[block.bytes.clone()]
+                    && prior.markdown == block.markdown
                 {
                     retained = Some(i);
                 }
@@ -696,7 +726,6 @@ fn prepare(
         BlockChange { prefix, suffix, shift }
     });
     Ok(Document {
-        source,
         length,
         has_references,
         blocks,
@@ -784,7 +813,7 @@ fn query(
                 kind: &b.kind,
                 from: b.from,
                 to: b.to,
-                markdown: &document.source[b.bytes.clone()],
+                markdown: &b.markdown,
                 html: html.then_some(&b.html),
             })
             .collect()
@@ -924,17 +953,6 @@ fn update_region(
         return Ok(false);
     }
     let mut fragment = prepare(source, None, &[], callback, opaque)?;
-    let old_byte_from = if region.first == 0 {
-        0
-    } else {
-        document.blocks[region.first - 1].bytes.end
-    };
-    let old_byte_to = if region.last + 1 == document.blocks.len() {
-        document.source.len()
-    } else {
-        document.blocks[region.last].bytes.end
-    };
-    let byte_shift = fragment.source.len() as isize - (old_byte_to - old_byte_from) as isize;
     let edit = edits[0];
     let mut used = vec![false; region.last - region.first + 1];
     let mut next_id = document.next_id;
@@ -945,9 +963,6 @@ fn update_region(
             span.from += base;
             span.to += base;
         }
-        let local_bytes = block.bytes.clone();
-        let markdown = &fragment.source[local_bytes.clone()];
-        block.bytes = old_byte_from + local_bytes.start..old_byte_from + local_bytes.end;
         let mut retained = None;
         for (relative, prior) in document.blocks[region.first..=region.last]
             .iter()
@@ -962,7 +977,7 @@ fn update_region(
                 && to == block.to
                 && prior.kind == block.kind
                 && prior.html == block.html
-                && document.source[prior.bytes.clone()] == *markdown
+                && prior.markdown == block.markdown
             {
                 retained = Some(relative);
                 break;
@@ -1001,16 +1016,11 @@ fn update_region(
     for block in &mut document.blocks[region.last + 1..] {
         block.from = block.from.saturating_add_signed(region.shift);
         block.to = block.to.saturating_add_signed(region.shift);
-        block.bytes = block.bytes.start.saturating_add_signed(byte_shift)
-            ..block.bytes.end.saturating_add_signed(byte_shift);
         for span in &mut block.spans {
             span.from = span.from.saturating_add_signed(region.shift);
             span.to = span.to.saturating_add_signed(region.shift);
         }
     }
-    document
-        .source
-        .replace_range(old_byte_from..old_byte_to, &fragment.source);
     document
         .blocks
         .splice(region.first..=region.last, fragment.blocks);
@@ -1137,15 +1147,16 @@ mod tests {
     }
     #[test]
     fn native_html_styles_and_utf16_share_one_tree() {
-        let d = doc("# 😀 Heading\r\n\r\nA **bold** and *italic* [link](https://example.com).\r\n");
-        assert_eq!(d.length, d.source.encode_utf16().count());
+        let source = "# 😀 Heading\r\n\r\nA **bold** and *italic* [link](https://example.com).\r\n";
+        let d = doc(source);
+        assert_eq!(d.length, source.encode_utf16().count());
         assert!(d.blocks[0].html.contains("<h1>😀 Heading</h1>"));
         let strong = d.blocks[1]
             .spans
             .iter()
             .find(|s| s.kind == "StrongEmphasis")
             .unwrap();
-        let units: Vec<_> = d.source.encode_utf16().collect();
+        let units: Vec<_> = source.encode_utf16().collect();
         assert_eq!(
             String::from_utf16(&units[strong.from..strong.to]).unwrap(),
             "**bold**"
@@ -1219,7 +1230,7 @@ mod tests {
             "[r]: https://example.com\nA 😀 **bold** [reference][r].\n===\n",
         ] {
             let d = doc(source);
-            let units: Vec<_> = d.source.encode_utf16().collect();
+            let units: Vec<_> = source.encode_utf16().collect();
             let strong = d
                 .blocks
                 .iter()

@@ -82,7 +82,7 @@ fn snapshots(document: &Document) -> Vec<BlockSnapshot> {
             kind: block.kind.clone(),
             from: block.from,
             to: block.to,
-            markdown: document.source[block.bytes.clone()].to_owned(),
+            markdown: block.markdown.clone(),
             html: block.html.clone(),
             spans: block.spans.clone(),
         })

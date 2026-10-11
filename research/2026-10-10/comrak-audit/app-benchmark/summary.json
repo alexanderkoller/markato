@@ -121,6 +121,126 @@
   },
   {
     "fixture": "prose-1048576.md",
+    "app": "comrak-block-owned",
+    "operation": "edit",
+    "experiment": "comrak-block-owned-1791707211188478000-prose-r1",
+    "n": 3,
+    "medianMs": 27.660916805267334,
+    "minMs": 25.698583364486694,
+    "maxMs": 30.05091643333435
+  },
+  {
+    "fixture": "prose-1048576.md",
+    "app": "comrak-block-owned",
+    "operation": "edit",
+    "experiment": "comrak-block-owned-1791707211188478000-prose-r2",
+    "n": 3,
+    "medianMs": 37.59420847892761,
+    "minMs": 31.80287528038025,
+    "maxMs": 39.72354173660278
+  },
+  {
+    "fixture": "prose-1048576.md",
+    "app": "comrak-block-owned",
+    "operation": "edit",
+    "experiment": "comrak-block-owned-1791707211188478000-prose-r3",
+    "n": 3,
+    "medianMs": 29.04295825958252,
+    "minMs": 25.613166570663452,
+    "maxMs": 30.565083503723145
+  },
+  {
+    "fixture": "prose-1048576.md",
+    "app": "comrak-block-owned",
+    "operation": "edit",
+    "experiment": "comrak-regional-final-vs-comrak-block-owned-1791708371606702000-prose-1048576-r1",
+    "n": 7,
+    "medianMs": 27.000458240509033,
+    "minMs": 19.01420831680298,
+    "maxMs": 42.01691675186157
+  },
+  {
+    "fixture": "prose-1048576.md",
+    "app": "comrak-block-owned",
+    "operation": "edit",
+    "experiment": "comrak-regional-final-vs-comrak-block-owned-1791708371606702000-prose-1048576-r2",
+    "n": 7,
+    "medianMs": 23.324958086013794,
+    "minMs": 15.962083339691162,
+    "maxMs": 29.93008327484131
+  },
+  {
+    "fixture": "prose-1048576.md",
+    "app": "comrak-block-owned",
+    "operation": "edit",
+    "experiment": "comrak-regional-final-vs-comrak-block-owned-1791708371606702000-prose-1048576-r3",
+    "n": 7,
+    "medianMs": 25.64354181289673,
+    "minMs": 19.951791524887085,
+    "maxMs": 31.811583280563354
+  },
+  {
+    "fixture": "prose-1048576.md",
+    "app": "comrak-block-owned",
+    "operation": "open",
+    "experiment": "comrak-block-owned-1791707211188478000-prose-r1",
+    "n": 1,
+    "medianMs": 144.5304582118988,
+    "minMs": 144.5304582118988,
+    "maxMs": 144.5304582118988
+  },
+  {
+    "fixture": "prose-1048576.md",
+    "app": "comrak-block-owned",
+    "operation": "open",
+    "experiment": "comrak-block-owned-1791707211188478000-prose-r2",
+    "n": 1,
+    "medianMs": 131.78295826911926,
+    "minMs": 131.78295826911926,
+    "maxMs": 131.78295826911926
+  },
+  {
+    "fixture": "prose-1048576.md",
+    "app": "comrak-block-owned",
+    "operation": "open",
+    "experiment": "comrak-block-owned-1791707211188478000-prose-r3",
+    "n": 1,
+    "medianMs": 133.45008325576782,
+    "minMs": 133.45008325576782,
+    "maxMs": 133.45008325576782
+  },
+  {
+    "fixture": "prose-1048576.md",
+    "app": "comrak-block-owned",
+    "operation": "open",
+    "experiment": "comrak-regional-final-vs-comrak-block-owned-1791708371606702000-prose-1048576-r1",
+    "n": 1,
+    "medianMs": 142.69058346748352,
+    "minMs": 142.69058346748352,
+    "maxMs": 142.69058346748352
+  },
+  {
+    "fixture": "prose-1048576.md",
+    "app": "comrak-block-owned",
+    "operation": "open",
+    "experiment": "comrak-regional-final-vs-comrak-block-owned-1791708371606702000-prose-1048576-r2",
+    "n": 1,
+    "medianMs": 141.64958333969116,
+    "minMs": 141.64958333969116,
+    "maxMs": 141.64958333969116
+  },
+  {
+    "fixture": "prose-1048576.md",
+    "app": "comrak-block-owned",
+    "operation": "open",
+    "experiment": "comrak-regional-final-vs-comrak-block-owned-1791708371606702000-prose-1048576-r3",
+    "n": 1,
+    "medianMs": 136.5266251564026,
+    "minMs": 136.5266251564026,
+    "maxMs": 136.5266251564026
+  },
+  {
+    "fixture": "prose-1048576.md",
     "app": "comrak-cached-window",
     "operation": "edit",
     "experiment": "comrak-cached-window-1791659951998221000-prose-r1",
@@ -892,6 +1012,36 @@
   {
     "fixture": "prose-1048576.md",
     "app": "comrak-regional-final",
+    "operation": "edit",
+    "experiment": "comrak-regional-final-vs-comrak-block-owned-1791708371606702000-prose-1048576-r1",
+    "n": 7,
+    "medianMs": 25.699541807174683,
+    "minMs": 16.7628333568573,
+    "maxMs": 29.60016679763794
+  },
+  {
+    "fixture": "prose-1048576.md",
+    "app": "comrak-regional-final",
+    "operation": "edit",
+    "experiment": "comrak-regional-final-vs-comrak-block-owned-1791708371606702000-prose-1048576-r2",
+    "n": 7,
+    "medianMs": 21.339749813079834,
+    "minMs": 14.701208353042603,
+    "maxMs": 29.947624921798706
+  },
+  {
+    "fixture": "prose-1048576.md",
+    "app": "comrak-regional-final",
+    "operation": "edit",
+    "experiment": "comrak-regional-final-vs-comrak-block-owned-1791708371606702000-prose-1048576-r3",
+    "n": 7,
+    "medianMs": 25.621833324432373,
+    "minMs": 17.898124933242798,
+    "maxMs": 30.6618332862854
+  },
+  {
+    "fixture": "prose-1048576.md",
+    "app": "comrak-regional-final",
     "operation": "open",
     "experiment": "comrak-regional-final-1791706690937634000-prose-r1",
     "n": 1,
@@ -918,6 +1068,36 @@
     "medianMs": 141.0595417022705,
     "minMs": 141.0595417022705,
     "maxMs": 141.0595417022705
+  },
+  {
+    "fixture": "prose-1048576.md",
+    "app": "comrak-regional-final",
+    "operation": "open",
+    "experiment": "comrak-regional-final-vs-comrak-block-owned-1791708371606702000-prose-1048576-r1",
+    "n": 1,
+    "medianMs": 139.26070833206177,
+    "minMs": 139.26070833206177,
+    "maxMs": 139.26070833206177
+  },
+  {
+    "fixture": "prose-1048576.md",
+    "app": "comrak-regional-final",
+    "operation": "open",
+    "experiment": "comrak-regional-final-vs-comrak-block-owned-1791708371606702000-prose-1048576-r2",
+    "n": 1,
+    "medianMs": 145.84858345985413,
+    "minMs": 145.84858345985413,
+    "maxMs": 145.84858345985413
+  },
+  {
+    "fixture": "prose-1048576.md",
+    "app": "comrak-regional-final",
+    "operation": "open",
+    "experiment": "comrak-regional-final-vs-comrak-block-owned-1791708371606702000-prose-1048576-r3",
+    "n": 1,
+    "medianMs": 155.0396249294281,
+    "minMs": 155.0396249294281,
+    "maxMs": 155.0396249294281
   },
   {
     "fixture": "prose-1048576.md",
@@ -2841,6 +3021,156 @@
   },
   {
     "fixture": "prose-1048576.md",
+    "app": "current-block-owned",
+    "operation": "edit",
+    "experiment": "current-block-owned-vs-macdown073-vs-macdown3000-1791709009981093000-prose-1048576-r1",
+    "n": 9,
+    "medianMs": 24.427791595458984,
+    "minMs": 16.050333499908447,
+    "maxMs": 31.27970838546753
+  },
+  {
+    "fixture": "prose-1048576.md",
+    "app": "current-block-owned",
+    "operation": "edit",
+    "experiment": "current-block-owned-vs-macdown073-vs-macdown3000-1791709009981093000-prose-1048576-r2",
+    "n": 9,
+    "medianMs": 21.690124988555908,
+    "minMs": 16.75741696357727,
+    "maxMs": 26.93512511253357
+  },
+  {
+    "fixture": "prose-1048576.md",
+    "app": "current-block-owned",
+    "operation": "edit",
+    "experiment": "current-block-owned-vs-macdown073-vs-macdown3000-1791709009981093000-prose-1048576-r3",
+    "n": 9,
+    "medianMs": 26.62416672706604,
+    "minMs": 19.35337495803833,
+    "maxMs": 28.04158329963684
+  },
+  {
+    "fixture": "prose-1048576.md",
+    "app": "current-block-owned",
+    "operation": "edit",
+    "experiment": "current-block-owned-vs-macdown073-vs-macdown3000-1791709009981093000-prose-1048576-r4",
+    "n": 9,
+    "medianMs": 23.199458360671997,
+    "minMs": 15.582125186920166,
+    "maxMs": 34.2201247215271
+  },
+  {
+    "fixture": "prose-1048576.md",
+    "app": "current-block-owned",
+    "operation": "edit",
+    "experiment": "current-block-owned-vs-macdown073-vs-macdown3000-1791709009981093000-prose-1048576-r5",
+    "n": 9,
+    "medianMs": 24.293916702270508,
+    "minMs": 15.225541591644287,
+    "maxMs": 33.56962490081787
+  },
+  {
+    "fixture": "prose-1048576.md",
+    "app": "current-block-owned",
+    "operation": "open",
+    "experiment": "current-block-owned-vs-macdown073-vs-macdown3000-1791709009981093000-prose-1048576-r1",
+    "n": 1,
+    "medianMs": 138.4106249809265,
+    "minMs": 138.4106249809265,
+    "maxMs": 138.4106249809265
+  },
+  {
+    "fixture": "prose-1048576.md",
+    "app": "current-block-owned",
+    "operation": "open",
+    "experiment": "current-block-owned-vs-macdown073-vs-macdown3000-1791709009981093000-prose-1048576-r2",
+    "n": 1,
+    "medianMs": 148.21545839309692,
+    "minMs": 148.21545839309692,
+    "maxMs": 148.21545839309692
+  },
+  {
+    "fixture": "prose-1048576.md",
+    "app": "current-block-owned",
+    "operation": "open",
+    "experiment": "current-block-owned-vs-macdown073-vs-macdown3000-1791709009981093000-prose-1048576-r3",
+    "n": 1,
+    "medianMs": 138.8419165611267,
+    "minMs": 138.8419165611267,
+    "maxMs": 138.8419165611267
+  },
+  {
+    "fixture": "prose-1048576.md",
+    "app": "current-block-owned",
+    "operation": "open",
+    "experiment": "current-block-owned-vs-macdown073-vs-macdown3000-1791709009981093000-prose-1048576-r4",
+    "n": 1,
+    "medianMs": 137.01370811462402,
+    "minMs": 137.01370811462402,
+    "maxMs": 137.01370811462402
+  },
+  {
+    "fixture": "prose-1048576.md",
+    "app": "current-block-owned",
+    "operation": "open",
+    "experiment": "current-block-owned-vs-macdown073-vs-macdown3000-1791709009981093000-prose-1048576-r5",
+    "n": 1,
+    "medianMs": 140.6396667957306,
+    "minMs": 140.6396667957306,
+    "maxMs": 140.6396667957306
+  },
+  {
+    "fixture": "prose-1048576.md",
+    "app": "macdown073",
+    "operation": "edit",
+    "experiment": "current-block-owned-vs-macdown073-vs-macdown3000-1791709009981093000-prose-1048576-r1",
+    "n": 9,
+    "medianMs": 576.8836250305176,
+    "minMs": 157.5922498703003,
+    "maxMs": 595.2986249923706
+  },
+  {
+    "fixture": "prose-1048576.md",
+    "app": "macdown073",
+    "operation": "edit",
+    "experiment": "current-block-owned-vs-macdown073-vs-macdown3000-1791709009981093000-prose-1048576-r2",
+    "n": 9,
+    "medianMs": 592.1835839748383,
+    "minMs": 158.8812918663025,
+    "maxMs": 605.6177499294281
+  },
+  {
+    "fixture": "prose-1048576.md",
+    "app": "macdown073",
+    "operation": "edit",
+    "experiment": "current-block-owned-vs-macdown073-vs-macdown3000-1791709009981093000-prose-1048576-r3",
+    "n": 9,
+    "medianMs": 588.0801253318787,
+    "minMs": 159.24408411979675,
+    "maxMs": 605.5075829029083
+  },
+  {
+    "fixture": "prose-1048576.md",
+    "app": "macdown073",
+    "operation": "edit",
+    "experiment": "current-block-owned-vs-macdown073-vs-macdown3000-1791709009981093000-prose-1048576-r4",
+    "n": 9,
+    "medianMs": 581.8309168815613,
+    "minMs": 169.76295804977417,
+    "maxMs": 598.8198750019073
+  },
+  {
+    "fixture": "prose-1048576.md",
+    "app": "macdown073",
+    "operation": "edit",
+    "experiment": "current-block-owned-vs-macdown073-vs-macdown3000-1791709009981093000-prose-1048576-r5",
+    "n": 9,
+    "medianMs": 632.8391671180725,
+    "minMs": 159.18433380126953,
+    "maxMs": 645.2797920703888
+  },
+  {
+    "fixture": "prose-1048576.md",
     "app": "macdown073",
     "operation": "edit",
     "experiment": "macdown073-1791622854615527000-prose-r1",
@@ -2868,6 +3198,56 @@
     "medianMs": 139.95849990844727,
     "minMs": 139.19679236412048,
     "maxMs": 154.7453339099884
+  },
+  {
+    "fixture": "prose-1048576.md",
+    "app": "macdown073",
+    "operation": "open",
+    "experiment": "current-block-owned-vs-macdown073-vs-macdown3000-1791709009981093000-prose-1048576-r1",
+    "n": 1,
+    "medianMs": 1501.7473330497742,
+    "minMs": 1501.7473330497742,
+    "maxMs": 1501.7473330497742
+  },
+  {
+    "fixture": "prose-1048576.md",
+    "app": "macdown073",
+    "operation": "open",
+    "experiment": "current-block-owned-vs-macdown073-vs-macdown3000-1791709009981093000-prose-1048576-r2",
+    "n": 1,
+    "medianMs": 1510.1176660060883,
+    "minMs": 1510.1176660060883,
+    "maxMs": 1510.1176660060883
+  },
+  {
+    "fixture": "prose-1048576.md",
+    "app": "macdown073",
+    "operation": "open",
+    "experiment": "current-block-owned-vs-macdown073-vs-macdown3000-1791709009981093000-prose-1048576-r3",
+    "n": 1,
+    "medianMs": 1518.5010838508606,
+    "minMs": 1518.5010838508606,
+    "maxMs": 1518.5010838508606
+  },
+  {
+    "fixture": "prose-1048576.md",
+    "app": "macdown073",
+    "operation": "open",
+    "experiment": "current-block-owned-vs-macdown073-vs-macdown3000-1791709009981093000-prose-1048576-r4",
+    "n": 1,
+    "medianMs": 1548.8148338794708,
+    "minMs": 1548.8148338794708,
+    "maxMs": 1548.8148338794708
+  },
+  {
+    "fixture": "prose-1048576.md",
+    "app": "macdown073",
+    "operation": "open",
+    "experiment": "current-block-owned-vs-macdown073-vs-macdown3000-1791709009981093000-prose-1048576-r5",
+    "n": 1,
+    "medianMs": 1575.7104170322418,
+    "minMs": 1575.7104170322418,
+    "maxMs": 1575.7104170322418
   },
   {
     "fixture": "prose-1048576.md",
@@ -2903,6 +3283,56 @@
     "fixture": "prose-1048576.md",
     "app": "macdown3000",
     "operation": "edit",
+    "experiment": "current-block-owned-vs-macdown073-vs-macdown3000-1791709009981093000-prose-1048576-r1",
+    "n": 9,
+    "medianMs": 1995.3705835342407,
+    "minMs": 1614.0084581375122,
+    "maxMs": 2773.862791776657
+  },
+  {
+    "fixture": "prose-1048576.md",
+    "app": "macdown3000",
+    "operation": "edit",
+    "experiment": "current-block-owned-vs-macdown073-vs-macdown3000-1791709009981093000-prose-1048576-r2",
+    "n": 9,
+    "medianMs": 2069.14133310318,
+    "minMs": 1797.8498749732971,
+    "maxMs": 2835.678708553314
+  },
+  {
+    "fixture": "prose-1048576.md",
+    "app": "macdown3000",
+    "operation": "edit",
+    "experiment": "current-block-owned-vs-macdown073-vs-macdown3000-1791709009981093000-prose-1048576-r3",
+    "n": 9,
+    "medianMs": 2023.425916671753,
+    "minMs": 1864.5496249198914,
+    "maxMs": 2837.0626249313354
+  },
+  {
+    "fixture": "prose-1048576.md",
+    "app": "macdown3000",
+    "operation": "edit",
+    "experiment": "current-block-owned-vs-macdown073-vs-macdown3000-1791709009981093000-prose-1048576-r4",
+    "n": 9,
+    "medianMs": 2068.595124721527,
+    "minMs": 1988.2849168777466,
+    "maxMs": 2874.98512506485
+  },
+  {
+    "fixture": "prose-1048576.md",
+    "app": "macdown3000",
+    "operation": "edit",
+    "experiment": "current-block-owned-vs-macdown073-vs-macdown3000-1791709009981093000-prose-1048576-r5",
+    "n": 9,
+    "medianMs": 2018.6976249217987,
+    "minMs": 1642.3682913780212,
+    "maxMs": 3375.392708301544
+  },
+  {
+    "fixture": "prose-1048576.md",
+    "app": "macdown3000",
+    "operation": "edit",
     "experiment": "macdown3000-1791630338294688000-prose-r1",
     "n": 3,
     "medianMs": 1980.1100001335144,
@@ -2928,6 +3358,56 @@
     "medianMs": 2095.0999584198,
     "minMs": 1980.748708486557,
     "maxMs": 2753.687374830246
+  },
+  {
+    "fixture": "prose-1048576.md",
+    "app": "macdown3000",
+    "operation": "open",
+    "experiment": "current-block-owned-vs-macdown073-vs-macdown3000-1791709009981093000-prose-1048576-r1",
+    "n": 1,
+    "medianMs": 2491.3785417079926,
+    "minMs": 2491.3785417079926,
+    "maxMs": 2491.3785417079926
+  },
+  {
+    "fixture": "prose-1048576.md",
+    "app": "macdown3000",
+    "operation": "open",
+    "experiment": "current-block-owned-vs-macdown073-vs-macdown3000-1791709009981093000-prose-1048576-r2",
+    "n": 1,
+    "medianMs": 2537.3464584350586,
+    "minMs": 2537.3464584350586,
+    "maxMs": 2537.3464584350586
+  },
+  {
+    "fixture": "prose-1048576.md",
+    "app": "macdown3000",
+    "operation": "open",
+    "experiment": "current-block-owned-vs-macdown073-vs-macdown3000-1791709009981093000-prose-1048576-r3",
+    "n": 1,
+    "medianMs": 2588.805916786194,
+    "minMs": 2588.805916786194,
+    "maxMs": 2588.805916786194
+  },
+  {
+    "fixture": "prose-1048576.md",
+    "app": "macdown3000",
+    "operation": "open",
+    "experiment": "current-block-owned-vs-macdown073-vs-macdown3000-1791709009981093000-prose-1048576-r4",
+    "n": 1,
+    "medianMs": 2571.2272503376007,
+    "minMs": 2571.2272503376007,
+    "maxMs": 2571.2272503376007
+  },
+  {
+    "fixture": "prose-1048576.md",
+    "app": "macdown3000",
+    "operation": "open",
+    "experiment": "current-block-owned-vs-macdown073-vs-macdown3000-1791709009981093000-prose-1048576-r5",
+    "n": 1,
+    "medianMs": 2543.552708387375,
+    "minMs": 2543.552708387375,
+    "maxMs": 2543.552708387375
   },
   {
     "fixture": "prose-1048576.md",
@@ -3138,6 +3618,166 @@
     "medianMs": 160.78862500190735,
     "minMs": 160.78862500190735,
     "maxMs": 160.78862500190735
+  },
+  {
+    "fixture": "prose-65536.md",
+    "app": "comrak-block-owned",
+    "operation": "edit",
+    "experiment": "comrak-block-owned-1791707211188478000-prose-r1",
+    "n": 3,
+    "medianMs": 54.19166684150696,
+    "minMs": 48.986666679382324,
+    "maxMs": 66.80379152297974
+  },
+  {
+    "fixture": "prose-65536.md",
+    "app": "comrak-block-owned",
+    "operation": "edit",
+    "experiment": "comrak-block-owned-1791707211188478000-prose-r2",
+    "n": 3,
+    "medianMs": 43.779624938964844,
+    "minMs": 35.82733345031738,
+    "maxMs": 48.23425006866455
+  },
+  {
+    "fixture": "prose-65536.md",
+    "app": "comrak-block-owned",
+    "operation": "edit",
+    "experiment": "comrak-block-owned-1791707211188478000-prose-r3",
+    "n": 3,
+    "medianMs": 38.89462494850159,
+    "minMs": 36.064541816711426,
+    "maxMs": 50.62470841407776
+  },
+  {
+    "fixture": "prose-65536.md",
+    "app": "comrak-block-owned",
+    "operation": "edit",
+    "experiment": "comrak-block-owned-1791708338945148000-prose-65536-r1",
+    "n": 1,
+    "medianMs": 73.05904173851013,
+    "minMs": 73.05904173851013,
+    "maxMs": 73.05904173851013
+  },
+  {
+    "fixture": "prose-65536.md",
+    "app": "comrak-block-owned",
+    "operation": "edit",
+    "experiment": "comrak-regional-final-vs-comrak-block-owned-1791708258548906000-prose-65536-r1",
+    "n": 3,
+    "medianMs": 39.10562491416931,
+    "minMs": 37.46941661834717,
+    "maxMs": 45.162333250045776
+  },
+  {
+    "fixture": "prose-65536.md",
+    "app": "comrak-block-owned",
+    "operation": "edit",
+    "experiment": "comrak-regional-final-vs-comrak-block-owned-1791708371606702000-prose-65536-r1",
+    "n": 7,
+    "medianMs": 32.82116651535034,
+    "minMs": 22.011499881744385,
+    "maxMs": 48.74454164505005
+  },
+  {
+    "fixture": "prose-65536.md",
+    "app": "comrak-block-owned",
+    "operation": "edit",
+    "experiment": "comrak-regional-final-vs-comrak-block-owned-1791708371606702000-prose-65536-r2",
+    "n": 7,
+    "medianMs": 20.78849983215332,
+    "minMs": 13.79366683959961,
+    "maxMs": 40.28700017929077
+  },
+  {
+    "fixture": "prose-65536.md",
+    "app": "comrak-block-owned",
+    "operation": "edit",
+    "experiment": "comrak-regional-final-vs-comrak-block-owned-1791708371606702000-prose-65536-r3",
+    "n": 7,
+    "medianMs": 18.04741668701172,
+    "minMs": 13.841541528701782,
+    "maxMs": 27.887666940689087
+  },
+  {
+    "fixture": "prose-65536.md",
+    "app": "comrak-block-owned",
+    "operation": "open",
+    "experiment": "comrak-block-owned-1791707211188478000-prose-r1",
+    "n": 1,
+    "medianMs": 75.83770823478699,
+    "minMs": 75.83770823478699,
+    "maxMs": 75.83770823478699
+  },
+  {
+    "fixture": "prose-65536.md",
+    "app": "comrak-block-owned",
+    "operation": "open",
+    "experiment": "comrak-block-owned-1791707211188478000-prose-r2",
+    "n": 1,
+    "medianMs": 69.22054147720337,
+    "minMs": 69.22054147720337,
+    "maxMs": 69.22054147720337
+  },
+  {
+    "fixture": "prose-65536.md",
+    "app": "comrak-block-owned",
+    "operation": "open",
+    "experiment": "comrak-block-owned-1791707211188478000-prose-r3",
+    "n": 1,
+    "medianMs": 75.22587513923645,
+    "minMs": 75.22587513923645,
+    "maxMs": 75.22587513923645
+  },
+  {
+    "fixture": "prose-65536.md",
+    "app": "comrak-block-owned",
+    "operation": "open",
+    "experiment": "comrak-block-owned-1791708338945148000-prose-65536-r1",
+    "n": 1,
+    "medianMs": 71.52466654777527,
+    "minMs": 71.52466654777527,
+    "maxMs": 71.52466654777527
+  },
+  {
+    "fixture": "prose-65536.md",
+    "app": "comrak-block-owned",
+    "operation": "open",
+    "experiment": "comrak-regional-final-vs-comrak-block-owned-1791708258548906000-prose-65536-r1",
+    "n": 1,
+    "medianMs": 63.107083320617676,
+    "minMs": 63.107083320617676,
+    "maxMs": 63.107083320617676
+  },
+  {
+    "fixture": "prose-65536.md",
+    "app": "comrak-block-owned",
+    "operation": "open",
+    "experiment": "comrak-regional-final-vs-comrak-block-owned-1791708371606702000-prose-65536-r1",
+    "n": 1,
+    "medianMs": 66.5259997844696,
+    "minMs": 66.5259997844696,
+    "maxMs": 66.5259997844696
+  },
+  {
+    "fixture": "prose-65536.md",
+    "app": "comrak-block-owned",
+    "operation": "open",
+    "experiment": "comrak-regional-final-vs-comrak-block-owned-1791708371606702000-prose-65536-r2",
+    "n": 1,
+    "medianMs": 70.1942081451416,
+    "minMs": 70.1942081451416,
+    "maxMs": 70.1942081451416
+  },
+  {
+    "fixture": "prose-65536.md",
+    "app": "comrak-block-owned",
+    "operation": "open",
+    "experiment": "comrak-regional-final-vs-comrak-block-owned-1791708371606702000-prose-65536-r3",
+    "n": 1,
+    "medianMs": 74.5310001373291,
+    "minMs": 74.5310001373291,
+    "maxMs": 74.5310001373291
   },
   {
     "fixture": "prose-65536.md",
@@ -3692,6 +4332,46 @@
   {
     "fixture": "prose-65536.md",
     "app": "comrak-regional-final",
+    "operation": "edit",
+    "experiment": "comrak-regional-final-vs-comrak-block-owned-1791708258548906000-prose-65536-r1",
+    "n": 3,
+    "medianMs": 47.77333307266235,
+    "minMs": 33.427791595458984,
+    "maxMs": 50.09525012969971
+  },
+  {
+    "fixture": "prose-65536.md",
+    "app": "comrak-regional-final",
+    "operation": "edit",
+    "experiment": "comrak-regional-final-vs-comrak-block-owned-1791708371606702000-prose-65536-r1",
+    "n": 7,
+    "medianMs": 31.639541387557983,
+    "minMs": 20.219499826431274,
+    "maxMs": 46.8997917175293
+  },
+  {
+    "fixture": "prose-65536.md",
+    "app": "comrak-regional-final",
+    "operation": "edit",
+    "experiment": "comrak-regional-final-vs-comrak-block-owned-1791708371606702000-prose-65536-r2",
+    "n": 7,
+    "medianMs": 32.08133339881897,
+    "minMs": 21.19491672515869,
+    "maxMs": 46.5920832157135
+  },
+  {
+    "fixture": "prose-65536.md",
+    "app": "comrak-regional-final",
+    "operation": "edit",
+    "experiment": "comrak-regional-final-vs-comrak-block-owned-1791708371606702000-prose-65536-r3",
+    "n": 7,
+    "medianMs": 32.84195828437805,
+    "minMs": 21.119499921798706,
+    "maxMs": 56.150583267211914
+  },
+  {
+    "fixture": "prose-65536.md",
+    "app": "comrak-regional-final",
     "operation": "open",
     "experiment": "comrak-regional-final-1791706654719454000-prose-r1",
     "n": 1,
@@ -3718,6 +4398,46 @@
     "medianMs": 74.13900017738342,
     "minMs": 74.13900017738342,
     "maxMs": 74.13900017738342
+  },
+  {
+    "fixture": "prose-65536.md",
+    "app": "comrak-regional-final",
+    "operation": "open",
+    "experiment": "comrak-regional-final-vs-comrak-block-owned-1791708258548906000-prose-65536-r1",
+    "n": 1,
+    "medianMs": 77.92933320999146,
+    "minMs": 77.92933320999146,
+    "maxMs": 77.92933320999146
+  },
+  {
+    "fixture": "prose-65536.md",
+    "app": "comrak-regional-final",
+    "operation": "open",
+    "experiment": "comrak-regional-final-vs-comrak-block-owned-1791708371606702000-prose-65536-r1",
+    "n": 1,
+    "medianMs": 68.55137491226196,
+    "minMs": 68.55137491226196,
+    "maxMs": 68.55137491226196
+  },
+  {
+    "fixture": "prose-65536.md",
+    "app": "comrak-regional-final",
+    "operation": "open",
+    "experiment": "comrak-regional-final-vs-comrak-block-owned-1791708371606702000-prose-65536-r2",
+    "n": 1,
+    "medianMs": 68.95841670036316,
+    "minMs": 68.95841670036316,
+    "maxMs": 68.95841670036316
+  },
+  {
+    "fixture": "prose-65536.md",
+    "app": "comrak-regional-final",
+    "operation": "open",
+    "experiment": "comrak-regional-final-vs-comrak-block-owned-1791708371606702000-prose-65536-r3",
+    "n": 1,
+    "medianMs": 64.97854137420654,
+    "minMs": 64.97854137420654,
+    "maxMs": 64.97854137420654
   },
   {
     "fixture": "prose-65536.md",
@@ -5521,6 +6241,156 @@
   },
   {
     "fixture": "prose-65536.md",
+    "app": "current-block-owned",
+    "operation": "edit",
+    "experiment": "current-block-owned-vs-macdown073-vs-macdown3000-1791709009981093000-prose-65536-r1",
+    "n": 9,
+    "medianMs": 30.782291650772095,
+    "minMs": 23.83454155921936,
+    "maxMs": 36.17229175567627
+  },
+  {
+    "fixture": "prose-65536.md",
+    "app": "current-block-owned",
+    "operation": "edit",
+    "experiment": "current-block-owned-vs-macdown073-vs-macdown3000-1791709009981093000-prose-65536-r2",
+    "n": 9,
+    "medianMs": 30.038249969482422,
+    "minMs": 20.819833278656006,
+    "maxMs": 48.64550018310547
+  },
+  {
+    "fixture": "prose-65536.md",
+    "app": "current-block-owned",
+    "operation": "edit",
+    "experiment": "current-block-owned-vs-macdown073-vs-macdown3000-1791709009981093000-prose-65536-r3",
+    "n": 9,
+    "medianMs": 31.781291723251343,
+    "minMs": 16.1049165725708,
+    "maxMs": 43.90504169464111
+  },
+  {
+    "fixture": "prose-65536.md",
+    "app": "current-block-owned",
+    "operation": "edit",
+    "experiment": "current-block-owned-vs-macdown073-vs-macdown3000-1791709009981093000-prose-65536-r4",
+    "n": 9,
+    "medianMs": 31.676958084106445,
+    "minMs": 21.31820845603943,
+    "maxMs": 47.03637504577637
+  },
+  {
+    "fixture": "prose-65536.md",
+    "app": "current-block-owned",
+    "operation": "edit",
+    "experiment": "current-block-owned-vs-macdown073-vs-macdown3000-1791709009981093000-prose-65536-r5",
+    "n": 9,
+    "medianMs": 31.156333446502686,
+    "minMs": 23.692708492279053,
+    "maxMs": 36.96524977684021
+  },
+  {
+    "fixture": "prose-65536.md",
+    "app": "current-block-owned",
+    "operation": "open",
+    "experiment": "current-block-owned-vs-macdown073-vs-macdown3000-1791709009981093000-prose-65536-r1",
+    "n": 1,
+    "medianMs": 76.71562504768372,
+    "minMs": 76.71562504768372,
+    "maxMs": 76.71562504768372
+  },
+  {
+    "fixture": "prose-65536.md",
+    "app": "current-block-owned",
+    "operation": "open",
+    "experiment": "current-block-owned-vs-macdown073-vs-macdown3000-1791709009981093000-prose-65536-r2",
+    "n": 1,
+    "medianMs": 64.70829176902771,
+    "minMs": 64.70829176902771,
+    "maxMs": 64.70829176902771
+  },
+  {
+    "fixture": "prose-65536.md",
+    "app": "current-block-owned",
+    "operation": "open",
+    "experiment": "current-block-owned-vs-macdown073-vs-macdown3000-1791709009981093000-prose-65536-r3",
+    "n": 1,
+    "medianMs": 75.36337518692017,
+    "minMs": 75.36337518692017,
+    "maxMs": 75.36337518692017
+  },
+  {
+    "fixture": "prose-65536.md",
+    "app": "current-block-owned",
+    "operation": "open",
+    "experiment": "current-block-owned-vs-macdown073-vs-macdown3000-1791709009981093000-prose-65536-r4",
+    "n": 1,
+    "medianMs": 68.91950011253357,
+    "minMs": 68.91950011253357,
+    "maxMs": 68.91950011253357
+  },
+  {
+    "fixture": "prose-65536.md",
+    "app": "current-block-owned",
+    "operation": "open",
+    "experiment": "current-block-owned-vs-macdown073-vs-macdown3000-1791709009981093000-prose-65536-r5",
+    "n": 1,
+    "medianMs": 73.75437498092651,
+    "minMs": 73.75437498092651,
+    "maxMs": 73.75437498092651
+  },
+  {
+    "fixture": "prose-65536.md",
+    "app": "macdown073",
+    "operation": "edit",
+    "experiment": "current-block-owned-vs-macdown073-vs-macdown3000-1791709009981093000-prose-65536-r1",
+    "n": 9,
+    "medianMs": 17.140541076660156,
+    "minMs": 12.511290788650513,
+    "maxMs": 45.25354218482971
+  },
+  {
+    "fixture": "prose-65536.md",
+    "app": "macdown073",
+    "operation": "edit",
+    "experiment": "current-block-owned-vs-macdown073-vs-macdown3000-1791709009981093000-prose-65536-r2",
+    "n": 9,
+    "medianMs": 30.499666929244995,
+    "minMs": 14.951957941055298,
+    "maxMs": 34.08066701889038
+  },
+  {
+    "fixture": "prose-65536.md",
+    "app": "macdown073",
+    "operation": "edit",
+    "experiment": "current-block-owned-vs-macdown073-vs-macdown3000-1791709009981093000-prose-65536-r3",
+    "n": 9,
+    "medianMs": 28.604249954223633,
+    "minMs": 22.36479115486145,
+    "maxMs": 35.9126660823822
+  },
+  {
+    "fixture": "prose-65536.md",
+    "app": "macdown073",
+    "operation": "edit",
+    "experiment": "current-block-owned-vs-macdown073-vs-macdown3000-1791709009981093000-prose-65536-r4",
+    "n": 9,
+    "medianMs": 29.78474998474121,
+    "minMs": 13.963375091552734,
+    "maxMs": 33.52879190444946
+  },
+  {
+    "fixture": "prose-65536.md",
+    "app": "macdown073",
+    "operation": "edit",
+    "experiment": "current-block-owned-vs-macdown073-vs-macdown3000-1791709009981093000-prose-65536-r5",
+    "n": 9,
+    "medianMs": 24.020584106445312,
+    "minMs": 12.588375091552734,
+    "maxMs": 32.72562503814697
+  },
+  {
+    "fixture": "prose-65536.md",
     "app": "macdown073",
     "operation": "edit",
     "experiment": "macdown073-1791622854615527000-prose-r1",
@@ -5548,6 +6418,56 @@
     "medianMs": 37.143959045410156,
     "minMs": 30.979084014892578,
     "maxMs": 37.41137504577637
+  },
+  {
+    "fixture": "prose-65536.md",
+    "app": "macdown073",
+    "operation": "open",
+    "experiment": "current-block-owned-vs-macdown073-vs-macdown3000-1791709009981093000-prose-65536-r1",
+    "n": 1,
+    "medianMs": 305.4612081050873,
+    "minMs": 305.4612081050873,
+    "maxMs": 305.4612081050873
+  },
+  {
+    "fixture": "prose-65536.md",
+    "app": "macdown073",
+    "operation": "open",
+    "experiment": "current-block-owned-vs-macdown073-vs-macdown3000-1791709009981093000-prose-65536-r2",
+    "n": 1,
+    "medianMs": 206.9275839328766,
+    "minMs": 206.9275839328766,
+    "maxMs": 206.9275839328766
+  },
+  {
+    "fixture": "prose-65536.md",
+    "app": "macdown073",
+    "operation": "open",
+    "experiment": "current-block-owned-vs-macdown073-vs-macdown3000-1791709009981093000-prose-65536-r3",
+    "n": 1,
+    "medianMs": 209.91258311271667,
+    "minMs": 209.91258311271667,
+    "maxMs": 209.91258311271667
+  },
+  {
+    "fixture": "prose-65536.md",
+    "app": "macdown073",
+    "operation": "open",
+    "experiment": "current-block-owned-vs-macdown073-vs-macdown3000-1791709009981093000-prose-65536-r4",
+    "n": 1,
+    "medianMs": 224.5601658821106,
+    "minMs": 224.5601658821106,
+    "maxMs": 224.5601658821106
+  },
+  {
+    "fixture": "prose-65536.md",
+    "app": "macdown073",
+    "operation": "open",
+    "experiment": "current-block-owned-vs-macdown073-vs-macdown3000-1791709009981093000-prose-65536-r5",
+    "n": 1,
+    "medianMs": 215.37083387374878,
+    "minMs": 215.37083387374878,
+    "maxMs": 215.37083387374878
   },
   {
     "fixture": "prose-65536.md",
@@ -5583,6 +6503,56 @@
     "fixture": "prose-65536.md",
     "app": "macdown3000",
     "operation": "edit",
+    "experiment": "current-block-owned-vs-macdown073-vs-macdown3000-1791709009981093000-prose-65536-r1",
+    "n": 9,
+    "medianMs": 57.670541524887085,
+    "minMs": 39.89183306694031,
+    "maxMs": 75.51574993133545
+  },
+  {
+    "fixture": "prose-65536.md",
+    "app": "macdown3000",
+    "operation": "edit",
+    "experiment": "current-block-owned-vs-macdown073-vs-macdown3000-1791709009981093000-prose-65536-r2",
+    "n": 9,
+    "medianMs": 52.24387502670288,
+    "minMs": 25.310499906539917,
+    "maxMs": 75.00187492370605
+  },
+  {
+    "fixture": "prose-65536.md",
+    "app": "macdown3000",
+    "operation": "edit",
+    "experiment": "current-block-owned-vs-macdown073-vs-macdown3000-1791709009981093000-prose-65536-r3",
+    "n": 9,
+    "medianMs": 49.04291653633118,
+    "minMs": 35.49816679954529,
+    "maxMs": 74.40454173088074
+  },
+  {
+    "fixture": "prose-65536.md",
+    "app": "macdown3000",
+    "operation": "edit",
+    "experiment": "current-block-owned-vs-macdown073-vs-macdown3000-1791709009981093000-prose-65536-r4",
+    "n": 9,
+    "medianMs": 49.30429148674011,
+    "minMs": 32.67804169654846,
+    "maxMs": 74.34941673278809
+  },
+  {
+    "fixture": "prose-65536.md",
+    "app": "macdown3000",
+    "operation": "edit",
+    "experiment": "current-block-owned-vs-macdown073-vs-macdown3000-1791709009981093000-prose-65536-r5",
+    "n": 9,
+    "medianMs": 43.734583377838135,
+    "minMs": 27.062041759490967,
+    "maxMs": 75.36537504196167
+  },
+  {
+    "fixture": "prose-65536.md",
+    "app": "macdown3000",
+    "operation": "edit",
     "experiment": "macdown3000-1791630338294688000-prose-r1",
     "n": 3,
     "medianMs": 51.29400014877319,
@@ -5608,6 +6578,56 @@
     "medianMs": 53.243791580200195,
     "minMs": 29.812708377838135,
     "maxMs": 54.440083265304565
+  },
+  {
+    "fixture": "prose-65536.md",
+    "app": "macdown3000",
+    "operation": "open",
+    "experiment": "current-block-owned-vs-macdown073-vs-macdown3000-1791709009981093000-prose-65536-r1",
+    "n": 1,
+    "medianMs": 248.4825415611267,
+    "minMs": 248.4825415611267,
+    "maxMs": 248.4825415611267
+  },
+  {
+    "fixture": "prose-65536.md",
+    "app": "macdown3000",
+    "operation": "open",
+    "experiment": "current-block-owned-vs-macdown073-vs-macdown3000-1791709009981093000-prose-65536-r2",
+    "n": 1,
+    "medianMs": 211.58520817756653,
+    "minMs": 211.58520817756653,
+    "maxMs": 211.58520817756653
+  },
+  {
+    "fixture": "prose-65536.md",
+    "app": "macdown3000",
+    "operation": "open",
+    "experiment": "current-block-owned-vs-macdown073-vs-macdown3000-1791709009981093000-prose-65536-r3",
+    "n": 1,
+    "medianMs": 210.9705834388733,
+    "minMs": 210.9705834388733,
+    "maxMs": 210.9705834388733
+  },
+  {
+    "fixture": "prose-65536.md",
+    "app": "macdown3000",
+    "operation": "open",
+    "experiment": "current-block-owned-vs-macdown073-vs-macdown3000-1791709009981093000-prose-65536-r4",
+    "n": 1,
+    "medianMs": 272.71266651153564,
+    "minMs": 272.71266651153564,
+    "maxMs": 272.71266651153564
+  },
+  {
+    "fixture": "prose-65536.md",
+    "app": "macdown3000",
+    "operation": "open",
+    "experiment": "current-block-owned-vs-macdown073-vs-macdown3000-1791709009981093000-prose-65536-r5",
+    "n": 1,
+    "medianMs": 200.13841676712036,
+    "minMs": 200.13841676712036,
+    "maxMs": 200.13841676712036
   },
   {
     "fixture": "prose-65536.md",
@@ -5698,6 +6718,126 @@
     "medianMs": 92.08175015449524,
     "minMs": 92.08175015449524,
     "maxMs": 92.08175015449524
+  },
+  {
+    "fixture": "prose-8388608.md",
+    "app": "comrak-block-owned",
+    "operation": "edit",
+    "experiment": "comrak-block-owned-1791707211188478000-prose-r1",
+    "n": 3,
+    "medianMs": 15.0083749294281,
+    "minMs": 12.389999866485596,
+    "maxMs": 25.06820821762085
+  },
+  {
+    "fixture": "prose-8388608.md",
+    "app": "comrak-block-owned",
+    "operation": "edit",
+    "experiment": "comrak-block-owned-1791707211188478000-prose-r2",
+    "n": 3,
+    "medianMs": 15.25754165649414,
+    "minMs": 13.029916763305664,
+    "maxMs": 28.7857084274292
+  },
+  {
+    "fixture": "prose-8388608.md",
+    "app": "comrak-block-owned",
+    "operation": "edit",
+    "experiment": "comrak-block-owned-1791707211188478000-prose-r3",
+    "n": 3,
+    "medianMs": 15.995500087738037,
+    "minMs": 15.609458446502686,
+    "maxMs": 23.34974980354309
+  },
+  {
+    "fixture": "prose-8388608.md",
+    "app": "comrak-block-owned",
+    "operation": "edit",
+    "experiment": "comrak-regional-final-vs-comrak-block-owned-1791708371606702000-prose-8388608-r1",
+    "n": 7,
+    "medianMs": 11.180375099182129,
+    "minMs": 8.840583562850952,
+    "maxMs": 27.507708072662354
+  },
+  {
+    "fixture": "prose-8388608.md",
+    "app": "comrak-block-owned",
+    "operation": "edit",
+    "experiment": "comrak-regional-final-vs-comrak-block-owned-1791708371606702000-prose-8388608-r2",
+    "n": 7,
+    "medianMs": 10.158374786376953,
+    "minMs": 8.123541831970215,
+    "maxMs": 23.820250034332275
+  },
+  {
+    "fixture": "prose-8388608.md",
+    "app": "comrak-block-owned",
+    "operation": "edit",
+    "experiment": "comrak-regional-final-vs-comrak-block-owned-1791708371606702000-prose-8388608-r3",
+    "n": 7,
+    "medianMs": 9.774166584014893,
+    "minMs": 8.877458333969116,
+    "maxMs": 23.886083126068115
+  },
+  {
+    "fixture": "prose-8388608.md",
+    "app": "comrak-block-owned",
+    "operation": "open",
+    "experiment": "comrak-block-owned-1791707211188478000-prose-r1",
+    "n": 1,
+    "medianMs": 669.5662086009979,
+    "minMs": 669.5662086009979,
+    "maxMs": 669.5662086009979
+  },
+  {
+    "fixture": "prose-8388608.md",
+    "app": "comrak-block-owned",
+    "operation": "open",
+    "experiment": "comrak-block-owned-1791707211188478000-prose-r2",
+    "n": 1,
+    "medianMs": 759.6415419578552,
+    "minMs": 759.6415419578552,
+    "maxMs": 759.6415419578552
+  },
+  {
+    "fixture": "prose-8388608.md",
+    "app": "comrak-block-owned",
+    "operation": "open",
+    "experiment": "comrak-block-owned-1791707211188478000-prose-r3",
+    "n": 1,
+    "medianMs": 673.8757085800171,
+    "minMs": 673.8757085800171,
+    "maxMs": 673.8757085800171
+  },
+  {
+    "fixture": "prose-8388608.md",
+    "app": "comrak-block-owned",
+    "operation": "open",
+    "experiment": "comrak-regional-final-vs-comrak-block-owned-1791708371606702000-prose-8388608-r1",
+    "n": 1,
+    "medianMs": 672.110333442688,
+    "minMs": 672.110333442688,
+    "maxMs": 672.110333442688
+  },
+  {
+    "fixture": "prose-8388608.md",
+    "app": "comrak-block-owned",
+    "operation": "open",
+    "experiment": "comrak-regional-final-vs-comrak-block-owned-1791708371606702000-prose-8388608-r2",
+    "n": 1,
+    "medianMs": 702.442125082016,
+    "minMs": 702.442125082016,
+    "maxMs": 702.442125082016
+  },
+  {
+    "fixture": "prose-8388608.md",
+    "app": "comrak-block-owned",
+    "operation": "open",
+    "experiment": "comrak-regional-final-vs-comrak-block-owned-1791708371606702000-prose-8388608-r3",
+    "n": 1,
+    "medianMs": 667.1697916984558,
+    "minMs": 667.1697916984558,
+    "maxMs": 667.1697916984558
   },
   {
     "fixture": "prose-8388608.md",
@@ -6472,6 +7612,36 @@
   {
     "fixture": "prose-8388608.md",
     "app": "comrak-regional-final",
+    "operation": "edit",
+    "experiment": "comrak-regional-final-vs-comrak-block-owned-1791708371606702000-prose-8388608-r1",
+    "n": 7,
+    "medianMs": 10.15637493133545,
+    "minMs": 9.46708345413208,
+    "maxMs": 43.82112503051758
+  },
+  {
+    "fixture": "prose-8388608.md",
+    "app": "comrak-regional-final",
+    "operation": "edit",
+    "experiment": "comrak-regional-final-vs-comrak-block-owned-1791708371606702000-prose-8388608-r2",
+    "n": 7,
+    "medianMs": 13.19183349609375,
+    "minMs": 10.440916776657104,
+    "maxMs": 32.17916655540466
+  },
+  {
+    "fixture": "prose-8388608.md",
+    "app": "comrak-regional-final",
+    "operation": "edit",
+    "experiment": "comrak-regional-final-vs-comrak-block-owned-1791708371606702000-prose-8388608-r3",
+    "n": 7,
+    "medianMs": 11.649749755859375,
+    "minMs": 9.392583131790161,
+    "maxMs": 25.492249965667725
+  },
+  {
+    "fixture": "prose-8388608.md",
+    "app": "comrak-regional-final",
     "operation": "open",
     "experiment": "comrak-regional-final-1791706730526322000-prose-r1",
     "n": 1,
@@ -6498,6 +7668,36 @@
     "medianMs": 687.9839582443237,
     "minMs": 687.9839582443237,
     "maxMs": 687.9839582443237
+  },
+  {
+    "fixture": "prose-8388608.md",
+    "app": "comrak-regional-final",
+    "operation": "open",
+    "experiment": "comrak-regional-final-vs-comrak-block-owned-1791708371606702000-prose-8388608-r1",
+    "n": 1,
+    "medianMs": 711.2363750934601,
+    "minMs": 711.2363750934601,
+    "maxMs": 711.2363750934601
+  },
+  {
+    "fixture": "prose-8388608.md",
+    "app": "comrak-regional-final",
+    "operation": "open",
+    "experiment": "comrak-regional-final-vs-comrak-block-owned-1791708371606702000-prose-8388608-r2",
+    "n": 1,
+    "medianMs": 674.4402501583099,
+    "minMs": 674.4402501583099,
+    "maxMs": 674.4402501583099
+  },
+  {
+    "fixture": "prose-8388608.md",
+    "app": "comrak-regional-final",
+    "operation": "open",
+    "experiment": "comrak-regional-final-vs-comrak-block-owned-1791708371606702000-prose-8388608-r3",
+    "n": 1,
+    "medianMs": 670.1740417480469,
+    "minMs": 670.1740417480469,
+    "maxMs": 670.1740417480469
   },
   {
     "fixture": "prose-8388608.md",
@@ -10561,6 +11761,156 @@
   },
   {
     "fixture": "sparse-prose-1048576.md",
+    "app": "current-block-owned",
+    "operation": "edit",
+    "experiment": "current-block-owned-vs-macdown073-vs-macdown3000-1791709009981093000-sparse-prose-1048576-r1",
+    "n": 9,
+    "medianMs": 18.709375143051147,
+    "minMs": 11.769000053405762,
+    "maxMs": 46.40049982070923
+  },
+  {
+    "fixture": "sparse-prose-1048576.md",
+    "app": "current-block-owned",
+    "operation": "edit",
+    "experiment": "current-block-owned-vs-macdown073-vs-macdown3000-1791709009981093000-sparse-prose-1048576-r2",
+    "n": 9,
+    "medianMs": 24.632874965667725,
+    "minMs": 22.78666663169861,
+    "maxMs": 28.157166719436646
+  },
+  {
+    "fixture": "sparse-prose-1048576.md",
+    "app": "current-block-owned",
+    "operation": "edit",
+    "experiment": "current-block-owned-vs-macdown073-vs-macdown3000-1791709009981093000-sparse-prose-1048576-r3",
+    "n": 9,
+    "medianMs": 25.687124967575073,
+    "minMs": 21.597291707992554,
+    "maxMs": 33.48854160308838
+  },
+  {
+    "fixture": "sparse-prose-1048576.md",
+    "app": "current-block-owned",
+    "operation": "edit",
+    "experiment": "current-block-owned-vs-macdown073-vs-macdown3000-1791709009981093000-sparse-prose-1048576-r4",
+    "n": 9,
+    "medianMs": 18.946624994277954,
+    "minMs": 16.01016664505005,
+    "maxMs": 38.50629162788391
+  },
+  {
+    "fixture": "sparse-prose-1048576.md",
+    "app": "current-block-owned",
+    "operation": "edit",
+    "experiment": "current-block-owned-vs-macdown073-vs-macdown3000-1791709009981093000-sparse-prose-1048576-r5",
+    "n": 9,
+    "medianMs": 25.09945821762085,
+    "minMs": 21.788750171661377,
+    "maxMs": 32.62570834159851
+  },
+  {
+    "fixture": "sparse-prose-1048576.md",
+    "app": "current-block-owned",
+    "operation": "open",
+    "experiment": "current-block-owned-vs-macdown073-vs-macdown3000-1791709009981093000-sparse-prose-1048576-r1",
+    "n": 1,
+    "medianMs": 133.4818332195282,
+    "minMs": 133.4818332195282,
+    "maxMs": 133.4818332195282
+  },
+  {
+    "fixture": "sparse-prose-1048576.md",
+    "app": "current-block-owned",
+    "operation": "open",
+    "experiment": "current-block-owned-vs-macdown073-vs-macdown3000-1791709009981093000-sparse-prose-1048576-r2",
+    "n": 1,
+    "medianMs": 131.17333316802979,
+    "minMs": 131.17333316802979,
+    "maxMs": 131.17333316802979
+  },
+  {
+    "fixture": "sparse-prose-1048576.md",
+    "app": "current-block-owned",
+    "operation": "open",
+    "experiment": "current-block-owned-vs-macdown073-vs-macdown3000-1791709009981093000-sparse-prose-1048576-r3",
+    "n": 1,
+    "medianMs": 131.70225024223328,
+    "minMs": 131.70225024223328,
+    "maxMs": 131.70225024223328
+  },
+  {
+    "fixture": "sparse-prose-1048576.md",
+    "app": "current-block-owned",
+    "operation": "open",
+    "experiment": "current-block-owned-vs-macdown073-vs-macdown3000-1791709009981093000-sparse-prose-1048576-r4",
+    "n": 1,
+    "medianMs": 121.04691672325134,
+    "minMs": 121.04691672325134,
+    "maxMs": 121.04691672325134
+  },
+  {
+    "fixture": "sparse-prose-1048576.md",
+    "app": "current-block-owned",
+    "operation": "open",
+    "experiment": "current-block-owned-vs-macdown073-vs-macdown3000-1791709009981093000-sparse-prose-1048576-r5",
+    "n": 1,
+    "medianMs": 135.96012473106384,
+    "minMs": 135.96012473106384,
+    "maxMs": 135.96012473106384
+  },
+  {
+    "fixture": "sparse-prose-1048576.md",
+    "app": "macdown073",
+    "operation": "edit",
+    "experiment": "current-block-owned-vs-macdown073-vs-macdown3000-1791709009981093000-sparse-prose-1048576-r1",
+    "n": 9,
+    "medianMs": 115.833083152771,
+    "minMs": 105.26633310317993,
+    "maxMs": 140.43220806121826
+  },
+  {
+    "fixture": "sparse-prose-1048576.md",
+    "app": "macdown073",
+    "operation": "edit",
+    "experiment": "current-block-owned-vs-macdown073-vs-macdown3000-1791709009981093000-sparse-prose-1048576-r2",
+    "n": 9,
+    "medianMs": 113.66008400917053,
+    "minMs": 105.35450005531311,
+    "maxMs": 168.1290421485901
+  },
+  {
+    "fixture": "sparse-prose-1048576.md",
+    "app": "macdown073",
+    "operation": "edit",
+    "experiment": "current-block-owned-vs-macdown073-vs-macdown3000-1791709009981093000-sparse-prose-1048576-r3",
+    "n": 9,
+    "medianMs": 112.22137498855591,
+    "minMs": 105.88145923614502,
+    "maxMs": 134.47841620445251
+  },
+  {
+    "fixture": "sparse-prose-1048576.md",
+    "app": "macdown073",
+    "operation": "edit",
+    "experiment": "current-block-owned-vs-macdown073-vs-macdown3000-1791709009981093000-sparse-prose-1048576-r4",
+    "n": 9,
+    "medianMs": 112.86262488365173,
+    "minMs": 111.79787492752075,
+    "maxMs": 130.78033423423767
+  },
+  {
+    "fixture": "sparse-prose-1048576.md",
+    "app": "macdown073",
+    "operation": "edit",
+    "experiment": "current-block-owned-vs-macdown073-vs-macdown3000-1791709009981093000-sparse-prose-1048576-r5",
+    "n": 9,
+    "medianMs": 113.91620802879333,
+    "minMs": 106.12979125976562,
+    "maxMs": 128.17970895767212
+  },
+  {
+    "fixture": "sparse-prose-1048576.md",
     "app": "macdown073",
     "operation": "edit",
     "experiment": "macdown073-1791622854615527000-sparse-prose-r1",
@@ -10588,6 +11938,56 @@
     "medianMs": 123.76587510108948,
     "minMs": 122.95062518119812,
     "maxMs": 125.83720874786377
+  },
+  {
+    "fixture": "sparse-prose-1048576.md",
+    "app": "macdown073",
+    "operation": "open",
+    "experiment": "current-block-owned-vs-macdown073-vs-macdown3000-1791709009981093000-sparse-prose-1048576-r1",
+    "n": 1,
+    "medianMs": 695.4199171066284,
+    "minMs": 695.4199171066284,
+    "maxMs": 695.4199171066284
+  },
+  {
+    "fixture": "sparse-prose-1048576.md",
+    "app": "macdown073",
+    "operation": "open",
+    "experiment": "current-block-owned-vs-macdown073-vs-macdown3000-1791709009981093000-sparse-prose-1048576-r2",
+    "n": 1,
+    "medianMs": 713.9863331317902,
+    "minMs": 713.9863331317902,
+    "maxMs": 713.9863331317902
+  },
+  {
+    "fixture": "sparse-prose-1048576.md",
+    "app": "macdown073",
+    "operation": "open",
+    "experiment": "current-block-owned-vs-macdown073-vs-macdown3000-1791709009981093000-sparse-prose-1048576-r3",
+    "n": 1,
+    "medianMs": 719.3363752365112,
+    "minMs": 719.3363752365112,
+    "maxMs": 719.3363752365112
+  },
+  {
+    "fixture": "sparse-prose-1048576.md",
+    "app": "macdown073",
+    "operation": "open",
+    "experiment": "current-block-owned-vs-macdown073-vs-macdown3000-1791709009981093000-sparse-prose-1048576-r4",
+    "n": 1,
+    "medianMs": 712.0745828151703,
+    "minMs": 712.0745828151703,
+    "maxMs": 712.0745828151703
+  },
+  {
+    "fixture": "sparse-prose-1048576.md",
+    "app": "macdown073",
+    "operation": "open",
+    "experiment": "current-block-owned-vs-macdown073-vs-macdown3000-1791709009981093000-sparse-prose-1048576-r5",
+    "n": 1,
+    "medianMs": 719.8208749294281,
+    "minMs": 719.8208749294281,
+    "maxMs": 719.8208749294281
   },
   {
     "fixture": "sparse-prose-1048576.md",
@@ -10623,6 +12023,56 @@
     "fixture": "sparse-prose-1048576.md",
     "app": "macdown3000",
     "operation": "edit",
+    "experiment": "current-block-owned-vs-macdown073-vs-macdown3000-1791709009981093000-sparse-prose-1048576-r1",
+    "n": 9,
+    "medianMs": 241.16100001335144,
+    "minMs": 228.81766653060913,
+    "maxMs": 373.7544584274292
+  },
+  {
+    "fixture": "sparse-prose-1048576.md",
+    "app": "macdown3000",
+    "operation": "edit",
+    "experiment": "current-block-owned-vs-macdown073-vs-macdown3000-1791709009981093000-sparse-prose-1048576-r2",
+    "n": 9,
+    "medianMs": 242.59633326530457,
+    "minMs": 228.34625005722046,
+    "maxMs": 390.6268332004547
+  },
+  {
+    "fixture": "sparse-prose-1048576.md",
+    "app": "macdown3000",
+    "operation": "edit",
+    "experiment": "current-block-owned-vs-macdown073-vs-macdown3000-1791709009981093000-sparse-prose-1048576-r3",
+    "n": 9,
+    "medianMs": 240.56204175949097,
+    "minMs": 220.65629172325134,
+    "maxMs": 384.1216666698456
+  },
+  {
+    "fixture": "sparse-prose-1048576.md",
+    "app": "macdown3000",
+    "operation": "edit",
+    "experiment": "current-block-owned-vs-macdown073-vs-macdown3000-1791709009981093000-sparse-prose-1048576-r4",
+    "n": 9,
+    "medianMs": 236.20091676712036,
+    "minMs": 229.16287517547607,
+    "maxMs": 396.4668333530426
+  },
+  {
+    "fixture": "sparse-prose-1048576.md",
+    "app": "macdown3000",
+    "operation": "edit",
+    "experiment": "current-block-owned-vs-macdown073-vs-macdown3000-1791709009981093000-sparse-prose-1048576-r5",
+    "n": 9,
+    "medianMs": 240.6582498550415,
+    "minMs": 233.38024973869324,
+    "maxMs": 386.75141644477844
+  },
+  {
+    "fixture": "sparse-prose-1048576.md",
+    "app": "macdown3000",
+    "operation": "edit",
     "experiment": "macdown3000-1791630338294688000-sparse-prose-r1",
     "n": 3,
     "medianMs": 266.40208315849304,
@@ -10648,6 +12098,56 @@
     "medianMs": 240.52029180526733,
     "minMs": 233.6206250190735,
     "maxMs": 359.9719169139862
+  },
+  {
+    "fixture": "sparse-prose-1048576.md",
+    "app": "macdown3000",
+    "operation": "open",
+    "experiment": "current-block-owned-vs-macdown073-vs-macdown3000-1791709009981093000-sparse-prose-1048576-r1",
+    "n": 1,
+    "medianMs": 758.0590000152588,
+    "minMs": 758.0590000152588,
+    "maxMs": 758.0590000152588
+  },
+  {
+    "fixture": "sparse-prose-1048576.md",
+    "app": "macdown3000",
+    "operation": "open",
+    "experiment": "current-block-owned-vs-macdown073-vs-macdown3000-1791709009981093000-sparse-prose-1048576-r2",
+    "n": 1,
+    "medianMs": 787.4059998989105,
+    "minMs": 787.4059998989105,
+    "maxMs": 787.4059998989105
+  },
+  {
+    "fixture": "sparse-prose-1048576.md",
+    "app": "macdown3000",
+    "operation": "open",
+    "experiment": "current-block-owned-vs-macdown073-vs-macdown3000-1791709009981093000-sparse-prose-1048576-r3",
+    "n": 1,
+    "medianMs": 762.7549166679382,
+    "minMs": 762.7549166679382,
+    "maxMs": 762.7549166679382
+  },
+  {
+    "fixture": "sparse-prose-1048576.md",
+    "app": "macdown3000",
+    "operation": "open",
+    "experiment": "current-block-owned-vs-macdown073-vs-macdown3000-1791709009981093000-sparse-prose-1048576-r4",
+    "n": 1,
+    "medianMs": 770.3018333911896,
+    "minMs": 770.3018333911896,
+    "maxMs": 770.3018333911896
+  },
+  {
+    "fixture": "sparse-prose-1048576.md",
+    "app": "macdown3000",
+    "operation": "open",
+    "experiment": "current-block-owned-vs-macdown073-vs-macdown3000-1791709009981093000-sparse-prose-1048576-r5",
+    "n": 1,
+    "medianMs": 770.8077085018158,
+    "minMs": 770.8077085018158,
+    "maxMs": 770.8077085018158
   },
   {
     "fixture": "sparse-prose-1048576.md",
