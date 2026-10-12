@@ -1,0 +1,53 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+readonly version="0.8.0"
+readonly release_base="https://github.com/tola-rs/tola-ssg/releases/download/v${version}"
+
+case "$(uname -s)/$(uname -m)" in
+  Darwin/arm64)
+    archive="tola-${version}-aarch64-apple-darwin.tar.gz"
+    expected_sha256="83c100168848ad9242efb991d78822e0850ddc0d055d8a9e22c2c8b693fb7291"
+    ;;
+  Linux/x86_64)
+    archive="tola-${version}-x86_64-unknown-linux-gnu.tar.gz"
+    expected_sha256="ca32339e5dba7e7ed0c7194203677b9fc26771c836c665b323e01088bb13860a"
+    ;;
+  Linux/aarch64 | Linux/arm64)
+    archive="tola-${version}-aarch64-unknown-linux-gnu.tar.gz"
+    expected_sha256="407a271a3dc448b171ffbc82de8537c5fa7c5606981adac4488318fa8d4609a4"
+    ;;
+  *)
+    echo "No Tola ${version} binary is available for $(uname -s)/$(uname -m)." >&2
+    echo "See ${release_base}" >&2
+    exit 1
+    ;;
+esac
+
+project_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+install_dir="${project_dir}/.tola/bin"
+temporary_dir="$(mktemp -d "${TMPDIR:-/tmp}/markato-tola.XXXXXX")"
+download_path="${temporary_dir}/${archive}"
+
+trap 'rm -rf -- "${temporary_dir}"' EXIT
+
+echo "Downloading Tola ${version}…"
+curl --fail --location --silent --show-error \
+  "${release_base}/${archive}" \
+  --output "${download_path}"
+
+if command -v shasum >/dev/null 2>&1; then
+  echo "${expected_sha256}  ${download_path}" | shasum --algorithm 256 --check
+elif command -v sha256sum >/dev/null 2>&1; then
+  echo "${expected_sha256}  ${download_path}" | sha256sum --check --strict
+else
+  echo "Cannot verify the download: shasum or sha256sum is required." >&2
+  exit 1
+fi
+
+tar --extract --gzip --file "${download_path}" --directory "${temporary_dir}"
+mkdir -p "${install_dir}"
+install -m 0755 "${temporary_dir}/tola" "${install_dir}/tola"
+
+echo "Installed Tola ${version} in ${install_dir}."

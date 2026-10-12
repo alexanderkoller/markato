@@ -480,7 +480,7 @@ final class EditorWindowController: NSWindowController, NSSplitViewDelegate, NSS
     }
     @objc func increaseFont(_ sender:Any?) { setFont(sourceFontSize+1) }
     @objc func decreaseFont(_ sender:Any?) { setFont(max(9,sourceFontSize-1)) }
-    private func setFont(_ size:CGFloat) { lastRequest = nil;sourceFontSize = size; source.fontSize = size; preview.fontSize = size+1 }
+    private func setFont(_ size:CGFloat) { lastRequest = nil;sourceFontSize = size; source.fontSize = size; preview.fontSize = size+2 }
     @objc func showFind(_ sender:Any?) { findVisible = true; findBar.isHidden = false; layoutContent(); window?.makeFirstResponder(findField) }
     @objc private func closeFind(_ sender:Any?) { findVisible = false; findBar.isHidden = true; layoutContent(); window?.makeFirstResponder(source.textView) }
     @objc func findNext(_ sender:Any?) { find(backwards:false) }

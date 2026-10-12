@@ -129,7 +129,7 @@ private struct CommittedPresentation {
     override var isFlipped:Bool {true}
     var scrolling:PreviewScrolling = .independent {didSet {sourceLayoutChanged()}}
     var openAnchor:((String)->Void)?
-    var fontSize:CGFloat=14 {didSet {if fontSize != oldValue {endScrollGesture();requestPresentation()}}}
+    var fontSize:CGFloat=15 {didSet {if fontSize != oldValue {endScrollGesture();requestPresentation()}}}
     var baseURL:URL? {didSet {if baseURL != oldValue {endScrollGesture();requestPresentation()}}}
     private let surfaces:[PreviewSurface]
     private var displayed:PreviewSurface {committed?.surface ?? surfaces[0]}

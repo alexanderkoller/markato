@@ -29,6 +29,10 @@ struct Engine {
     Config config;
     config.resource_path_prefix = "resources/";
     config.bitmap_alignment = 16;
+    // The platform loader supplies macOS system font files, while this profile
+    // makes Ultralight composite their glyphs like Safari and other macOS apps.
+    // Ultralight's default profile is WindowsLike, even on macOS.
+    config.font_profile = FontProfile::MacOSLike;
     Platform::instance().set_config(config);
     Platform::instance().set_font_loader(GetPlatformFontLoader());
     Platform::instance().set_file_system(GetPlatformFileSystem(root));

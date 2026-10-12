@@ -1,0 +1,23 @@
+# Tola configuration (v0.8.0)
+# https://github.com/tola-rs/tola-ssg
+
+[site]
+origin = "https://alexanderkoller.github.io"
+base-path = "/markato/"
+title = "Markato"
+authors = [{ name = "Alexander Koller" }]
+description = "A clean, fast Markdown editor for Apple Silicon Macs, built to stay responsive on long documents."
+language = "en"
+
+[build]
+entry = "site.typ"
+content-dir = "content"
+publish-dir = "public"
+
+[assets]
+cache-busting = true
+trees = [{ source = "static/web-assets", url-prefix = "/assets" }]
+files = []
+
+[vendor]
+path = "vendor"

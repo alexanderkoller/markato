@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+readonly required_version="0.8.0"
+project_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+local_tola="${project_dir}/.tola/bin/tola"
+
+if [[ -x "${local_tola}" ]]; then
+  tola_command="${local_tola}"
+elif command -v tola >/dev/null 2>&1; then
+  tola_command="$(command -v tola)"
+else
+  echo "Tola ${required_version} is required but was not found." >&2
+  echo "Install it with:" >&2
+  echo "  ./scripts/install-tola" >&2
+  exit 1
+fi
+
+installed_version="$("${tola_command}" --version | awk 'NR == 1 { print $2 }')"
+
+if [[ "${installed_version}" != "${required_version}" ]]; then
+  echo "This website requires Tola ${required_version}; found ${installed_version}." >&2
+  echo "Install the pinned project copy with:" >&2
+  echo "  ./scripts/install-tola" >&2
+  echo >&2
+  echo "Tola 0.8 uses 'dev' for the local preview (0.7 used 'serve')." >&2
+  exit 1
+fi
+
+exec "${tola_command}" "$@"
