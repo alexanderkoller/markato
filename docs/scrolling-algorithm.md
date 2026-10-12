@@ -1,6 +1,6 @@
 # How synchronized scrolling works
 
-AstraMarkdown keeps source editing, Markdown preparation, and preview painting separate. Scrolling reads already prepared state; it does not reparse Markdown or rebuild the source document merely because the viewport moved.
+Markato keeps source editing, Markdown preparation, and preview painting separate. Scrolling reads already prepared state; it does not reparse Markdown or rebuild the source document merely because the viewport moved.
 
 ## State ownership
 
@@ -41,6 +41,26 @@ During a covered live-scroll gesture, the committed map is frozen. Background pr
 
 When the source has no vertical scroll range but the preview does, the preview may scroll independently. Inspectors also use independent scrolling.
 
+## Resizing
+
+The window controller creates one `ViewportResizeSession` at the start of a
+gesture. It captures the source character at the visible top and its pixel
+displacement, plus the preview element at the visible top and its displacement.
+Each pane reflows at its new width and resolves its own saved anchor. Neither
+pane is synchronized to the other during resize.
+
+The last pending window frame goes through the ordinary layout path before
+the gesture ends. TextKit can finalize a distant line's geometry at release
+without changing the clip origin, so the source resolves its saved anchor once
+more after that layout. The invariant is the visible anchor, not a constant
+numeric scroll offset. Preview publication during resize does not build a
+source-to-preview scroll map; it uses its own saved element instead. The map is
+rebuilt when ordinary scrolling resumes. The session continues to protect both
+positions from queued layout work until source input, preview navigation, or
+an edit begins a new positioning event.
+Edits align their corresponding preview block directly; ordinary source
+scrolling continues to use the landmark map described above.
+
 ## Publishing a preview
 
 A request captures its revision, entries, font size, asset base, and width. Ultralight reconciles stable section IDs, lays out the bounded document, returns geometry, and paints a bitmap. The controller commits the request only if it is still current and covers the destination.
@@ -64,21 +84,31 @@ bash scripts/build-native.sh
 cargo test --locked --manifest-path Native/Comrak/Cargo.toml --target-dir .build/comrak
 swift test --disable-sandbox --cache-path .build/cache --config-path .build/config --security-path .build/security
 bash scripts/build-app.sh debug
-dist/debug/AstraMarkdown.app/Contents/MacOS/AstraMarkdown --integration-test
-dist/debug/AstraMarkdown.app/Contents/MacOS/AstraMarkdown --integration-layout-index
+dist/debug/Markato.app/Contents/MacOS/Markato --integration-test
+dist/debug/Markato.app/Contents/MacOS/Markato --integration-test --integration-layout-index
 ```
 
 The default integration check covers the bounded first view, failed presentation recovery, automatic and manual parser recovery while retaining the committed view, cached deep navigation, EOF edits, resize, and return to the top. The layout-index check compares refined cached positions with independent native glyph coordinates after edits and width changes.
 
 These checks establish state ownership, geometry consistency, and parser behavior. They do not prove compositor timing on every physical display.
 
+For physical resize diagnostics, `defaults write org.astramarkdown.editor
+ResizeTraceEnabled -bool YES` enables a geometry-only trace at
+`/private/tmp/markato-resize.log` in the release app. Quit and relaunch the app
+after changing the preference. `defaults delete org.astramarkdown.editor
+ResizeTraceEnabled` disables it.
+
+End-to-end application timing and competitor results live in the
+[performance overview](performance.md). Keeping those measurements separate lets
+this document remain the architectural contract for synchronized scrolling.
+
 ## Code guide
 
-- [Native source layout and highlighting](../Sources/AstraMarkdown/SourceEditor.swift)
-- [Foreground/background preparation](../Sources/AstraMarkdown/EditorWindowController.swift)
-- [Preview mapping and publication](../Sources/AstraMarkdown/FragmentRenderer.swift)
+- [Native source layout and highlighting](../Sources/Markato/SourceEditor.swift)
+- [Foreground/background preparation](../Sources/Markato/EditorWindowController.swift)
+- [Preview mapping and publication](../Sources/Markato/FragmentRenderer.swift)
 - [Ultralight rendering boundary](../Sources/HTMLPreview/HTMLPreviewView.swift)
 - [Retained prepared document](../Sources/MarkdownCore/PreparedDocument.swift)
 - [Scroll interpolation](../Sources/MarkdownCore/ScrollLandmarks.swift)
 - [Native Comrak adapter](../Native/Comrak/src/lib.rs)
-- [Integration checks](../Sources/AstraMarkdown/IntegrationCheck.swift)
+- [Integration checks](../Sources/Markato/IntegrationCheck.swift)

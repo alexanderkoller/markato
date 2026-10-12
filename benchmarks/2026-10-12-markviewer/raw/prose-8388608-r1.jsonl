@@ -1,0 +1,2 @@
+{"bundle":"com.markviewer.markviewer","os":"Version 26.6.2 (Build 25G83)","window":"1120x760 offscreen","fixture":"\/private\/tmp\/markviewer-benchmark-vky96b84\/inputs\/prose-8388608-r1.md","version":"1.8.14","type":"metadata","endpoint":"visible H1 plus changed WebKit frame"}
+{"type":"error","stage":"open","message":"Timed out after 60 seconds awaiting a visibly painted H1"}

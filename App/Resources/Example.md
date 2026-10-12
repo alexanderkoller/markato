@@ -1,4 +1,4 @@
-# AstraMarkdown — a long example
+# Markato — a long example
 
 This document is here to explore the editor. Scroll through both panes, resize the window, drag the divider, and edit a paragraph. **Bold**, *italic*, headings, tables, code, and mathematics appear throughout. The source pane controls navigation; the preview follows the visible passage.
 

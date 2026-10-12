@@ -62,7 +62,7 @@ HTMLPreview
               |
               | committed global geometry and user intents
               v
-AstraMarkdown controller
+Markato controller
   source ownership, calibrated source/preview map, document commands
 ```
 

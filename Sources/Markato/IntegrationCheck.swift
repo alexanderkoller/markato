@@ -15,6 +15,60 @@ import MarkdownCore
         FileHandle.standardError.write(Data("INTEGRATION FAILED: \(message)\n".utf8))
         exit(EXIT_FAILURE)
     }
+    private struct PixelCapture {
+        let width:Int,height:Int,bytes:Data,png:Data,inkRows:[Int]
+    }
+    private static func capture(_ view:NSView)->PixelCapture {
+        guard let rep=view.bitmapImageRepForCachingDisplay(in:view.bounds) else {
+            fail("Could not allocate visual resize capture")
+        }
+        view.cacheDisplay(in:view.bounds,to:rep)
+        guard let pointer=rep.bitmapData,
+              let png=rep.representation(using:.png,properties:[:]) else {
+            fail("Could not encode visual resize capture")
+        }
+        // A vertical ink profile is insensitive to harmless color/antialias
+        // repaint differences but makes even a one-line viewport jump obvious.
+        // Sample every fourth horizontal pixel to keep the native integration
+        // check cheap at Retina resolutions.
+        var inkRows=[Int](repeating:0,count:rep.pixelsHigh)
+        for y in 0..<rep.pixelsHigh {
+            var ink=0
+            for x in stride(from:0,to:rep.pixelsWide,by:4) {
+                guard let color=rep.colorAt(x:x,y:y)?.usingColorSpace(.deviceRGB) else{continue}
+                let luminance=0.2126*color.redComponent+0.7152*color.greenComponent+0.0722*color.blueComponent
+                if color.alphaComponent>0.1 && luminance<0.86 {ink += 1}
+            }
+            inkRows[y]=ink
+        }
+        return PixelCapture(width:rep.pixelsWide,height:rep.pixelsHigh,
+            bytes:Data(bytes:pointer,count:rep.bytesPerRow*rep.pixelsHigh),png:png,inkRows:inkRows)
+    }
+    private static func visualVerticalShift(_ before:PixelCapture,_ after:PixelCapture,maxShift:Int=160)->Int? {
+        guard before.width==after.width,before.height==after.height,before.inkRows.count==after.inkRows.count else{return nil}
+        var best:(shift:Int,error:Double)?
+        for shift in -maxShift...maxShift {
+            let start=max(12,-shift+12),end=min(before.height-12,after.height-shift-12)
+            guard end>start else{continue}
+            var error=0.0,weight=0.0
+            for y in start..<end {
+                let a=before.inkRows[y],b=after.inkRows[y+shift]
+                error += Double(abs(a-b));weight += Double(max(1,a+b))
+            }
+            let normalized=error/weight
+            if best == nil || normalized<best!.error {best=(shift,normalized)}
+        }
+        return best?.shift
+    }
+    private static var visualResizeOutput:String? {
+        CommandLine.arguments.first(where:{$0.hasPrefix("--visual-resize-output=")}).map {
+            String($0.dropFirst("--visual-resize-output=".count))
+        }
+    }
+    private static func writeVisualCapture(_ capture:PixelCapture,suffix:String) {
+        guard let base=visualResizeOutput else{return}
+        try? capture.png.write(to:URL(fileURLWithPath:"\(base)-\(suffix).png"))
+    }
     static func run(_ document:MarkdownDocument) {
         guard let controller=document.windowControllers.first as? EditorWindowController else {fail("Missing editor window")}
         if CommandLine.arguments.contains("--integration-layout-index") {
@@ -29,7 +83,7 @@ import MarkdownCore
                 guard remaining>0 else{fail("Jump preview did not become ready: \(controller.preview.debugGeometry())")}
                 if !controller.preview.isShowingLoadingState,controller.preview.coversSourceViewport {
                     print("PREVIEW JUMP READY: \(Double(DispatchTime.now().uptimeNanoseconds-started)/1e6) ms, fullCache=\(controller.hasPreparedDocument), \(controller.preview.debugGeometry())")
-                    try? TimingDiagnostics.shared.snapshot().json().write(to:URL(fileURLWithPath:"/private/tmp/astra-preview-jump-timings.json"))
+                    try? TimingDiagnostics.shared.snapshot().json().write(to:URL(fileURLWithPath:"/private/tmp/markato-preview-jump-timings.json"))
                     exit(EXIT_SUCCESS)
                 }
                 DispatchQueue.main.asyncAfter(deadline:.now()+0.001){wait(remaining-1)}
@@ -46,12 +100,14 @@ import MarkdownCore
             else {DispatchQueue.main.asyncAfter(deadline:.now()+0.01){wait(remaining-1,ready,failure,completion)}}
         }
         wait(500,{controller.hasPreparedViewport && preview.lastRevision==document.revision &&
-            preview.previewView.debugText.contains("AstraMarkdown")},"Ultralight did not publish the first viewport") {
+            preview.previewView.debugText.contains("Markato")},"Ultralight did not publish the first viewport") {
+            check(abs(controller.source.canvas.frame.width-controller.source.scroll.contentSize.width)<0.1,
+                "Initial source width did not follow the clip after its vertical scroller appeared")
             check(preview.coversSourceViewport,"The first Ultralight window must cover the source viewport")
             check(preview.preparedFragmentCount<350,"The first Ultralight window must remain bounded")
             check(preview.previewView.debugCount("section[data-id]")==preview.preparedFragmentCount,
                 "Ultralight DOM and retained presentation must contain the same blocks")
-            check(preview.previewView.debugRect("h1",containing:"AstraMarkdown") != nil,
+            check(preview.previewView.debugRect("h1",containing:"Markato") != nil,
                 "The first heading must have measured Ultralight geometry")
             check(preview.previewView.debugCount(".katex")>0,"Ultralight must retain Comrak's KaTeX output")
             check(preview.previewView.debugCount("tbody tr")>0,"Ultralight must render complete table markup")
@@ -61,7 +117,9 @@ import MarkdownCore
             verifyPresentationFailureRecovery(controller,wait:wait) {
                 verifyTopResizeAnchor(controller) {
                     verifyMiddleResizeAnchor(controller,document:document,wait:wait) {
-                        continueAfterTopResize(controller,document:document,startupCount:startupCount,wait:wait)
+                        verifyClickEditAlignment(controller,document:document,wait:wait) {
+                            continueAfterTopResize(controller,document:document,startupCount:startupCount,wait:wait)
+                        }
                     }
                 }
             }
@@ -77,7 +135,7 @@ import MarkdownCore
             preview.lastRevision==revision},"Ultralight did not recover from a failed presentation") {
             check(preview.retainedPresentationAfterFailure,
                 "A failed replacement must retain the committed presentation without a loading mask")
-            check(preview.previewView.debugText.contains("AstraMarkdown"),
+            check(preview.previewView.debugText.contains("Markato"),
                 "Recovery must publish the requested document through the normal presentation path")
             completion()
         }
@@ -105,8 +163,12 @@ import MarkdownCore
                     window.contentView?.layoutSubtreeIfNeeded();window.displayIfNeeded()
                     check(controller.source.debugFirstLineViewportY==sourceTop,
                         "Source top moved when the resized presentation committed")
+                    check(controller.source.isResizePositionPinned,
+                        "Source top lock was dropped after resize completion")
                     check(controller.preview.debugFirstHeadingViewportY==previewTop,
                         "Preview top moved when the resized presentation committed")
+                    check(controller.preview.debugResizePinnedOrigin != nil,
+                        "Preview top lock was dropped after resize completion")
                     completion()
                 }
                 return
@@ -138,7 +200,7 @@ import MarkdownCore
         startupCount:Int,wait:@escaping(Int,@escaping()->Bool,String,@escaping()->Void)->Void) {
         let preview=controller.preview,source=controller.source
             source.reveal(document.source.count,alignTop:false)
-            wait(800,{preview.coversSourceViewport && !preview.isShowingLoadingState &&
+            wait(800,{controller.hasPreparedDocument && preview.coversSourceViewport && !preview.isShowingLoadingState &&
                 preview.displayedSourceRange.map{NSMaxRange($0)>=document.source.count-1}==true},
                 "A cached deep jump did not publish") {
                 check(preview.preparedFragmentCount<350,"A deep jump must keep the mounted DOM bounded")
@@ -183,73 +245,90 @@ import MarkdownCore
         wait:@escaping(Int,@escaping()->Bool,String,@escaping()->Void)->Void,completion:@escaping()->Void) {
         guard let window=controller.window else{fail("Missing resize regression window")}
         let source=controller.source,preview=controller.preview
-        source.debugAlignViewport(at:document.source.count/2,viewportY:source.bounds.height/2)
+        source.reveal(0,alignTop:true)
+        window.contentView?.layoutSubtreeIfNeeded();window.displayIfNeeded()
+        let beforeNoMotionX=source.debugTextViewportX
+        controller.windowWillStartLiveResize(Notification(name:NSWindow.willStartLiveResizeNotification,object:window))
+        controller.windowDidEndLiveResize(Notification(name:NSWindow.didEndLiveResizeNotification,object:window))
+        window.contentView?.layoutSubtreeIfNeeded();window.displayIfNeeded()
+        check(abs(source.debugTextViewportX-beforeNoMotionX)<0.1,
+            "No-motion resize shifted source text horizontally: before=\(beforeNoMotionX), after=\(source.debugResizeState)")
+        DispatchQueue.main.asyncAfter(deadline:.now()+0.06) {
+        window.contentView?.layoutSubtreeIfNeeded();window.displayIfNeeded()
+        check(abs(source.debugTextViewportX-beforeNoMotionX)<0.1,
+            "Deferred no-motion resize shifted source text horizontally: before=\(beforeNoMotionX), after=\(source.debugResizeState)")
+        check(abs(source.canvas.frame.width-source.scroll.contentSize.width)<0.1,
+            "Source document width did not track the scrollable viewport after scroller retile")
+        let heading=(document.source.string as NSString).range(of:"## Section 56 — observing a changing landscape")
+        guard heading.location != NSNotFound else{fail("Missing Section 56 fixture")}
+        source.debugAlignViewport(at:heading.location,viewportY:source.bounds.height/2)
+        preview.moveViewport()
         wait(800,{preview.coversSourceViewport &&
             abs((preview.previewView.geometry()?.width ?? 0)-preview.bounds.width)<1 &&
             preview.debugScrollMapError.map{abs($0)<0.01}==true},
-            "The middle viewport did not align before resize") {
+            "The middle viewport did not settle before resize") {
             let original=window.contentLayoutRect.size
-            let initialRendererWidth=preview.previewView.geometry()?.width
-            let topAnchor=source.debugRenderedViewportAnchor
-            guard let sourceTopY=source.debugRenderedViewportY(for:topAnchor) else {
-                fail("Missing middle source resize anchor")
-            }
-            let sizes=[NSSize(width:original.width-190,height:original.height-100)]
-            let finalSize=NSSize(width:original.width+170,height:original.height+80)
             controller.windowWillStartLiveResize(Notification(name:NSWindow.willStartLiveResizeNotification,object:window))
-            guard let previewAnchorY=preview.debugResizeAnchorViewportY else {
-                fail("Missing middle preview resize anchor")
+            let anchor=source.debugRenderedViewportAnchor
+            guard let sourceY=source.debugRenderedViewportY(for:anchor),
+                  let previewY=preview.debugResizeAnchorViewportY else {
+                fail("Could not capture both resize anchors")
             }
-            let previewAnchorState=preview.debugResizeAnchorState
+            @MainActor func assertAnchors(_ stage:String) {
+                check(source.debugRenderedViewportY(for:anchor).map{abs($0-sourceY)<1}==true,
+                    "Source visible top moved \(stage): \(source.debugResizeState)")
+                check(preview.debugResizeAnchorViewportY.map{abs($0-previewY)<1}==true,
+                    "Preview visible top moved \(stage): \(preview.debugResizeAnchorState)")
+            }
+            let sizes=[NSSize(width:original.width-190,height:original.height-100),
+                       NSSize(width:original.width+170,height:original.height+80)]
             @MainActor func step(_ index:Int) {
                 guard index<sizes.count else {
-                    // Deliberately do not force layout for the final, different
-                    // size. The end-resize path itself must materialize the
-                    // final split/source geometry before in-place finalization.
-                    window.setContentSize(finalSize)
+                    window.contentView?.layoutSubtreeIfNeeded();window.displayIfNeeded()
+                    let before=capture(source.scroll.contentView)
+                    let previewBefore=capture(preview)
+                    let previewSurface=preview.debugCommittedSurfaceIndex
+                    writeVisualCapture(before,suffix:"before-release")
+                    writeVisualCapture(previewBefore,suffix:"preview-before-release")
                     controller.windowDidEndLiveResize(Notification(name:NSWindow.didEndLiveResizeNotification,object:window))
-                    check(preview.debugResizeAnchorViewportY.map{abs($0-previewAnchorY)<0.01}==true,
-                        "Mouse-up repositioned the preview (\(previewAnchorY) -> \(String(describing:preview.debugResizeAnchorViewportY)))")
-                    // Queued source work after mouse-up must preserve the same
-                    // rendered source top and must not reposition the preview.
-                    source.debugRelayoutVisibleViewport()
-                    check(preview.debugResizeAnchorViewportY.map{abs($0-previewAnchorY)<0.01}==true,
-                        "Post-resize source layout repositioned the preview (\(previewAnchorY) -> \(String(describing:preview.debugResizeAnchorViewportY)), sourcePinned \(source.isResizePositionPinned), previewPin \(String(describing:preview.debugResizePinnedOrigin)), clip \(preview.clipOrigin), start {\(previewAnchorState)}, end {\(preview.debugResizeAnchorState)})")
-                    preview.sourceLayoutChanged()
-                    wait(800,{abs((preview.previewView.geometry()?.width ?? 0)-preview.bounds.width)<1 &&
-                        preview.lastRevision==document.revision},
-                        "The resized middle viewport did not commit against current geometry") {
-                        let finalSourceY=source.debugRenderedViewportY(for:topAnchor)
-                        check(finalSourceY.map{abs($0-sourceTopY)<1}==true,
-                            "The source top position moved during resize completion")
-                        check(preview.debugResizeAnchorViewportY.map{abs($0-previewAnchorY)<0.01}==true,
-                            "The preview semantic top moved after resize finalization (\(previewAnchorY) -> \(String(describing:preview.debugResizeAnchorViewportY)), origin \(preview.clipOrigin))")
-                        let beforeScroll=preview.clipOrigin
-                        source.debugScrollViewport(by:90)
-                        wait(800,{abs(preview.clipOrigin-beforeScroll)>1 &&
-                            preview.debugScrollMapError.map{abs($0)<0.01}==true},
-                            "The first post-resize scroll did not restore center alignment",completion)
+                    check(preview.debugCommittedSurfaceIndex==previewSurface && !preview.isShowingLoadingState,
+                        "Resize release replaced or masked the already reflowed preview")
+                    assertAnchors("at mouse-up")
+                    DispatchQueue.main.asyncAfter(deadline:.now()+0.12) {
+                        window.contentView?.layoutSubtreeIfNeeded();window.displayIfNeeded()
+                        let after=capture(source.scroll.contentView)
+                        let previewAfter=capture(preview)
+                        check(preview.debugCommittedSurfaceIndex==previewSurface && !preview.isShowingLoadingState,
+                            "Deferred resize release replaced or masked the preview")
+                        writeVisualCapture(after,suffix:"after-release")
+                        writeVisualCapture(previewAfter,suffix:"preview-after-release")
+                        check(visualVerticalShift(before,after)==0,
+                            "Visible source pixels shifted after mouse-up")
+                        // The HTML engine can repaint and slightly alter
+                        // within-element spacing after release. Its captured
+                        // top element, not every downstream pixel, is pinned.
+                        assertAnchors("after deferred layout")
+                        window.setContentSize(NSSize(width:sizes[index-1].width-60,
+                            height:sizes[index-1].height-30))
+                        window.contentView?.layoutSubtreeIfNeeded();window.displayIfNeeded()
+                        DispatchQueue.main.asyncAfter(deadline:.now()+0.06) {
+                            window.contentView?.layoutSubtreeIfNeeded();window.displayIfNeeded()
+                            assertAnchors("after a late frame")
+                            completion()
+                        }
                     }
                     return
                 }
                 window.setContentSize(sizes[index])
                 window.contentView?.layoutSubtreeIfNeeded();window.displayIfNeeded()
-                DispatchQueue.main.asyncAfter(deadline:.now()+0.03) {
+                DispatchQueue.main.asyncAfter(deadline:.now()+0.04) {
                     window.contentView?.layoutSubtreeIfNeeded();window.displayIfNeeded()
-                    check(preview.debugResizeAnchorViewportY.map{abs($0-previewAnchorY)<0.01}==true,
-                        "The preview semantic top moved during live resize")
-                    let sourceY=source.debugRenderedViewportY(for:topAnchor)
-                    check(sourceY.map{abs($0-sourceTopY)<1}==true,
-                        "The source top position moved during live resize (\(sourceTopY) -> \(String(describing:sourceY)), anchor \(topAnchor), origin \(source.viewportOrigin))")
-                    if let initialRendererWidth {
-                        let currentWidth=preview.previewView.geometry()?.width ?? 0
-                        check(abs(currentWidth-preview.bounds.width)<1 && abs(currentWidth-initialRendererWidth)>1,
-                            "The displayed preview did not reflow during live resize (\(initialRendererWidth) -> \(currentWidth), pane \(preview.bounds.width))")
-                    }
+                    assertAnchors("during resize frame \(index)")
                     step(index+1)
                 }
             }
             step(0)
+        }
         }
     }
     private static func continueAfterRecoveredParse(_ controller:EditorWindowController,document:MarkdownDocument,
@@ -257,6 +336,66 @@ import MarkdownCore
         verifyParagraphInsertionStability(controller,document:document,wait:wait) {
             verifyTypingStability(controller,document:document,wait:wait) {
                 continueAfterTyping(controller,document:document,startupCount:startupCount,wait:wait)
+            }
+        }
+    }
+    private static func verifyClickEditAlignment(_ controller:EditorWindowController,document:MarkdownDocument,
+        wait:@escaping(Int,@escaping()->Bool,String,@escaping()->Void)->Void,completion:@escaping()->Void) {
+        guard let window=controller.window else{fail("Missing click/edit regression window")}
+        let source=controller.source,preview=controller.preview
+        let marker="### Measurements at station 36"
+        let initial=(document.source.string as NSString).range(of:marker).location
+        guard initial != NSNotFound else{fail("Missing Section 36 click/edit regression fixture")}
+        source.debugAlignViewport(at:initial,viewportY:source.bounds.height/2)
+        wait(800,{preview.coversSourceViewport && preview.debugScrollMapError.map{abs($0)<0.01}==true},
+            "Mid-document viewport did not center before click/edit regression") {
+            let size=window.contentLayoutRect.size
+            controller.windowWillStartLiveResize(Notification(name:NSWindow.willStartLiveResizeNotification,object:window))
+            window.setContentSize(NSSize(width:size.width-96,height:size.height))
+            window.contentView?.layoutSubtreeIfNeeded();window.displayIfNeeded()
+            controller.windowDidEndLiveResize(Notification(name:NSWindow.didEndLiveResizeNotification,object:window))
+            wait(800,{abs((preview.previewView.geometry()?.width ?? 0)-preview.bounds.width)<1},
+                "Click/edit regression resize did not settle") {
+                let center=source.debugRenderedOffset(atViewportY:source.bounds.height/2)
+                let text=document.source.string as NSString
+                let search=NSRange(location:max(0,center-2000),length:min(text.length,center+2000)-max(0,center-2000))
+                var cursor=search.location,candidates=[(offset:Int,distance:CGFloat)]()
+                while cursor<NSMaxRange(search) {
+                    let range=text.range(of:"\n\n",options:[],range:NSRange(location:cursor,length:NSMaxRange(search)-cursor))
+                    if range.location==NSNotFound {break}
+                    let offset=NSMaxRange(range)
+                    if let y=source.debugRenderedViewportY(for:offset) {
+                        candidates.append((offset,abs(y-source.bounds.height/2)))
+                    }
+                    cursor=max(cursor+1,offset)
+                }
+                guard let insertion=candidates.min(by:{$0.distance<$1.distance})?.offset else {
+                    fail("Missing centered paragraph boundary")
+                }
+                let beforeClick=source.viewportOrigin
+                source.debugClickInsertionPoint(at:insertion)
+                check(abs(source.viewportOrigin-beforeClick)<0.01,
+                    "Clicking the editor after resize moved its viewport (\(beforeClick) -> \(source.viewportOrigin))")
+                source.textView.insertText("What's\n\n",replacementRange:source.textView.selectedRange())
+                wait(800,{preview.lastRevision==document.revision &&
+                    preview.debugParagraphViewportY(containing:"What's") != nil},
+                    "Typed click/edit paragraph did not reach the preview") {
+                    let sourceY=source.debugRenderedViewportY(for:insertion)
+                    let previewY=preview.debugParagraphViewportY(containing:"What's")
+                    check(sourceY.flatMap{a in previewY.map{abs(a-$0)<32}}==true,
+                        "Typed paragraph is not visually center-aligned (source \(String(describing:sourceY)), preview \(String(describing:previewY)), mapError \(String(describing:preview.debugScrollMapError)))")
+                    DispatchQueue.main.asyncAfter(deadline:.now()+0.2) {
+                        window.contentView?.layoutSubtreeIfNeeded();window.displayIfNeeded()
+                        let settledSourceY=source.debugRenderedViewportY(for:insertion)
+                        let settledPreviewY=preview.debugParagraphViewportY(containing:"What's")
+                        check(settledSourceY.flatMap{a in settledPreviewY.map{abs(a-$0)<32}}==true,
+                            "Typed paragraph moved out of alignment after painting")
+                        if let content=window.contentView {
+                            writeVisualCapture(capture(content),suffix:"after-click-edit")
+                        }
+                        completion()
+                    }
+                }
             }
         }
     }
@@ -304,7 +443,6 @@ import MarkdownCore
                     let paragraph="Inserted paragraph."
                     let paragraphEnd=location+(paragraph as NSString).length
                     let reused=preview.pixelReuseCommitCount
-                    let beforeEnter=after
                     var enterPositions=[CGFloat]()
                     preview.debugPresentationCommitted = {
                         if preview.displayedDocumentRevision==document.revision,
@@ -323,12 +461,14 @@ import MarkdownCore
                             guard let afterEnter=preview.debugParagraphViewportY(containing:following) else {
                                 fail("The following paragraph disappeared after the extra Enter")
                             }
-                            for y in enterPositions {
-                                check(abs(y-beforeEnter)<0.01,
-                                    "The following paragraph moved during the extra Enter")
+                            if let low=enterPositions.min(),let high=enterPositions.max() {
+                                check(high-low<0.01,
+                                    "The following paragraph oscillated across extra-Enter frames")
                             }
-                            check(abs(afterEnter-beforeEnter)<0.01,
+                            check(enterPositions.last.map{abs(afterEnter-$0)<0.01}==true,
                                 "The following paragraph moved after the extra Enter settled")
+                            check(preview.debugScrollMapError.map{abs($0)<0.01}==true,
+                                "The extra Enter did not publish the center-aligned scroll map")
                             completion()
                         }
                     }
@@ -371,21 +511,22 @@ import MarkdownCore
         startupCount:Int,wait:@escaping(Int,@escaping()->Bool,String,@escaping()->Void)->Void) {
         let preview=controller.preview,source=controller.source
         check(preview.preparedFragmentCount<350,"A visible edit must not expand the mounted DOM")
-        let oldWidth=preview.bounds.width
-        preview.beginLiveResize()
-        preview.frame.size.width=max(320,oldWidth-73)
-        preview.layoutSubtreeIfNeeded()
-        preview.endLiveResize()
+        guard let window=controller.window else{fail("Missing resize window")}
+        let oldSize=window.contentLayoutRect.size
+        controller.windowWillStartLiveResize(Notification(name:NSWindow.willStartLiveResizeNotification,object:window))
+        window.setContentSize(NSSize(width:oldSize.width-146,height:oldSize.height))
+        window.contentView?.layoutSubtreeIfNeeded()
+        controller.windowDidEndLiveResize(Notification(name:NSWindow.didEndLiveResizeNotification,object:window))
         wait(300,{abs((preview.previewView.geometry()?.width ?? 0)-preview.bounds.width)<=1},
             "Ultralight did not settle after resize") {
             source.reveal(0,alignTop:true)
-            wait(800,{preview.coversSourceViewport && preview.previewView.debugText.contains("AstraMarkdown")},
+            wait(800,{preview.coversSourceViewport && preview.previewView.debugText.contains("Markato")},
                 "Return to the cached first viewport failed") {
                 check(preview.preparedFragmentCount<350,"Returning to the top must remain bounded")
                 check(startupCount>0,"Startup must mount semantic entries")
                 print("INTEGRATION PASSED: bounded first view, presentation recovery, automatic and manual parse recovery, retained stale preview, cached navigation, stable paragraph insertion, rapid typing, edit, resize, and return-to-top scrolling")
                 if CommandLine.arguments.contains("--diagnostics") {
-                    try? TimingDiagnostics.shared.snapshot().json().write(to:URL(fileURLWithPath:"/private/tmp/astra-ultralight-integration-timings.json"),options:.atomic)
+                    try? TimingDiagnostics.shared.snapshot().json().write(to:URL(fileURLWithPath:"/private/tmp/markato-ultralight-integration-timings.json"),options:.atomic)
                 }
                 exit(EXIT_SUCCESS)
             }
@@ -400,7 +541,7 @@ import MarkdownCore
         doc.edited={selection,_,edit in source.documentEdited(selection:selection,edit:edit)}
         let prefix=source.debugMeasuredPosition(for:500)
         func validate(_ stage:Int) {
-            check(model.sourceLayout.length==doc.source.count,"Measured index must cover the current source after edit \(stage)")
+            check(model.sourceLayout.length==doc.source.count,"Measured index must cover the current source after edit \(stage): index=\(model.sourceLayout.length), source=\(doc.source.count), dirty=\(source.debugResizeState)")
             let manager=source.textView.layoutManager!
             for offset in stride(from:0,to:doc.source.count,by:137) {
                 let glyph=manager.glyphIndexForCharacter(at:offset)
@@ -428,7 +569,7 @@ import MarkdownCore
             default:
                 print("LAYOUT INDEX PASSED: local multiline edits, deletion, Unicode/CRLF, append, typography and resize match independent native glyph coordinates")
                 if CommandLine.arguments.contains("--diagnostics") {
-                    try? TimingDiagnostics.shared.snapshot().json().write(to:URL(fileURLWithPath:"/private/tmp/astra-layout-index-timings.json"))
+                    try? TimingDiagnostics.shared.snapshot().json().write(to:URL(fileURLWithPath:"/private/tmp/markato-layout-index-timings.json"))
                 }
                 exit(EXIT_SUCCESS)
             }

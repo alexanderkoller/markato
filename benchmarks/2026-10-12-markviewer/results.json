@@ -1,0 +1,399 @@
+[
+  {
+    "application": "MarkViewer",
+    "version": "1.8.14",
+    "requestedBytes": 65536,
+    "actualBytes": 65569,
+    "fixtureSHA256": "f6f7e3711e99aeac4cea1ba4e98524070881b535be3f075c1394d0fc1ccb1185",
+    "round": 1,
+    "requestedEdits": 3,
+    "status": "complete",
+    "exitCode": 0,
+    "wallSeconds": 33.31687808036804,
+    "samples": [
+      {
+        "operation": "open",
+        "elapsedMs": 244.82666683197021,
+        "editIndex": 0,
+        "observedHeading": "BENCH_START",
+        "type": "sample",
+        "dispatchMs": 31.531333446502686
+      },
+      {
+        "operation": "edit",
+        "elapsedMs": 112.26758337020874,
+        "editIndex": 1,
+        "observedHeading": "E5846C9F701 BENCH_START",
+        "type": "sample",
+        "dispatchMs": 104.08424997329712
+      },
+      {
+        "operation": "edit",
+        "elapsedMs": 26588.030375003815,
+        "editIndex": 2,
+        "observedHeading": "E5846C9F702 E5846C9F701 BENCH_START",
+        "type": "sample",
+        "dispatchMs": 76.23275017738342
+      },
+      {
+        "operation": "edit",
+        "elapsedMs": 562.9724583625793,
+        "editIndex": 3,
+        "observedHeading": "E5846C9F703 E5846C9F702 E5846C9F701 BENCH_START",
+        "type": "sample",
+        "dispatchMs": 225.82329154014587
+      }
+    ],
+    "metadata": {
+      "bundle": "com.markviewer.markviewer",
+      "os": "Version 26.6.2 (Build 25G83)",
+      "window": "1120x760 offscreen",
+      "fixture": "/private/tmp/markviewer-benchmark-vky96b84/inputs/prose-65536-r1.md",
+      "version": "1.8.14",
+      "type": "metadata",
+      "endpoint": "visible H1 plus changed WebKit frame"
+    },
+    "memory": {
+      "type": "memory",
+      "mainProcessRSSBytes": 256409600
+    },
+    "errors": [],
+    "pristineFixtureUnchanged": true
+  },
+  {
+    "application": "MarkViewer",
+    "version": "1.8.14",
+    "requestedBytes": 1048576,
+    "actualBytes": 1048632,
+    "fixtureSHA256": "3af127c0e280539e0b9c25ff88d1bcbad800aac2d8a5d7e17fa6f64a4c9bb4c3",
+    "round": 1,
+    "requestedEdits": 3,
+    "status": "complete",
+    "exitCode": 0,
+    "wallSeconds": 98.31170296669006,
+    "samples": [
+      {
+        "operation": "open",
+        "elapsedMs": 21280.122416973114,
+        "editIndex": 0,
+        "observedHeading": "BENCH_START",
+        "type": "sample",
+        "dispatchMs": 28.546833515167236
+      },
+      {
+        "operation": "edit",
+        "elapsedMs": 16480.7351667881,
+        "editIndex": 1,
+        "observedHeading": "E73F89C7F01 BENCH_START",
+        "type": "sample",
+        "dispatchMs": 10537.017583370209
+      },
+      {
+        "operation": "edit",
+        "elapsedMs": 26054.07683324814,
+        "editIndex": 2,
+        "observedHeading": "E73F89C7F02 E73F89C7F01 BENCH_START",
+        "type": "sample",
+        "dispatchMs": 25596.443374872208
+      },
+      {
+        "operation": "edit",
+        "elapsedMs": 29029.96899986267,
+        "editIndex": 3,
+        "observedHeading": "E73F89C7F03 E73F89C7F02 E73F89C7F01 BENCH_START",
+        "type": "sample",
+        "dispatchMs": 28931.019708156586
+      }
+    ],
+    "metadata": {
+      "bundle": "com.markviewer.markviewer",
+      "os": "Version 26.6.2 (Build 25G83)",
+      "window": "1120x760 offscreen",
+      "fixture": "/private/tmp/markviewer-benchmark-vky96b84/inputs/prose-1048576-r1.md",
+      "version": "1.8.14",
+      "type": "metadata",
+      "endpoint": "visible H1 plus changed WebKit frame"
+    },
+    "memory": {
+      "type": "memory",
+      "mainProcessRSSBytes": 190332928
+    },
+    "errors": [],
+    "pristineFixtureUnchanged": true
+  },
+  {
+    "application": "MarkViewer",
+    "version": "1.8.14",
+    "requestedBytes": 8388608,
+    "actualBytes": 8388717,
+    "fixtureSHA256": "8e8db8d9ee856bec38d3ae32da8c6c8079ae441c72a71f461c8f7ad044e429ab",
+    "round": 1,
+    "requestedEdits": 3,
+    "status": "timeout",
+    "exitCode": 2,
+    "wallSeconds": 64.30640268325806,
+    "samples": [],
+    "metadata": {
+      "bundle": "com.markviewer.markviewer",
+      "os": "Version 26.6.2 (Build 25G83)",
+      "window": "1120x760 offscreen",
+      "fixture": "/private/tmp/markviewer-benchmark-vky96b84/inputs/prose-8388608-r1.md",
+      "version": "1.8.14",
+      "type": "metadata",
+      "endpoint": "visible H1 plus changed WebKit frame"
+    },
+    "memory": null,
+    "errors": [
+      {
+        "type": "error",
+        "stage": "open",
+        "message": "Timed out after 60 seconds awaiting a visibly painted H1"
+      }
+    ],
+    "pristineFixtureUnchanged": true
+  },
+  {
+    "application": "MarkViewer",
+    "version": "1.8.14",
+    "requestedBytes": 65536,
+    "actualBytes": 65569,
+    "fixtureSHA256": "f6f7e3711e99aeac4cea1ba4e98524070881b535be3f075c1394d0fc1ccb1185",
+    "round": 2,
+    "requestedEdits": 3,
+    "status": "complete",
+    "exitCode": 0,
+    "wallSeconds": 5.939297914505005,
+    "samples": [
+      {
+        "operation": "open",
+        "elapsedMs": 234.30104160308838,
+        "editIndex": 0,
+        "observedHeading": "BENCH_START",
+        "type": "sample",
+        "dispatchMs": 21.540416717529297
+      },
+      {
+        "operation": "edit",
+        "elapsedMs": 98.87041664123535,
+        "editIndex": 1,
+        "observedHeading": "E4449C7AB01 BENCH_START",
+        "type": "sample",
+        "dispatchMs": 90.90862488746643
+      },
+      {
+        "operation": "edit",
+        "elapsedMs": 79.28029179573059,
+        "editIndex": 2,
+        "observedHeading": "E4449C7AB02 E4449C7AB01 BENCH_START",
+        "type": "sample",
+        "dispatchMs": 64.36808347702026
+      },
+      {
+        "operation": "edit",
+        "elapsedMs": 59.27149987220764,
+        "editIndex": 3,
+        "observedHeading": "E4449C7AB03 E4449C7AB02 E4449C7AB01 BENCH_START",
+        "type": "sample",
+        "dispatchMs": 41.80049991607666
+      }
+    ],
+    "metadata": {
+      "bundle": "com.markviewer.markviewer",
+      "os": "Version 26.6.2 (Build 25G83)",
+      "window": "1120x760 offscreen",
+      "fixture": "/private/tmp/markviewer-benchmark-vky96b84/inputs/prose-65536-r2.md",
+      "version": "1.8.14",
+      "type": "metadata",
+      "endpoint": "visible H1 plus changed WebKit frame"
+    },
+    "memory": {
+      "type": "memory",
+      "mainProcessRSSBytes": 247988224
+    },
+    "errors": [],
+    "pristineFixtureUnchanged": true
+  },
+  {
+    "application": "MarkViewer",
+    "version": "1.8.14",
+    "requestedBytes": 1048576,
+    "actualBytes": 1048632,
+    "fixtureSHA256": "3af127c0e280539e0b9c25ff88d1bcbad800aac2d8a5d7e17fa6f64a4c9bb4c3",
+    "round": 2,
+    "requestedEdits": 3,
+    "status": "complete",
+    "exitCode": 0,
+    "wallSeconds": 93.99510717391968,
+    "samples": [
+      {
+        "operation": "open",
+        "elapsedMs": 19396.365875005722,
+        "editIndex": 0,
+        "observedHeading": "BENCH_START",
+        "type": "sample",
+        "dispatchMs": 24.467708349227905
+      },
+      {
+        "operation": "edit",
+        "elapsedMs": 16506.92608332634,
+        "editIndex": 1,
+        "observedHeading": "E54DE31BD01 BENCH_START",
+        "type": "sample",
+        "dispatchMs": 10248.7671251297
+      },
+      {
+        "operation": "edit",
+        "elapsedMs": 23748.465874910355,
+        "editIndex": 2,
+        "observedHeading": "E54DE31BD02 E54DE31BD01 BENCH_START",
+        "type": "sample",
+        "dispatchMs": 23647.214000225067
+      },
+      {
+        "operation": "edit",
+        "elapsedMs": 28927.4672498703,
+        "editIndex": 3,
+        "observedHeading": "E54DE31BD03 E54DE31BD02 E54DE31BD01 BENCH_START",
+        "type": "sample",
+        "dispatchMs": 28819.34649991989
+      }
+    ],
+    "metadata": {
+      "bundle": "com.markviewer.markviewer",
+      "os": "Version 26.6.2 (Build 25G83)",
+      "window": "1120x760 offscreen",
+      "fixture": "/private/tmp/markviewer-benchmark-vky96b84/inputs/prose-1048576-r2.md",
+      "version": "1.8.14",
+      "type": "metadata",
+      "endpoint": "visible H1 plus changed WebKit frame"
+    },
+    "memory": {
+      "type": "memory",
+      "mainProcessRSSBytes": 182419456
+    },
+    "errors": [],
+    "pristineFixtureUnchanged": true
+  },
+  {
+    "application": "MarkViewer",
+    "version": "1.8.14",
+    "requestedBytes": 65536,
+    "actualBytes": 65569,
+    "fixtureSHA256": "f6f7e3711e99aeac4cea1ba4e98524070881b535be3f075c1394d0fc1ccb1185",
+    "round": 3,
+    "requestedEdits": 3,
+    "status": "complete",
+    "exitCode": 0,
+    "wallSeconds": 40.27622103691101,
+    "samples": [
+      {
+        "operation": "open",
+        "elapsedMs": 248.32595825195312,
+        "editIndex": 0,
+        "observedHeading": "BENCH_START",
+        "type": "sample",
+        "dispatchMs": 28.8822500705719
+      },
+      {
+        "operation": "edit",
+        "elapsedMs": 111.52741646766663,
+        "editIndex": 1,
+        "observedHeading": "E32E4510B01 BENCH_START",
+        "type": "sample",
+        "dispatchMs": 103.45191669464111
+      },
+      {
+        "operation": "edit",
+        "elapsedMs": 33596.75300002098,
+        "editIndex": 2,
+        "observedHeading": "E32E4510B02 E32E4510B01 BENCH_START",
+        "type": "sample",
+        "dispatchMs": 76.63758325576782
+      },
+      {
+        "operation": "edit",
+        "elapsedMs": 846.5910000801086,
+        "editIndex": 3,
+        "observedHeading": "E32E4510B03 E32E4510B02 E32E4510B01 BENCH_START",
+        "type": "sample",
+        "dispatchMs": 242.87154173851013
+      }
+    ],
+    "metadata": {
+      "bundle": "com.markviewer.markviewer",
+      "os": "Version 26.6.2 (Build 25G83)",
+      "window": "1120x760 offscreen",
+      "fixture": "/private/tmp/markviewer-benchmark-vky96b84/inputs/prose-65536-r3.md",
+      "version": "1.8.14",
+      "type": "metadata",
+      "endpoint": "visible H1 plus changed WebKit frame"
+    },
+    "memory": {
+      "type": "memory",
+      "mainProcessRSSBytes": 254001152
+    },
+    "errors": [],
+    "pristineFixtureUnchanged": true
+  },
+  {
+    "application": "MarkViewer",
+    "version": "1.8.14",
+    "requestedBytes": 1048576,
+    "actualBytes": 1048632,
+    "fixtureSHA256": "3af127c0e280539e0b9c25ff88d1bcbad800aac2d8a5d7e17fa6f64a4c9bb4c3",
+    "round": 3,
+    "requestedEdits": 3,
+    "status": "complete",
+    "exitCode": 0,
+    "wallSeconds": 90.07523822784424,
+    "samples": [
+      {
+        "operation": "open",
+        "elapsedMs": 20384.845291376114,
+        "editIndex": 0,
+        "observedHeading": "BENCH_START",
+        "type": "sample",
+        "dispatchMs": 26.407666444778442
+      },
+      {
+        "operation": "edit",
+        "elapsedMs": 16342.109541654587,
+        "editIndex": 1,
+        "observedHeading": "E74BA77B601 BENCH_START",
+        "type": "sample",
+        "dispatchMs": 10128.748583316803
+      },
+      {
+        "operation": "edit",
+        "elapsedMs": 19062.85445833206,
+        "editIndex": 2,
+        "observedHeading": "E74BA77B602 E74BA77B601 BENCH_START",
+        "type": "sample",
+        "dispatchMs": 18933.90570831299
+      },
+      {
+        "operation": "edit",
+        "elapsedMs": 28889.791875123978,
+        "editIndex": 3,
+        "observedHeading": "E74BA77B603 E74BA77B602 E74BA77B601 BENCH_START",
+        "type": "sample",
+        "dispatchMs": 28785.897500276566
+      }
+    ],
+    "metadata": {
+      "bundle": "com.markviewer.markviewer",
+      "os": "Version 26.6.2 (Build 25G83)",
+      "window": "1120x760 offscreen",
+      "fixture": "/private/tmp/markviewer-benchmark-vky96b84/inputs/prose-1048576-r3.md",
+      "version": "1.8.14",
+      "type": "metadata",
+      "endpoint": "visible H1 plus changed WebKit frame"
+    },
+    "memory": {
+      "type": "memory",
+      "mainProcessRSSBytes": 181813248
+    },
+    "errors": [],
+    "pristineFixtureUnchanged": true
+  }
+]

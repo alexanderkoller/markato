@@ -14,7 +14,7 @@ public struct HTMLPreviewGeometry: Equatable, Sendable {
     public let items:[Item]
 }
 
-/// The complete HTML-engine boundary for AstraMarkdown. The rest of the app
+/// The complete HTML-engine boundary for Markato. The rest of the app
 /// supplies retained semantic entries and consumes geometry plus pixels; it
 /// does not know about Ultralight DOM, resources, input, or bitmap formats.
 @MainActor public final class HTMLPreviewView:NSView {

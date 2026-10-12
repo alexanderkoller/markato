@@ -39,7 +39,7 @@ func exportProfileRecording(_ path:UnsafePointer<CChar>) {
     }
     @objc func saveTimingReport(_ sender:Any?) {
         let panel=NSSavePanel();panel.allowedContentTypes=[.json]
-        panel.nameFieldStringValue="AstraMarkdown Timings.json"
+        panel.nameFieldStringValue="Markato Timings.json"
         let complete:@MainActor (NSApplication.ModalResponse)->Void = { [weak self] response in
             guard response == .OK,let url=panel.url else{return}
             let snapshot=TimingDiagnostics.shared.snapshot()
@@ -99,7 +99,7 @@ func exportProfileRecording(_ path:UnsafePointer<CChar>) {
                     guard let window = document.windowControllers.first?.window,let view = window.contentView,
                           let bitmap = view.bitmapImageRepForCachingDisplay(in:view.bounds) else { exit(2) }
                     view.cacheDisplay(in:view.bounds,to:bitmap)
-                    try? bitmap.representation(using:.png,properties:[:])?.write(to:URL(fileURLWithPath:"/private/tmp/astra-smoke.png"))
+                    try? bitmap.representation(using:.png,properties:[:])?.write(to:URL(fileURLWithPath:"/private/tmp/markato-smoke.png"))
                     print("SMOKE: windows=\(NSApp.windows.count), nativeGlyphLayout=\((document.windowControllers.first as? EditorWindowController)?.source.textView.layoutManager != nil), previewRevision=\((document.windowControllers.first as? EditorWindowController)?.preview.lastRevision ?? -1)")
                     print((document.windowControllers.first as? EditorWindowController)?.preview.debugGeometry() ?? "No preview")
                     exit(EXIT_SUCCESS)
@@ -123,11 +123,11 @@ func exportProfileRecording(_ path:UnsafePointer<CChar>) {
             if action == #selector(NSDocumentController.newDocument(_:)) || action == #selector(NSDocumentController.openDocument(_:)) { item.target = NSDocumentController.shared }
             menu.addItem(item)
         }
-        let app=submenu("AstraMarkdown")
-        add(app,"About AstraMarkdown",#selector(NSApplication.orderFrontStandardAboutPanel(_:)))
+        let app=submenu("Markato")
+        add(app,"About Markato",#selector(NSApplication.orderFrontStandardAboutPanel(_:)))
         app.addItem(.separator());let services=NSMenuItem(title:"Services",action:nil,keyEquivalent:"");services.submenu=NSMenu();app.addItem(services);NSApp.servicesMenu=services.submenu
-        app.addItem(.separator());add(app,"Hide AstraMarkdown",#selector(NSApplication.hide(_:)),"h");add(app,"Hide Others",#selector(NSApplication.hideOtherApplications(_:)),"h",[.command,.option]);add(app,"Show All",#selector(NSApplication.unhideAllApplications(_:)))
-        app.addItem(.separator());add(app,"Quit AstraMarkdown",#selector(NSApplication.terminate(_:)),"q")
+        app.addItem(.separator());add(app,"Hide Markato",#selector(NSApplication.hide(_:)),"h");add(app,"Hide Others",#selector(NSApplication.hideOtherApplications(_:)),"h",[.command,.option]);add(app,"Show All",#selector(NSApplication.unhideAllApplications(_:)))
+        app.addItem(.separator());add(app,"Quit Markato",#selector(NSApplication.terminate(_:)),"q")
         let file=submenu("File")
         add(file,"New",#selector(NSDocumentController.newDocument(_:)),"n");add(file,"Open…",#selector(NSDocumentController.openDocument(_:)),"o")
         file.addItem(.separator());add(file,"Close",#selector(NSWindow.performClose(_:)),"w");add(file,"Save",#selector(NSDocument.save(_:)),"s");add(file,"Save As…",#selector(NSDocument.saveAs(_:)),"s",[.command,.shift])
@@ -156,7 +156,7 @@ func exportProfileRecording(_ path:UnsafePointer<CChar>) {
         return text.replacingOccurrences(of:"{{EXAMPLE_IMAGE_URL}}",with:imageURL)
     }
     private static let shortSample = #"""
-    # AstraMarkdown
+    # Markato
 
     Native Markdown editing with a **live preview**, *styled source*, and ordinary Mac shortcuts.
 
@@ -186,7 +186,7 @@ func exportProfileRecording(_ path:UnsafePointer<CChar>) {
     ## Code
 
     ```swift
-    let editor = "AstraMarkdown"
+    let editor = "Markato"
     ```
 
     - Source owns scrolling.

@@ -6,9 +6,9 @@ let vendoredUltralightSDK = Context.packageDirectory + "/Vendor/Ultralight"
 let ultralightSDK = ProcessInfo.processInfo.environment["ASTRA_ULTRALIGHT_SDK"] ?? vendoredUltralightSDK
 
 let package = Package(
-    name: "AstraMarkdown",
+    name: "Markato",
     platforms: [.macOS(.v15)],
-    products: [.executable(name: "AstraMarkdown", targets: ["AstraMarkdown"])],
+    products: [.executable(name: "Markato", targets: ["Markato"])],
     dependencies: [],
     targets: [
         .target(name: "CComrak", linkerSettings: [
@@ -24,7 +24,7 @@ let package = Package(
             ]),
         .target(name: "HTMLPreview", dependencies: ["CUltralightPreview", "MarkdownCore"],
             resources: [.process("Resources")]),
-        .executableTarget(name: "AstraMarkdown", dependencies: [
+        .executableTarget(name: "Markato", dependencies: [
             "MarkdownCore", "HTMLPreview"
         ]),
         .testTarget(name: "MarkdownCoreTests", dependencies: ["MarkdownCore"])

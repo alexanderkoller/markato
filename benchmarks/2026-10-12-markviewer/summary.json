@@ -1,0 +1,50 @@
+[
+  {
+    "requestedBytes": 65536,
+    "operation": "open",
+    "n": 3,
+    "medianMs": 244.82666683197021,
+    "minMs": 234.30104160308838,
+    "maxMs": 248.32595825195312
+  },
+  {
+    "requestedBytes": 65536,
+    "operation": "edit",
+    "n": 9,
+    "medianMs": 112.26758337020874,
+    "minMs": 59.27149987220764,
+    "maxMs": 33596.75300002098
+  },
+  {
+    "requestedBytes": 1048576,
+    "operation": "open",
+    "n": 3,
+    "medianMs": 20384.845291376114,
+    "minMs": 19396.365875005722,
+    "maxMs": 21280.122416973114
+  },
+  {
+    "requestedBytes": 1048576,
+    "operation": "edit",
+    "n": 9,
+    "medianMs": 23748.465874910355,
+    "minMs": 16342.109541654587,
+    "maxMs": 29029.96899986267
+  },
+  {
+    "requestedBytes": 8388608,
+    "operation": "open",
+    "n": 0,
+    "medianMs": null,
+    "minMs": null,
+    "maxMs": null
+  },
+  {
+    "requestedBytes": 8388608,
+    "operation": "edit",
+    "n": 0,
+    "medianMs": null,
+    "minMs": null,
+    "maxMs": null
+  }
+]

@@ -1,8 +1,8 @@
 #!/bin/bash
 # Inspect the packaged artifact, rather than trusting build configuration alone.
 set -euo pipefail
-app_path="${1:?Usage: bash scripts/check-release.sh /path/to/AstraMarkdown.app}"
-binary="$app_path/Contents/MacOS/AstraMarkdown"
+app_path="${1:?Usage: bash scripts/check-release.sh /path/to/Markato.app}"
+binary="$app_path/Contents/MacOS/Markato"
 for inspect in symbols strings; do
     if [[ "$inspect" == symbols ]]; then
         captured="$(nm -j "$binary")"
@@ -25,14 +25,14 @@ fi
 while IFS= read -r resource; do
     relative="${resource#"$app_path/Contents/Resources/"}"
     case "$relative" in
-        Example.md|ExampleImage.png|ThirdPartyNotices/*.txt|ThirdPartyNotices/Ultralight/*) ;;
+        Example.md|ExampleImage.png|Markato.icns|ThirdPartyNotices/*.txt|ThirdPartyNotices/Ultralight/*) ;;
         Ultralight/resources/*) ;;
-        AstraMarkdown_HTMLPreview.bundle/Info.plist|AstraMarkdown_HTMLPreview.bundle/*.css) ;;
-        AstraMarkdown_HTMLPreview.bundle/Contents/Info.plist|AstraMarkdown_HTMLPreview.bundle/Contents/Resources/*.css) ;;
-        AstraMarkdown_MarkdownCore.bundle/Contents/Info.plist|AstraMarkdown_MarkdownCore.bundle/Info.plist) ;;
-        AstraMarkdown_MarkdownCore.bundle/Contents/Resources/katex.js) ;;
-        AstraMarkdown_MarkdownCore.bundle/katex.js) ;;
-        AstraMarkdown_MarkdownCore.bundle/Contents/_CodeSignature/CodeResources) ;;
+        Markato_HTMLPreview.bundle/Info.plist|Markato_HTMLPreview.bundle/*.css) ;;
+        Markato_HTMLPreview.bundle/Contents/Info.plist|Markato_HTMLPreview.bundle/Contents/Resources/*.css) ;;
+        Markato_MarkdownCore.bundle/Contents/Info.plist|Markato_MarkdownCore.bundle/Info.plist) ;;
+        Markato_MarkdownCore.bundle/Contents/Resources/katex.js) ;;
+        Markato_MarkdownCore.bundle/katex.js) ;;
+        Markato_MarkdownCore.bundle/Contents/_CodeSignature/CodeResources) ;;
         *) echo "Unexpected release resource: $relative" >&2; exit 1 ;;
     esac
 done < <(find "$app_path/Contents/Resources" -type f)

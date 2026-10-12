@@ -1,26 +1,84 @@
 import AppKit
 import MarkdownCore
 
+/// Opt-in geometry-only trace for reproducing AppKit resize event order.
+/// Enable with `defaults write org.astramarkdown.editor ResizeTraceEnabled -bool YES`.
+@MainActor enum ResizeTrace {
+    private static let file:FileHandle? = {
+        guard UserDefaults.standard.bool(forKey:"ResizeTraceEnabled") else{return nil}
+        let path="/private/tmp/markato-resize.log"
+        FileManager.default.createFile(atPath:path,contents:Data(),attributes:nil)
+        return try? FileHandle(forWritingTo:URL(fileURLWithPath:path))
+    }()
+    static func record(_ event:String,_ state:String="") {
+        guard let file else{return}
+        let line="\(ProcessInfo.processInfo.systemUptime) \(event) \(state)\n"
+        try? file.write(contentsOf:Data(line.utf8))
+    }
+}
+
 final class FlippedView:NSView {override var isFlipped:Bool {true}}
+/// The two panes share one resize transaction. Anchors are captured once;
+/// geometry callbacks may update origins, while mouse-up only ends the drag.
+@MainActor final class ViewportResizeSession {
+    let sourceOffset:Int
+    let sourceDisplacement:CGFloat
+    let previewEntryID:String?
+    let previewDisplacement:CGFloat
+    var sourceOrigin:CGFloat
+    var previewOrigin:CGFloat
+    var isDragging=true
+    var protectsViewport=true
+    init(sourceOffset:Int,sourceDisplacement:CGFloat,sourceOrigin:CGFloat,
+         previewEntryID:String?,previewDisplacement:CGFloat,previewOrigin:CGFloat) {
+        self.sourceOffset=sourceOffset;self.sourceDisplacement=sourceDisplacement
+        self.sourceOrigin=sourceOrigin
+        self.previewEntryID=previewEntryID;self.previewDisplacement=previewDisplacement
+        self.previewOrigin=previewOrigin
+    }
+}
 private final class SourceScrollView:NSScrollView {
     override class var isCompatibleWithResponsiveScrolling:Bool {true}
     var consumeScroll:((NSEvent)->Bool)?
+    var userWillScroll:(()->Void)?
     override func scrollWheel(with event:NSEvent) {
+        userWillScroll?()
         if consumeScroll?(event) != true {super.scrollWheel(with:event)}
     }
 }
+private final class SourceScroller:NSScroller {
+    var userWillScroll:(()->Void)?
+    override func mouseDown(with event:NSEvent) {
+        userWillScroll?()
+        super.mouseDown(with:event)
+    }
+}
 private final class SourceClipView:NSClipView {
-    var lockedOrigin:CGFloat?
+    var resizeSession:ViewportResizeSession?
+    override func setBoundsOrigin(_ newOrigin:NSPoint) {
+        var origin=newOrigin
+        // The source wraps to the clip width; horizontal scrolling is never
+        // meaningful, even while AppKit retile centers a stale document width.
+        origin.x=0
+        if let session=resizeSession,session.protectsViewport {origin.y=session.sourceOrigin}
+        if abs(newOrigin.y-bounds.minY)>0.1 || abs(newOrigin.x-bounds.minX)>0.1 {
+            ResizeTrace.record("clip.setBoundsOrigin", "old=\(bounds.origin) proposed=\(newOrigin) applied=\(origin) pin=\(resizeSession?.protectsViewport == true)")
+        }
+        super.setBoundsOrigin(origin)
+    }
     override func constrainBoundsRect(_ proposedBounds:NSRect)->NSRect {
-        var proposal=proposedBounds
-        if let lockedOrigin {proposal.origin.y=lockedOrigin}
-        // Let NSClipView clamp the locked semantic top at document boundaries;
-        // bypassing its clamp can expose blank space after a large reflow.
-        return super.constrainBoundsRect(proposal)
+        var constrained=super.constrainBoundsRect(proposedBounds)
+        constrained.origin.x=0
+        if let session=resizeSession,session.protectsViewport {constrained.origin.y=session.sourceOrigin}
+        return constrained
     }
 }
 final class SourceTextView:NSTextView {
     weak var owner:SourceEditor?
+    override func mouseDown(with event:NSEvent) {
+        owner?.prepareForUserInteraction()
+        super.mouseDown(with:event)
+    }
     override func insertText(_ insertString:Any,replacementRange:NSRange) {
         // AppKit otherwise uses the editor-wide typing attributes for direct
         // insertText calls. Seed the transaction from the replaced/adjacent
@@ -43,6 +101,7 @@ final class SourceTextView:NSTextView {
     override func moveToBeginningOfDocument(_ sender:Any?) {owner?.reveal(0)}
     override func moveToEndOfDocument(_ sender:Any?) {if let owner {owner.reveal(owner.document.source.count)}}
     override func keyDown(with event:NSEvent) {
+        owner?.prepareForUserInteraction()
         if event.modifierFlags.contains(.command),!event.modifierFlags.contains(.shift) {
             if event.keyCode==125,let owner {owner.reveal(owner.document.source.count);return}
             if event.keyCode==126 {owner?.reveal(0);return}
@@ -70,11 +129,7 @@ final class SourceEditor:NSView,NSTextViewDelegate,NSTextStorageDelegate,ScrollS
     private var changingLayout=false,localEdit=false
     private var nativeLayoutRevision:Int?
     private var observations=[NSObjectProtocol]()
-    private var resizeAnchor:(Int,CGFloat)?
-    private var resizeAnchoredAtTop=false
-    private var liveResizeActive=false
-    private var liveResizeAnchor:(Int,CGFloat)?
-    private var liveResizeAnchoredAtTop=false
+    var resizeSession:ViewportResizeSession?
     private var highlightedRanges=[NSRange]()
     private var highlightRevision = -1
     private var deferredHighlights=[(Int,[SyntaxSpan],NSRange)]()
@@ -84,11 +139,20 @@ final class SourceEditor:NSView,NSTextViewDelegate,NSTextStorageDelegate,ScrollS
         let range:NSRange,rect:NSRect
     }
     #if DEBUG
+    var debugResizeState:String {
+        return "viewport=\(viewportOrigin), clipX=\(scroll.contentView.bounds.minX), textX=\(debugTextViewportX), resizeOrigin=\(String(describing:resizeSession?.sourceOrigin)), canvas=\(canvas.frame.height), visible=\(scroll.contentSize.height), measuredWidth=\(measuredWidth), frame=\(frame.size), scrollFrame=\(scroll.frame.size)"
+    }
+    var debugTextViewportX:CGFloat {
+        textView.convert(NSPoint(x:textView.textContainerOrigin.x,y:0),to:scroll.contentView).x
+    }
     var debugFirstLineViewportY:CGFloat {
-        guard textView.string.count>0 else{return textView.frame.minY+textView.textContainerInset.height-scroll.contentView.bounds.minY}
+        guard textView.string.count>0 else {
+            let point=textView.convert(NSPoint(x:0,y:textView.textContainerOrigin.y),to:scroll.contentView)
+            return point.y
+        }
         let glyph=textView.layoutManager!.glyphIndexForCharacter(at:0)
         let line=textView.layoutManager!.lineFragmentUsedRect(forGlyphAt:glyph,effectiveRange:nil)
-        return textView.frame.minY+textView.textContainerInset.height+line.minY-scroll.contentView.bounds.minY
+        return textView.convert(NSPoint(x:0,y:textView.textContainerOrigin.y+line.minY),to:scroll.contentView).y
     }
     #endif
     var contentRevision:Int {document.revision}
@@ -96,16 +160,23 @@ final class SourceEditor:NSView,NSTextViewDelegate,NSTextStorageDelegate,ScrollS
     var viewportOrigin:CGFloat {scroll.contentView.bounds.minY}
     var contentHeight:CGFloat {canvas.bounds.height}
     var sourceLength:Int {document.source.count}
-    var isResizePositionPinned:Bool {(scroll.contentView as? SourceClipView)?.lockedOrigin != nil}
+    var isResizePositionPinned:Bool {resizeSession?.protectsViewport == true}
     var selection:NSRange {textView.selectedRange()}
     var documentRange:NSRange {NSRange(location:0,length:document.source.count)}
-    var viewportAnchor:Int {offset(atCanvasY:scroll.contentView.bounds.minY+3)}
-    var alignmentAnchor:Int {offset(atCanvasY:scroll.contentView.bounds.minY+alignmentOffset)}
+    var viewportAnchor:Int {renderedViewportAnchor}
+    var alignmentAnchor:Int {renderedOffset(atCanvasY:scroll.contentView.bounds.minY+alignmentOffset)}
+    var editAnchor:Int {selection.location}
     var visibleSourceRange:NSRange {
         if !initialStylesReady {return NSRange(location:0,length:0)}
         let top=scroll.contentView.bounds.minY,bottom=top+scroll.contentSize.height
-        let start=offset(atCanvasY:top+2),end=max(start,offset(atCanvasY:bottom-2,endOfLine:true))
-        return NSRange(location:start,length:end-start)
+        let rope=document.source
+        let start=renderedOffset(atCanvasY:top+2)
+        let end=max(start,renderedOffset(atCanvasY:bottom-2))
+        // Parsing/highlight coverage uses complete logical lines even though
+        // the visual hit test can return a wrapped-line continuation. Logical
+        // boundaries are also valid retained-layout replacement boundaries.
+        let first=rope.line(at:start),last=min(rope.lineCount,rope.line(at:end)+1)
+        return rope.lines(first,last)
     }
     var fontSize:CGFloat=13 {
         didSet {
@@ -126,7 +197,10 @@ final class SourceEditor:NSView,NSTextViewDelegate,NSTextStorageDelegate,ScrollS
     init(document:MarkdownDocument,prepared:PreparedDocument = PreparedDocument(),deferInitialLayout:Bool=false) {
         self.document=document;self.prepared=prepared;initialStylesReady = !deferInitialLayout;super.init(frame:.zero)
         scroll.contentView=SourceClipView()
-        scroll.hasVerticalScroller=true;scroll.autohidesScrollers=true
+        scroll.hasVerticalScroller=true;scroll.hasHorizontalScroller=false;scroll.autohidesScrollers=true
+        let verticalScroller=SourceScroller()
+        verticalScroller.userWillScroll={ [weak self] in self?.prepareForUserInteraction() }
+        scroll.verticalScroller=verticalScroller
         scroll.backgroundColor = .textBackgroundColor;scroll.documentView=canvas
         addSubview(scroll);canvas.addSubview(textView)
         textView.owner=self;textView.delegate=self;textView.textStorage!.delegate=self
@@ -145,46 +219,51 @@ final class SourceEditor:NSView,NSTextViewDelegate,NSTextStorageDelegate,ScrollS
         textView.autoresizingMask=[];textView.backgroundColor = .textBackgroundColor
         textView.setAccessibilityLabel("Markdown source")
         scroll.contentView.postsBoundsChangedNotifications=true
-        (scroll as! SourceScrollView).consumeScroll={ [weak self] event in self?.scrollOverflow?(event) ?? false }
+        scroll.contentView.postsFrameChangedNotifications=true
+        let sourceScroll=scroll as! SourceScrollView
+        sourceScroll.userWillScroll={ [weak self] in self?.prepareForUserInteraction() }
+        sourceScroll.consumeScroll={ [weak self] event in self?.scrollOverflow?(event) ?? false }
         let center=NotificationCenter.default
-        observations.append(center.addObserver(forName:NSView.boundsDidChangeNotification,object:scroll.contentView,queue:.main) { [weak self] _ in self?.notifyViewport() })
+        observations.append(center.addObserver(forName:NSView.boundsDidChangeNotification,object:scroll.contentView,queue:.main) { [weak self] _ in self?.clipBoundsDidChange() })
+        observations.append(center.addObserver(forName:NSView.frameDidChangeNotification,object:scroll.contentView,queue:.main) { [weak self] _ in self?.needsLayout=true })
         observations.append(center.addObserver(forName:NSScrollView.willStartLiveScrollNotification,object:scroll,queue:.main) { [weak self] _ in self?.beginScrollGesture() })
         observations.append(center.addObserver(forName:NSScrollView.didEndLiveScrollNotification,object:scroll,queue:.main) { [weak self] _ in self?.endScrollGesture() })
     }
     required init?(coder:NSCoder) {fatalError()}
     deinit {for observation in observations {NotificationCenter.default.removeObserver(observation)}}
-    func beginLiveResize() {
-        guard let clip=scroll.contentView as? SourceClipView else{return}
-        liveResizeActive=true
-        liveResizeAnchoredAtTop=clip.bounds.minY==0
-        if liveResizeAnchoredAtTop {liveResizeAnchor=nil}
-        else {
-            let anchor=renderedViewportAnchor
-            liveResizeAnchor=renderedVerticalPosition(for:anchor).map{(anchor,clip.bounds.minY-$0)}
-        }
-        clip.lockedOrigin=liveResizeAnchoredAtTop ? 0:clip.bounds.minY
-        if liveResizeAnchoredAtTop {clip.scroll(to:.zero);scroll.reflectScrolledClipView(clip)}
+    func captureResizeAnchor()->(offset:Int,displacement:CGFloat,origin:CGFloat) {
+        let origin=scroll.contentView.bounds.minY
+        let offset=renderedViewportAnchor
+        let y=renderedVerticalPosition(for:offset) ?? origin
+        traceResize("source.capture",anchorY:y)
+        return (offset,origin-y,origin)
     }
-    func endLiveResize() {
-        // Resolve any final frame delivered with the end notification before
-        // the preview reads source height, viewport, or geometryRevision.
+    func beginResize(_ session:ViewportResizeSession) {
+        resizeSession=session
+        (scroll.contentView as? SourceClipView)?.resizeSession=session
+        traceResize("source.begin")
+    }
+    func finishResizeLayout() {
+        guard let session=resizeSession,session.protectsViewport else{return}
         layoutSubtreeIfNeeded()
-        guard let clip=scroll.contentView as? SourceClipView else{return}
-        if liveResizeAnchoredAtTop {clip.scroll(to:.zero);scroll.reflectScrolledClipView(clip)}
-        // Keep the rendered-glyph pin through queued bounds, highlight, and
-        // refinement callbacks. Actual user movement clears it below.
-        liveResizeActive=false;liveResizeAnchoredAtTop=false
+        guard let y=renderedVerticalPosition(for:session.sourceOffset) else{return}
+        traceResize("source.finish.before",anchorY:y)
+        let origin=max(0,y+session.sourceDisplacement)
+        session.sourceOrigin=origin
+        canvas.frame.size.height=max(canvas.frame.height,origin+scroll.contentSize.height)
+        let clip=scroll.contentView
+        clip.scroll(to:NSPoint(x:clip.bounds.minX,y:origin))
+        scroll.reflectScrolledClipView(clip)
+        traceResize("source.finish.after",anchorY:y)
     }
     private func clearResizePin() {
-        liveResizeAnchor=nil;liveResizeAnchoredAtTop=false
-        (scroll.contentView as? SourceClipView)?.lockedOrigin=nil
+        if resizeSession != nil {traceResize("source.clearPin")}
+        resizeSession?.protectsViewport=false
+        resizeSession=nil
+        (scroll.contentView as? SourceClipView)?.resizeSession=nil
     }
+    fileprivate func prepareForUserInteraction() {clearResizePin()}
     func beginScrollGesture() {
-        // AppKit may emit live-scroll notifications for our own anchor-restoring
-        // scroll(to:) calls. They are not user intent and must not release the
-        // source/preview resize pins.
-        guard !changingLayout else{return}
-        clearResizePin()
         guard !isScrolling else{return}
         isScrolling=true;scrollGestureChanged?(true)
     }
@@ -193,22 +272,7 @@ final class SourceEditor:NSView,NSTextViewDelegate,NSTextStorageDelegate,ScrollS
         isScrolling=false;applyDeferredHighlights();scrollGestureChanged?(false)
     }
     override func setFrameSize(_ size:NSSize) {
-        let topAnchor=renderedViewportAnchor
-        if size != frame.size {
-            endScrollGesture()
-            if liveResizeActive {
-                resizeAnchoredAtTop=liveResizeAnchoredAtTop
-                resizeAnchor=liveResizeAnchor
-            } else if loadedRevision>=0,nativeLayoutRevision==nil,scroll.contentView.bounds.minY==0 {
-                resizeAnchoredAtTop=true
-            }
-        }
-        if loadedRevision>=0,nativeLayoutRevision==nil,abs(size.width-frame.width)>0.5,
-           resizeAnchor==nil,!resizeAnchoredAtTop,let y=renderedVerticalPosition(for:topAnchor) {
-                // Preserve the top visible source line and its exact viewport
-                // displacement, including when the viewport is in the middle.
-                resizeAnchor=(topAnchor,scroll.contentView.bounds.minY-y)
-        }
+        if size != frame.size {endScrollGesture()}
         super.setFrameSize(size);needsLayout=true
     }
     override func layout() {
@@ -217,24 +281,27 @@ final class SourceEditor:NSView,NSTextViewDelegate,NSTextStorageDelegate,ScrollS
         // window title inside a native character transaction. Defer geometry
         // until that transaction has closed, including pending pane resizing.
         guard nativeLayoutRevision==nil,!localEdit,!changingLayout else{return}
-        let changed=scroll.frame.size != bounds.size
+        let changed=scroll.frame.size != bounds.size || abs(canvas.frame.width-scroll.contentSize.width)>0.1
         guard changed || loadedRevision<0 else{return}
+        traceResize("source.layout.begin")
         changingLayout=true
-        let anchor=resizeAnchor,atTop=resizeAnchoredAtTop
-        resizeAnchor=nil;resizeAnchoredAtTop=false
+        let session=resizeSession?.protectsViewport == true ? resizeSession:nil
+        if let session {canvas.frame.size.height=max(canvas.frame.height,session.sourceOrigin+bounds.height)}
         scroll.frame=bounds
         if loadedRevision<0 {reload(preserving:NSRange(location:0,length:0))}else{updateDimensions()}
-        if atTop {
-            (scroll.contentView as? SourceClipView)?.lockedOrigin = liveResizeActive ? 0:nil
-            scroll.contentView.scroll(to:.zero)
-            scroll.reflectScrolledClipView(scroll.contentView)
-        } else if let (offset,displacement)=anchor,let y=renderedVerticalPosition(for:offset) {
-            let origin=max(0,y+displacement)
-            if liveResizeAnchor != nil {(scroll.contentView as? SourceClipView)?.lockedOrigin=origin}
-            scroll.contentView.scroll(to:NSPoint(x:0,y:origin))
+        if let session,let y=renderedVerticalPosition(for:session.sourceOffset) {
+            traceResize("source.layout.anchor",anchorY:y)
+            session.sourceOrigin=max(0,y+session.sourceDisplacement)
+            scroll.contentView.scroll(to:NSPoint(x:0,y:session.sourceOrigin))
             scroll.reflectScrolledClipView(scroll.contentView)
         }
         changingLayout=false;geometryChanged?();notifyViewport()
+        traceResize("source.layout.end")
+    }
+    func traceResize(_ event:String,anchorY:CGFloat?=nil) {
+        let clip=scroll.contentView.bounds
+        let session=resizeSession
+        ResizeTrace.record(event,"clip=\(clip.origin) clipSize=\(clip.size) pane=\(bounds.size) scroll=\(scroll.frame.size) canvas=\(canvas.frame.size) text=\(textView.frame) textInset=\(textView.textContainerOrigin) width=\(measuredWidth) anchorOffset=\(String(describing:session?.sourceOffset)) anchorY=\(String(describing:anchorY)) pinnedOrigin=\(String(describing:session?.sourceOrigin)) displacement=\(String(describing:session?.sourceDisplacement)) drag=\(String(describing:session?.isDragging)) protect=\(String(describing:session?.protectsViewport))")
     }
     private var baseAttributes:[NSAttributedString.Key:Any] {
         [.font:NSFont.monospacedSystemFont(ofSize:fontSize,weight:.regular),.foregroundColor:NSColor.textColor]
@@ -281,12 +348,13 @@ final class SourceEditor:NSView,NSTextViewDelegate,NSTextStorageDelegate,ScrollS
             measuredWidth=width
         }
         guard let dirtyRange else {
-            canvas.frame.size.height=max(scroll.contentSize.height,textView.frame.maxY+32)
+            setCanvasSize(width:scroll.contentSize.width,
+                naturalHeight:max(scroll.contentSize.height,textView.frame.maxY+32))
             return
         }
         guard initialStylesReady || document.source.count==0 else {
             textView.frame.size.width=max(1,scroll.contentSize.width)
-            canvas.frame.size=scroll.contentSize
+            setCanvasSize(width:scroll.contentSize.width,naturalHeight:scroll.contentSize.height)
             return
         }
         geometryRevision += 1
@@ -318,7 +386,16 @@ final class SourceEditor:NSView,NSTextViewDelegate,NSTextStorageDelegate,ScrollS
         } else {followingY=nil}
         let lines=measured.enumerated().map {index,line in
             let next=index+1<measured.count ? measured[index+1].rect.minY:followingY ?? line.rect.maxY
-            return LayoutIndex.Line(length:line.range.length,advance:Double(next-line.rect.minY),height:Double(line.rect.height))
+            // AppKit can report overlapping character ranges for neighboring
+            // fragments after a CRLF/Unicode edit followed by full reflow.
+            // For a complete measurement, partition by successive line starts
+            // so the index covers every UTF-16 unit exactly once.
+            let length:Int
+            if replacingCompleteIndex {
+                let end=index+1<measured.count ? measured[index+1].range.location:document.source.count
+                length=end-line.range.location
+            } else {length=line.range.length}
+            return LayoutIndex.Line(length:length,advance:Double(next-line.rect.minY),height:Double(line.rect.height))
         }
         prepared.sourceLayout.replace(dirtyRange,with:lines,origin:measured.first.map{Double($0.rect.minY)})
         if NSMaxRange(characters)==document.source.count,let last=measured.last {
@@ -337,7 +414,12 @@ final class SourceEditor:NSView,NSTextViewDelegate,NSTextStorageDelegate,ScrollS
             frameHeight=max(scroll.contentSize.height,CGFloat(prepared.sourceLayout.height)+textView.textContainerInset.height+32)
         }
         textView.frame=NSRect(x:0,y:0,width:scroll.contentSize.width,height:frameHeight)
-        canvas.frame.size=NSSize(width:scroll.contentSize.width,height:max(scroll.contentSize.height,textView.frame.maxY+32))
+        setCanvasSize(width:scroll.contentSize.width,
+            naturalHeight:max(scroll.contentSize.height,textView.frame.maxY+32))
+    }
+    private func setCanvasSize(width:CGFloat,naturalHeight:CGFloat) {
+        let pinnedBottom=resizeSession.flatMap{$0.protectsViewport ? $0.sourceOrigin+scroll.contentSize.height:nil} ?? 0
+        canvas.frame.size=NSSize(width:width,height:max(naturalHeight,pinnedBottom))
     }
     func reload(preserving selection:NSRange) {
         guard !textView.hasMarkedText() else{return}
@@ -397,22 +479,33 @@ final class SourceEditor:NSView,NSTextViewDelegate,NSTextStorageDelegate,ScrollS
         guard let line=prepared.sourceLayout.position(at:offset) else{return nil}
         return NSRect(x:textView.textContainerInset.width,y:line.y,width:1,height:line.height)
     }
-    private var renderedViewportAnchor:Int {
-        guard document.source.count>0,let manager=textView.layoutManager,
-              let container=textView.textContainer else{return 0}
-        let y=max(0,scroll.contentView.bounds.minY+3-textView.textContainerOrigin.y)
-        let glyph=manager.glyphIndex(for:NSPoint(x:0,y:y),in:container,
-            fractionOfDistanceThroughGlyph:nil)
-        return min(document.source.count,manager.characterIndexForGlyph(at:glyph))
+    private func renderedOffset(atCanvasY canvasY:CGFloat)->Int {
+        guard document.source.count>0 else{return 0}
+        guard let manager=textView.layoutManager,let container=textView.textContainer else{return 0}
+        guard (textView.textStorage?.length ?? 0)>0 else{return 0}
+        // Work in the text-container coordinate system. NSTextView's insertion
+        // hit test can resolve an inset point against a nearby laid fragment,
+        // which is not necessarily the line painted at the clip edge when
+        // noncontiguous layout is enabled. TextKit's glyph hit test identifies
+        // that visual line directly, including a wrapped continuation line.
+        let local=textView.convert(NSPoint(x:0,y:canvasY),from:canvas)
+        let point=NSPoint(x:1,y:max(0,local.y-textView.textContainerOrigin.y))
+        let glyph=manager.glyphIndex(for:point,in:container)
+        var lineGlyphs=NSRange()
+        manager.lineFragmentUsedRect(forGlyphAt:glyph,effectiveRange:&lineGlyphs)
+        return min(document.source.count,manager.characterIndexForGlyph(at:lineGlyphs.location))
     }
+    private var renderedViewportAnchor:Int {renderedOffset(atCanvasY:scroll.contentView.bounds.minY+3)}
     private func renderedVerticalPosition(for offset:Int)->CGFloat? {
         if offset==document.source.count {return canvas.bounds.height}
-        guard document.source.count>0,let manager=textView.layoutManager else{return nil}
+        guard document.source.count>0 else{return nil}
         let character=min(max(0,offset),document.source.count-1)
+        guard let manager=textView.layoutManager else{return nil}
         manager.ensureLayout(forCharacterRange:NSRange(location:character,length:1))
         let glyph=manager.glyphIndexForCharacter(at:character)
         let line=manager.lineFragmentUsedRect(forGlyphAt:glyph,effectiveRange:nil)
-        return textView.frame.minY+textView.textContainerOrigin.y+line.minY
+        let local=NSPoint(x:textView.textContainerOrigin.x,y:textView.textContainerOrigin.y+line.minY)
+        return textView.convert(local,to:canvas).y
     }
     private func refineLayout(around requested:NSRange) {
         let rope=document.source,index=prepared.sourceLayout
@@ -421,14 +514,25 @@ final class SourceEditor:NSView,NSTextViewDelegate,NSTextStorageDelegate,ScrollS
         let last=min(rope.lineCount,rope.line(at:NSMaxRange(requested))+80)
         let range=rope.lines(first,last)
         guard range.length>0,index.hasEstimates(in:range) else{return}
-        let currentAnchor=viewportAnchor
-        let (anchor,displacement)=liveResizeAnchor ??
-            (currentAnchor,scroll.contentView.bounds.minY-(verticalPosition(for:currentAnchor) ?? scroll.contentView.bounds.minY))
-        changingLayout=true;dirtyRange=range;updateDimensions()
-        let restoredY=liveResizeAnchor != nil ? renderedVerticalPosition(for:anchor):verticalPosition(for:anchor)
+        // Exact viewport coverage is expressed in source/logical-line bounds.
+        // Expand it to the retained tree's current visual-line boundaries
+        // before replacement; a wrapped measured line cannot be split.
+        let boundary=index.position(at:range.location)?.range.location ?? range.location
+        let rangeEnd=NSMaxRange(range)
+        let boundaryEnd=rangeEnd<index.length
+            ? index.position(at:rangeEnd).map{NSMaxRange($0.range)} ?? rangeEnd
+            : index.length
+        let affected=NSRange(location:boundary,length:max(0,boundaryEnd-boundary))
+        let currentAnchor=renderedViewportAnchor
+        let session=resizeSession?.protectsViewport == true ? resizeSession:nil
+        let anchor=session?.sourceOffset ?? currentAnchor
+        let displacement=session?.sourceDisplacement ??
+            scroll.contentView.bounds.minY-(renderedVerticalPosition(for:currentAnchor) ?? scroll.contentView.bounds.minY)
+        changingLayout=true;dirtyRange=affected;updateDimensions()
+        let restoredY=renderedVerticalPosition(for:anchor)
         if let y=restoredY {
             let origin=max(0,y+displacement)
-            if liveResizeAnchor != nil {(scroll.contentView as? SourceClipView)?.lockedOrigin=origin}
+            session?.sourceOrigin=origin
             scroll.contentView.scroll(to:NSPoint(x:0,y:origin))
             scroll.reflectScrolledClipView(scroll.contentView)
         }
@@ -439,6 +543,7 @@ final class SourceEditor:NSView,NSTextViewDelegate,NSTextStorageDelegate,ScrollS
         if offset==document.source.count {return canvas.bounds.height}
         return rect(for:offset)?.minY
     }
+    func alignmentVerticalPosition(for offset:Int)->CGFloat? {renderedVerticalPosition(for:offset)}
     #if DEBUG
     func debugMeasuredPosition(for offset:Int)->CGFloat {
         guard let y=verticalPosition(for:offset) else{preconditionFailure("Missing native position at \(offset)")}
@@ -448,7 +553,7 @@ final class SourceEditor:NSView,NSTextViewDelegate,NSTextStorageDelegate,ScrollS
         clearResizePin()
         let position=min(max(0,offset),document.source.count)
         refineLayout(around:NSRange(location:position,length:max(1,min(1024,document.source.count-position))))
-        guard let y=verticalPosition(for:position) else{preconditionFailure("Missing native resize anchor")}
+        guard let y=renderedVerticalPosition(for:position) else{preconditionFailure("Missing native resize anchor")}
         changingLayout=true
         scroll.contentView.scroll(to:NSPoint(x:0,y:max(0,y-viewportY)))
         scroll.reflectScrolledClipView(scroll.contentView)
@@ -462,6 +567,24 @@ final class SourceEditor:NSView,NSTextViewDelegate,NSTextStorageDelegate,ScrollS
         scroll.contentView.scroll(to:NSPoint(x:0,y:origin))
         scroll.reflectScrolledClipView(scroll.contentView)
         changingLayout=false;notifyViewport()
+    }
+    func debugClickInsertionPoint(at offset:Int) {
+        let position=min(max(0,offset),document.source.count)
+        prepareForUserInteraction()
+        textView.setSelectedRange(NSRange(location:position,length:0))
+        textView.scrollRangeToVisible(NSRange(location:position,length:0))
+    }
+    func debugRenderedOffset(atViewportY y:CGFloat)->Int {
+        renderedOffset(atCanvasY:scroll.contentView.bounds.minY+y)
+    }
+    var debugPinnedViewportIsRepresentable:Bool {
+        guard let session=resizeSession,session.protectsViewport else{return true}
+        let origin=session.sourceOrigin
+        return canvas.bounds.height+0.01>=origin+scroll.contentSize.height
+    }
+    func debugApplyNaturalCanvasHeight(_ height:CGFloat) {
+        setCanvasSize(width:scroll.contentSize.width,naturalHeight:height)
+        scroll.reflectScrolledClipView(scroll.contentView)
     }
     func debugViewportY(for offset:Int)->CGFloat? {
         verticalPosition(for:offset).map{$0-scroll.contentView.bounds.minY}
@@ -480,18 +603,24 @@ final class SourceEditor:NSView,NSTextViewDelegate,NSTextStorageDelegate,ScrollS
         CGFloat(ScrollLandmarks.alignmentOffset(at:Double(scroll.contentView.bounds.minY),sourceHeight:Double(canvas.bounds.height),viewportHeight:Double(scroll.contentSize.height)))
     }
     private func relayoutPreservingViewport(_ change:()->Void) {
-        let anchor=viewportAnchor,oldOrigin=scroll.contentView.bounds.minY,oldPosition=verticalPosition(for:anchor)
+        let anchor=renderedViewportAnchor,oldOrigin=scroll.contentView.bounds.minY
+        let oldPosition=renderedVerticalPosition(for:anchor)
         changingLayout=true;change();updateDimensions()
-        if let (pinned,pinnedDisplacement)=liveResizeAnchor,let y=renderedVerticalPosition(for:pinned) {
-            let origin=max(0,y+pinnedDisplacement)
-            (scroll.contentView as? SourceClipView)?.lockedOrigin=origin
+        if let session=resizeSession,session.protectsViewport,
+           let y=renderedVerticalPosition(for:session.sourceOffset) {
+            let origin=max(0,y+session.sourceDisplacement)
+            session.sourceOrigin=origin
             scroll.contentView.scroll(to:NSPoint(x:0,y:origin))
         } else if oldOrigin<=0.001 {scroll.contentView.scroll(to:.zero)}
-        else if let before=oldPosition,let after=verticalPosition(for:anchor) {scroll.contentView.scroll(to:NSPoint(x:0,y:max(0,after+oldOrigin-before)))}
+        else if let before=oldPosition,let after=renderedVerticalPosition(for:anchor) {scroll.contentView.scroll(to:NSPoint(x:0,y:max(0,after+oldOrigin-before)))}
         scroll.reflectScrolledClipView(scroll.contentView)
         changingLayout=false;geometryChanged?();notifyViewport()
     }
     func documentEdited(selection:NSRange,edit:SourceEdit) {
+        // Any document edit starts a new center-synchronized positioning
+        // event. Resize pinning lasts through resize completion and queued
+        // resize layout only; it must not survive into an edit.
+        clearResizePin()
         highlightRevision=document.revision;deferredHighlights.removeAll()
         let delta=edit.insertedLength-edit.range.length,end=NSMaxRange(edit.range)
         highlightedRanges=highlightedRanges.flatMap {range -> [NSRange] in
@@ -558,9 +687,27 @@ final class SourceEditor:NSView,NSTextViewDelegate,NSTextStorageDelegate,ScrollS
         notifyViewport()
     }
     override func scrollWheel(with event:NSEvent) {scroll.scrollWheel(with:event)}
+    private func clipBoundsDidChange() {
+        guard let clip=scroll.contentView as? SourceClipView,
+              let session=resizeSession,session.protectsViewport,
+              abs(clip.bounds.minY-session.sourceOrigin)>0.5 else {
+            notifyViewport();return
+        }
+        traceResize("source.clipDrift")
+        clip.setBoundsOrigin(NSPoint(x:clip.bounds.minX,y:session.sourceOrigin))
+        scroll.reflectScrolledClipView(clip)
+        notifyViewport()
+    }
     private func notifyViewport() {
         guard !changingLayout,!localEdit,nativeLayoutRevision==nil else{return}
         refineLayout(around:visibleSourceRange)
+        // NSClipView minimizes invalidation when its origin changes. That is
+        // normally desirable, but a simultaneous TextKit reflow means copied
+        // rows no longer describe the geometry now under the clip. Explicitly
+        // repaint only the visible source rectangle so the displayed top and
+        // the anchor used for resize synchronization cannot diverge.
+        let visible=textView.convert(scroll.contentView.bounds,from:canvas)
+        textView.setNeedsDisplay(visible)
         viewportChanged?(visibleSourceRange)
     }
     func textView(_ textView:NSTextView,shouldChangeTextIn range:NSRange,replacementString:String?)->Bool {
@@ -570,6 +717,8 @@ final class SourceEditor:NSView,NSTextViewDelegate,NSTextStorageDelegate,ScrollS
     }
     func textStorage(_ storage:NSTextStorage,didProcessEditing mask:NSTextStorageEditActions,range editedRange:NSRange,changeInLength delta:Int) {
         guard !changingLayout,mask.contains(.editedCharacters) else{return}
+        // An edit is a new synchronization event, not continuation of a resize.
+        clearResizePin()
         // Observe actual native character transactions, including provisional
         // marked text. Delegate proposals can refer to an uncommitted IME range
         // and are not a reliable edit against the document model.
@@ -585,7 +734,7 @@ final class SourceEditor:NSView,NSTextViewDelegate,NSTextStorageDelegate,ScrollS
         guard let revision=nativeLayoutRevision,revision==document.revision,!changingLayout else{return}
         changingLayout=true;scroll.frame=bounds;updateDimensions();changingLayout=false
         nativeLayoutRevision=nil
-        resizeAnchor=nil;resizeAnchoredAtTop=false;needsLayout=true
+        needsLayout=true
         geometryChanged?();notifyViewport();applyDeferredHighlights()
     }
     func textViewDidChangeSelection(_ notification:Notification) {

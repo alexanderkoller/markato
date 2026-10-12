@@ -1,22 +1,23 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
-<key>CFBundleName</key><string>AstraMarkdown</string>
-<key>CFBundleDisplayName</key><string>AstraMarkdown</string>
+<key>CFBundleName</key><string>Markato</string>
+<key>CFBundleDisplayName</key><string>Markato</string>
 <key>CFBundleIdentifier</key><string>org.astramarkdown.editor</string>
-<key>CFBundleExecutable</key><string>AstraMarkdown</string>
+<key>CFBundleExecutable</key><string>Markato</string>
+<key>CFBundleIconFile</key><string>Markato.icns</string>
 <key>CFBundlePackageType</key><string>APPL</string>
 <key>CFBundleShortVersionString</key><string>0.1.0</string>
 <key>CFBundleVersion</key><string>1</string>
 <key>LSMinimumSystemVersion</key><string>15.0</string>
 <key>NSPrincipalClass</key><string>NSApplication</string>
 <key>NSHighResolutionCapable</key><true/>
-<key>NSHumanReadableCopyright</key><string>AstraMarkdown</string>
+<key>NSHumanReadableCopyright</key><string>Markato</string>
 <key>CFBundleDocumentTypes</key><array><dict>
 <key>CFBundleTypeName</key><string>Markdown</string>
 <key>CFBundleTypeExtensions</key><array><string>md</string><string>markdown</string><string>mdown</string><string>mkd</string><string>txt</string></array>
 <key>CFBundleTypeRole</key><string>Editor</string>
-<key>NSDocumentClass</key><string>AstraMarkdown.MarkdownDocument</string>
+<key>NSDocumentClass</key><string>Markato.MarkdownDocument</string>
 <key>LSItemContentTypes</key><array><string>net.daringfireball.markdown</string><string>public.plain-text</string></array>
 </dict></array>
 <key>UTImportedTypeDeclarations</key><array><dict>

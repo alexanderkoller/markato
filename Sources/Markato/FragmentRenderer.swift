@@ -77,8 +77,9 @@ private final class PreviewClipView:NSClipView {
     var sourceLength:Int {get}
     var visibleSourceRange:NSRange {get}
     var alignmentAnchor:Int {get}
-    var isResizePositionPinned:Bool {get}
+    var editAnchor:Int {get}
     func verticalPosition(for offset:Int)->CGFloat?
+    func alignmentVerticalPosition(for offset:Int)->CGFloat?
     func scrollWheel(with event:NSEvent)
 }
 @MainActor enum PreviewScrolling {
@@ -146,20 +147,11 @@ private struct CommittedPresentation {
     private var rendering:PreviewRequest?
     private var independentOrigin:CGFloat=0
     private var version=0,measuredSize:NSSize = .zero
-    private var liveResizeActive=false
-    private var liveResizeStartSize:NSSize?
+    var resizeSession:ViewportResizeSession?
     private var failedParseRevision:Int?
-    private var liveResizeOwnsMapFreeze=false
-    private var liveResizeNeedsPresentation=false
-    private var resizeReplacementPending=false
-    private var resizePinnedOrigin:CGFloat?
-    private var resizePinnedSourceOrigin:CGFloat?
-    private var resizePinnedEntryID:String?
-    private var resizePinnedEntryDisplacement:CGFloat=0
-    // A source-only edit (for example, adding another blank separator line)
-    // can advance the revision without changing a single preview pixel. Keep
-    // that already displayed frame anchored until the user actually moves the
-    // source viewport; rebuilding its source map must not move the bitmap.
+    // A committed edit position remains stable until source movement begins.
+    // Scroll entry points clear this value before applying the shared center
+    // alignment function, preserving the established scrolling behavior.
     private var metadataPinnedOrigin:CGFloat?
     private var metadataPinnedSourceOrigin:CGFloat?
     private var inspector:NSWindowController?
@@ -168,10 +160,7 @@ private struct CommittedPresentation {
     private var source:ScrollSource? {
         switch scrolling {case .independent:return nil;case .synchronized(let source):return source}
     }
-    private func clearResizePin() {
-        resizePinnedOrigin=nil;resizePinnedSourceOrigin=nil
-        resizePinnedEntryID=nil;resizePinnedEntryDisplacement=0
-    }
+    private func clearResizePin() {resizeSession?.protectsViewport=false;resizeSession=nil}
     var lastRevision:Int {
         guard let committed,committed.surface.web.isEngineReady,desired==nil,content?.revision==committed.request.revision else{return -1}
         return committed.request.revision
@@ -247,13 +236,13 @@ private struct CommittedPresentation {
         return surfaces.firstIndex{$0 === surface}
     }
     var debugResizeAnchorViewportY:CGFloat? {
-        guard let committed,let id=resizePinnedEntryID,
+        guard let committed,let id=resizeSession?.previewEntryID,
               let item=committed.geometry.items.first(where:{$0.id==id}) else{return nil}
         return committed.windowTop+item.y-committed.surface.logicalOrigin
     }
-    var debugResizePinnedOrigin:CGFloat? {resizePinnedOrigin}
+    var debugResizePinnedOrigin:CGFloat? {resizeSession?.protectsViewport == true ? resizeSession?.previewOrigin:nil}
     var debugResizeAnchorState:String {
-        guard let committed,let id=resizePinnedEntryID,
+        guard let committed,let id=resizeSession?.previewEntryID,
               let item=committed.geometry.items.first(where:{$0.id==id}) else{return "missing"}
         return "surface=\(surfaces.firstIndex{$0 === committed.surface} ?? -1), item=\(item.y), window=\(committed.windowTop), origin=\(committed.surface.logicalOrigin), width=\(committed.geometry.width), request=\(committed.request.width)"
     }
@@ -287,20 +276,12 @@ private struct CommittedPresentation {
     required init?(coder:NSCoder) {fatalError()}
     override func draw(_ dirtyRect:NSRect) {NSColor.textBackgroundColor.setFill();dirtyRect.fill()}
     func moveViewport() {
-        if !liveResizeActive,!resizeReplacementPending,
-           let pinned=resizePinnedSourceOrigin,let source,
-           !source.isResizePositionPinned,abs(source.viewportOrigin-pinned)>=0.01 {
-            clearResizePin()
-        }
-        if !liveResizeActive,let pinned=metadataPinnedSourceOrigin,let source,
+        if resizeSession?.protectsViewport == true {updateLoadingState();return}
+        if let pinned=metadataPinnedSourceOrigin,let source,
            abs(source.viewportOrigin-pinned)>=0.01 {
             metadataPinnedOrigin=nil;metadataPinnedSourceOrigin=nil
         }
-        // Source and preview geometry must describe the same widths. During a
-        // live resize the source can publish intermediate geometry before the
-        // browser has painted its matching frame, so retain the last coherent
-        // position until the resized preview has been measured.
-        if !liveResizeActive {place()}
+        place()
         updateLoadingState()
     }
     private var hasCurrentMap:Bool {
@@ -313,7 +294,8 @@ private struct CommittedPresentation {
         // Edits retain the previous complete presentation while its replacement
         // prepares. Movement still requires a map for the current revision.
         let hidden:Bool
-        if let source,failedParseRevision==source.contentRevision {hidden=committed?.surface.web.isEngineReady==true}
+        if resizeSession?.protectsViewport == true {hidden=committed?.surface.web.isEngineReady==true}
+        else if let source,failedParseRevision==source.contentRevision {hidden=committed?.surface.web.isEngineReady==true}
         else if let source,!source.hasMeasuredLayout {hidden=committed?.surface.web.isEngineReady==true}
         else {
             let replacingContent=source.map{$0.contentRevision != committed?.request.revision} == true
@@ -353,8 +335,6 @@ private struct CommittedPresentation {
         independentOrigin=toEnd ? max(0,committed.totalHeight-bounds.height):0;place()
     }
     func beginScrollGesture() {
-        clearResizePin()
-        metadataPinnedOrigin=nil;metadataPinnedSourceOrigin=nil
         guard !isScrollMappingFrozen else{return}
         refreshMap()
         guard hasCurrentMap else{updateLoadingState();return}
@@ -364,7 +344,6 @@ private struct CommittedPresentation {
         isScrollMappingFrozen=false;moveViewport();preparePresentation()
     }
     func sourceLayoutChanged() {
-        if liveResizeActive {return}
         if !isScrollMappingFrozen {moveViewport()}
         preparePresentation()
     }
@@ -372,7 +351,6 @@ private struct CommittedPresentation {
         failedParseRevision=nil
         clearResizePin()
         metadataPinnedOrigin=nil;metadataPinnedSourceOrigin=nil
-        resizeReplacementPending=false;liveResizeStartSize=nil
         endScrollGesture();version += 1;content=nil;desired=nil;updateLoadingState()
     }
     func show(_ result:ParseResult) {
@@ -387,7 +365,11 @@ private struct CommittedPresentation {
         let next=PreviewContent(revision:revision,entries:entries,sourceLength:extent,sourceRange:covered,
             previewTop:previewTop,previewHeight:previewHeight)
         guard content != next || committed?.request.content != next else{updateLoadingState();return}
-        if let committed,committed.request.revision != revision {endScrollGesture()}
+        if let committed,committed.request.revision != revision {
+            // Every edit abandons resize anchoring and publishes a fresh
+            // center-aligned map, even when the HTML pixels are unchanged.
+            clearResizePin();endScrollGesture()
+        }
         content=next;requestPresentation();updateLoadingState()
     }
     func showParseFailure(revision:Int) {failedParseRevision=revision;updateLoadingState()}
@@ -433,15 +415,16 @@ private struct CommittedPresentation {
         }
     }
     private func reusedPixelPosition(_ request:PreviewRequest,from previous:CommittedPresentation)->PresentationPosition? {
-        let origin=min(max(0,previous.totalHeight-bounds.height),max(0,previous.surface.logicalOrigin))
         switch scrolling {
         case .independent:
+            let origin=min(max(0,previous.totalHeight-bounds.height),max(0,previous.surface.logicalOrigin))
             return PresentationPosition(map:nil,sourceGeometryRevision:nil,origin:origin,
                 windowTop:previous.windowTop,totalHeight:previous.totalHeight)
         case .synchronized(let source):
             guard covers(request.content,visible:source.visibleSourceRange),
                   let map=makeMap(request,geometry:previous.geometry,windowTop:previous.windowTop,
-                    totalHeight:previous.totalHeight) else{return nil}
+                    totalHeight:previous.totalHeight),
+                  let origin=centerAlignedOrigin(height:previous.totalHeight,map:map,source:source) else{return nil}
             return PresentationPosition(map:map,sourceGeometryRevision:source.geometryRevision,origin:origin,
                 windowTop:previous.windowTop,totalHeight:previous.totalHeight)
         }
@@ -460,7 +443,7 @@ private struct CommittedPresentation {
         // Source layout/viewport callbacks continue during a window drag and
         // may enqueue newer prepared windows. Coalesce them, but never render
         // or swap a surface while the committed bitmap and map are frozen.
-        guard !liveResizeActive,rendering==nil,var request=desired,
+        guard resizeSession?.isDragging != true,rendering==nil,var request=desired,
               request.width>0.5,bounds.height>0.5 else{return}
         guard request.entries.allSatisfy({$0.fragment.html != nil}),Set(request.entries.map(\.id)).count==request.entries.count else {
             NSLog("Preview request contains incomplete or duplicate fragments")
@@ -539,8 +522,6 @@ private struct CommittedPresentation {
                 desired?.hasRetried=true
                 finishPreparation(request,retry:true)
             } else {
-                resizeReplacementPending=false
-                clearResizePin()
                 needsLayout=true
                 finishPreparation(request)
             }
@@ -605,8 +586,8 @@ private struct CommittedPresentation {
         return (CGFloat(top)-(geometry.items.first?.y ?? 0),height)
     }
     private func targetOrigin(height:CGFloat,map:ScrollLandmarks?)->CGFloat? {
-        if let resizePinnedOrigin {
-            return min(max(0,height-bounds.height),max(0,resizePinnedOrigin))
+        if let session=resizeSession,session.protectsViewport {
+            return min(max(0,height-bounds.height),max(0,session.previewOrigin))
         }
         if let metadataPinnedOrigin {
             return min(max(0,height-bounds.height),max(0,metadataPinnedOrigin))
@@ -617,17 +598,35 @@ private struct CommittedPresentation {
         case .synchronized(let source):
             if source.contentHeight<=bounds.height+0.001 {target=independentOrigin}
             else {
-                guard let map,let y=map.previewY(for:Double(source.viewportOrigin)) else{return nil}
-                target=CGFloat(y)
+                guard let map,let origin=centerAlignedOrigin(height:height,map:map,source:source) else{return nil}
+                return origin
             }
         }
         return min(max(0,height-bounds.height),max(0,target))
     }
+    /// The single source of truth for center alignment. Ordinary scrolling and
+    /// edit commits both map the source viewport through this exact function.
+    private func centerAlignedOrigin(height:CGFloat,map:ScrollLandmarks,source:ScrollSource)->CGFloat? {
+        guard let y=map.previewY(for:Double(source.viewportOrigin)) else{return nil}
+        return min(max(0,height-bounds.height),max(0,CGFloat(y)))
+    }
     private func resizeOrigin(geometry:HTMLPreviewGeometry,windowTop:CGFloat,totalHeight:CGFloat)->CGFloat? {
-        guard let id=resizePinnedEntryID,
+        guard let session=resizeSession,session.protectsViewport,
+              let id=session.previewEntryID,
               let item=geometry.items.first(where:{$0.id==id}) else{return nil}
         return min(max(0,totalHeight-bounds.height),
-            max(0,windowTop+item.y+resizePinnedEntryDisplacement))
+            max(0,windowTop+item.y+session.previewDisplacement))
+    }
+    private func editedBlockOrigin(_ request:PreviewRequest,geometry:HTMLPreviewGeometry,
+        windowTop:CGFloat,totalHeight:CGFloat,source:ScrollSource)->CGFloat? {
+        guard committed?.request.revision != request.revision else{return nil}
+        let offset=source.editAnchor
+        guard let (entry,item)=Array(zip(request.entries,geometry.items))
+            .last(where:{$0.0.fragment.from<=offset && $0.0.fragment.to>=offset}),
+              let sourceY=source.alignmentVerticalPosition(for:entry.fragment.from) else{return nil}
+        let viewportY=sourceY-source.viewportOrigin
+        guard viewportY>=0,viewportY<bounds.height else{return nil}
+        return min(max(0,totalHeight-bounds.height),max(0,windowTop+item.y-viewportY))
     }
     private func makeMap(_ request:PreviewRequest,geometry:HTMLPreviewGeometry,windowTop:CGFloat,totalHeight:CGFloat)->ScrollLandmarks? {
         #if DEBUG
@@ -636,11 +635,21 @@ private struct CommittedPresentation {
         #endif
         guard let source,source.hasMeasuredLayout,source.contentRevision==request.revision,source.sourceLength==request.content.sourceLength else{return nil}
         let revision=source.geometryRevision
+        let landmarks=zip(geometry.items,request.entries).compactMap {item,entry -> (previewY:CGFloat,entry:RenderedEntry)? in
+            guard entry.fragment.from != 0,entry.fragment.kind != "Pending" else{return nil}
+            return (item.landmark ?? item.y,entry)
+        }
+        guard !landmarks.isEmpty else{return nil}
+        // A map must use one coordinate system throughout. Mixing locally exact
+        // TextKit positions with retained estimates lets the monotonic map
+        // reorder/clamp points after reflow, producing large visual offsets.
+        // The browser window is bounded, so measure every mounted landmark.
         var points=[ScrollLandmark]()
-        for (item,entry) in zip(geometry.items,request.entries) {
-            guard let previewY=item.landmark,entry.fragment.from != 0 else{continue}
-            guard let y=source.verticalPosition(for:entry.fragment.from),y.isFinite else{return nil}
-            points.append(ScrollLandmark(offset:entry.fragment.from,sourceY:Double(y),previewY:Double(windowTop+previewY)))
+        for landmark in landmarks {
+            let offset=landmark.entry.fragment.from
+            let y=source.alignmentVerticalPosition(for:offset)
+            guard let y,y.isFinite else{return nil}
+            points.append(ScrollLandmark(offset:offset,sourceY:Double(y),previewY:Double(windowTop+landmark.previewY)))
         }
         guard revision==source.geometryRevision else{return nil}
         return ScrollLandmarks(points).viewportMap(sourceHeight:Double(source.contentHeight),viewportHeight:Double(bounds.height),previewHeight:Double(totalHeight))
@@ -657,8 +666,15 @@ private struct CommittedPresentation {
             return PresentationPosition(map:nil,sourceGeometryRevision:nil,origin:origin,windowTop:extent.top,totalHeight:extent.total)
         case .synchronized(let source):
             guard covers(request.content,visible:source.visibleSourceRange) else{return nil}
+            if resizeSession?.protectsViewport == true {
+                guard let origin=resizeOrigin(geometry:geometry,windowTop:extent.top,totalHeight:extent.total) ??
+                        targetOrigin(height:extent.total,map:nil) else{return nil}
+                return PresentationPosition(map:nil,sourceGeometryRevision:source.geometryRevision,
+                    origin:origin,windowTop:extent.top,totalHeight:extent.total)
+            }
             guard let map=makeMap(request,geometry:geometry,windowTop:extent.top,totalHeight:extent.total) else{return nil}
             guard let origin=resizeOrigin(geometry:geometry,windowTop:extent.top,totalHeight:extent.total) ??
+                    editedBlockOrigin(request,geometry:geometry,windowTop:extent.top,totalHeight:extent.total,source:source) ??
                     targetOrigin(height:extent.total,map:map) else{return nil}
             return PresentationPosition(map:map,sourceGeometryRevision:source.geometryRevision,origin:origin,windowTop:extent.top,totalHeight:extent.total)
         }
@@ -674,7 +690,6 @@ private struct CommittedPresentation {
         }
         let previousPresentation=committed
         let previous=previousPresentation?.surface
-        let completesResizeReplacement=resizeReplacementPending
         #if DEBUG
         if let previousPresentation,previousPresentation.request.revision != request.revision {
             crossRevisionCommitCount += 1
@@ -699,22 +714,16 @@ private struct CommittedPresentation {
         if hadFocus {window?.makeFirstResponder(surface.web)}
         assert(surfaces.filter{!$0.clip.isHidden}.count==1 && !surface.web.isHidden)
         CATransaction.commit()
-        // Keep the saved top after the atomic swap as well: source layout can
-        // publish queued, non-user callbacks immediately after this commit.
-        // Rebase its guard to the final source origin. The next real source
-        // movement or scroll gesture clears the pin and uses this new map.
-        if completesResizeReplacement || resizePinnedEntryID != nil {
-            resizePinnedOrigin=position.origin
-            resizePinnedSourceOrigin=source?.viewportOrigin
+        if let session=resizeSession,session.protectsViewport {
+            session.previewOrigin=position.origin
         }
-        resizeReplacementPending=false
         #if DEBUG
         debugPresentationCommitted?()
         #endif
         return true
     }
     override func setFrameSize(_ size:NSSize) {
-        if size != frame.size,!liveResizeActive {endScrollGesture()}
+        if size != frame.size {endScrollGesture()}
         super.setFrameSize(size);needsLayout=true
     }
     override func layout() {
@@ -729,87 +738,72 @@ private struct CommittedPresentation {
         loadingView.layer?.backgroundColor=NSColor.textBackgroundColor.cgColor
         let previousSize=measuredSize
         let widthChanged=previousSize.width != bounds.width
-        let sizeChanged=previousSize != bounds.size
         measuredSize=bounds.size
-        if liveResizeActive {
-            if sizeChanged {liveResizeNeedsPresentation=true}
-        } else if widthChanged {
-            endScrollGesture();requestPresentation()
-        }
+        if widthChanged {endScrollGesture();requestPresentation()}
         if let committed {
-            // Reflow the displayed document continuously. HTMLPreviewView calls
-            // back after layout but before publishing the resized bitmap, so
-            // viewportDidResize can restore the semantic top atomically.
             committed.surface.size(contentHeight:committed.totalHeight,windowTop:committed.windowTop,
                 width:bounds.width,viewportHeight:bounds.height)
         }
-        if !liveResizeActive {place();preparePresentation()}
+        if resizeSession?.protectsViewport != true {place()}
+        preparePresentation()
     }
-    func beginLiveResize() {
-        guard !liveResizeActive else{return}
-        liveResizeStartSize=bounds.size
+    func captureResizeAnchor()->(entryID:String?,displacement:CGFloat,origin:CGFloat) {
+        web.flush()
+        let origin=committed?.surface.logicalOrigin ?? 0
+        guard let committed else{return(nil,0,origin)}
+        let local=origin-committed.windowTop
+        let item=Array(zip(committed.request.entries,committed.geometry.items))
+            .last(where:{$0.1.y<=local}) ??
+            Array(zip(committed.request.entries,committed.geometry.items)).first
+        return (item?.0.id,item.map{local-$0.1.y} ?? 0,origin)
+    }
+    func beginResize(_ session:ViewportResizeSession) {
+        resizeSession=session
         metadataPinnedOrigin=nil;metadataPinnedSourceOrigin=nil
-        resizePinnedOrigin=visiblePreviewRange.lowerBound
-        resizePinnedSourceOrigin=source?.viewportOrigin
-        if let committed,let origin=resizePinnedOrigin {
-            let local=origin-committed.windowTop
-            let pairs=Array(zip(committed.request.entries,committed.geometry.items))
-            let item=pairs.last(where:{$0.1.y<=local}) ?? pairs.first
-            resizePinnedEntryID=item?.0.id
-            resizePinnedEntryDisplacement=item.map{local-$0.1.y} ?? 0
-        }
-        refreshMap();liveResizeActive=true
-        if !isScrollMappingFrozen,hasCurrentMap {
-            isScrollMappingFrozen=true;liveResizeOwnsMapFreeze=true
-        }
     }
-    func endLiveResize() {
-        guard liveResizeActive else{return}
-        let sizeChanged=liveResizeStartSize.map{$0 != bounds.size} ?? false
-        liveResizeStartSize=nil
-        liveResizeActive=false
-        if liveResizeOwnsMapFreeze {isScrollMappingFrozen=false;liveResizeOwnsMapFreeze=false}
-        if liveResizeNeedsPresentation || sizeChanged {
-            liveResizeNeedsPresentation=false
-            if finalizeDisplayedResize() {return}
-            resizeReplacementPending=true;requestPresentation()
-        }
-        else {
-            clearResizePin()
-            moveViewport()
-        }
+    func finishResizeLayout() {
+        guard let session=resizeSession,session.protectsViewport else{return}
+        layoutSubtreeIfNeeded()
+        if committed?.request.width != bounds.width {requestPresentation()}
+        // The displayed engine has already reflowed to the final viewport
+        // during the drag. If its semantic content is unchanged, publish its
+        // new geometry and bitmap without remounting a second surface.
+        let reused=reuseResizedPresentation()
+        ResizeTrace.record(reused ? "preview.release.reused" : "preview.release.render",
+            "width=\(bounds.width) committed=\(committed?.request.width ?? -1) desired=\(desired?.width ?? -1)")
+        session.isDragging=false
+        preparePresentation()
     }
-    private func finalizeDisplayedResize()->Bool {
-        guard let previous=committed,previous.surface.web.isEngineReady,
-              let geometry=previous.surface.web.geometry(),
-              abs(geometry.width-bounds.width)<1 else{return false}
-        version += 1
-        let request=PreviewRequest(id:version,content:previous.request.content,
-            fontSize:previous.request.fontSize,baseURL:previous.request.baseURL,width:bounds.width)
-        let extent=previewExtent(request,geometry)
-        let map=makeMap(request,geometry:geometry,windowTop:extent.top,totalHeight:extent.total)
-        let origin=min(max(0,extent.total-bounds.height),max(0,previous.surface.logicalOrigin))
-        previous.surface.size(contentHeight:extent.total,windowTop:extent.top,
-            width:bounds.width,viewportHeight:bounds.height)
-        previous.surface.scroll(to:origin)
-        committed=CommittedPresentation(request:request,geometry:geometry,surface:previous.surface,
-            map:map,sourceGeometryRevision:map == nil ? nil:source?.geometryRevision,
-            viewportHeight:bounds.height,windowTop:extent.top,totalHeight:extent.total)
-        desired=nil;rendering=nil;resizeReplacementPending=false
-        resizePinnedOrigin=origin;resizePinnedSourceOrigin=source?.viewportOrigin
-        updateLoadingState()
-        return true
+    private func reuseResizedPresentation()->Bool {
+        guard rendering==nil,let request=desired,let previous=committed,
+              previous.surface.web.isEngineReady,
+              request.content==previous.request.content,
+              request.fontSize==previous.request.fontSize,
+              request.baseURL==previous.request.baseURL,
+              request.width==bounds.width,
+              previous.surface.web.bounds.width==bounds.width else{return false}
+        previous.surface.web.flush()
+        guard let geometry=previous.surface.web.geometry(),
+              abs(geometry.width-request.width)<1,
+              geometry.items.map(\.id)==request.entries.map(\.id),
+              let position=presentationPosition(request,geometry:geometry) else{return false}
+        rendering=request
+        let reused=commit(request,geometry:geometry,surface:previous.surface,
+            position:position,reusesPixels:true)
+        finishPreparation(request,keepDesired:!reused)
+        return reused
     }
     private func viewportDidResize(_ surface:PreviewSurface) {
-        guard liveResizeActive,let committed,surface === committed.surface,
+        guard let session=resizeSession,session.protectsViewport,
+              let committed,surface === committed.surface,
               let geometry=surface.web.geometry() else{return}
         let extent=previewExtent(committed.request,geometry)
-        if let id=resizePinnedEntryID,
+        if let id=session.previewEntryID,
            let item=geometry.items.first(where:{$0.id==id}) {
-            resizePinnedOrigin=min(max(0,extent.total-bounds.height),
-                max(0,extent.top+item.y+resizePinnedEntryDisplacement))
+            session.previewOrigin=min(max(0,extent.total-bounds.height),
+                max(0,extent.top+item.y+session.previewDisplacement))
         }
-        let origin=resizePinnedOrigin ?? surface.logicalOrigin
+        let origin=session.previewOrigin
         surface.size(contentHeight:extent.total,windowTop:extent.top,
             width:bounds.width,viewportHeight:bounds.height)
         surface.scroll(to:origin)
@@ -818,7 +812,7 @@ private struct CommittedPresentation {
             viewportHeight:bounds.height,windowTop:extent.top,totalHeight:extent.total)
     }
     private func refreshMap() {
-        guard let committed,let source,(committed.sourceGeometryRevision != source.geometryRevision || committed.viewportHeight != bounds.height) else{return}
+        guard let committed,let source,(committed.map == nil || committed.sourceGeometryRevision != source.geometryRevision || committed.viewportHeight != bounds.height) else{return}
         guard let map=makeMap(committed.request,geometry:committed.geometry,windowTop:committed.windowTop,totalHeight:committed.totalHeight) else{return}
         self.committed=CommittedPresentation(request:committed.request,geometry:committed.geometry,surface:committed.surface,map:map,sourceGeometryRevision:source.geometryRevision,viewportHeight:bounds.height,windowTop:committed.windowTop,totalHeight:committed.totalHeight)
     }
@@ -838,11 +832,16 @@ private struct CommittedPresentation {
     }
     #if DEBUG
     var debugFirstHeadingViewportY:CGFloat? {
-        guard let committed,let rect=committed.surface.web.debugRect("h1",containing:"AstraMarkdown") else{return nil}
+        guard let committed,let rect=committed.surface.web.debugRect("h1",containing:"Markato") else{return nil}
         return committed.surface.web.frame.minY-committed.surface.clip.bounds.minY+rect.minY
     }
     func debugParagraphViewportY(containing text:String)->CGFloat? {
         guard let committed,let rect=committed.surface.web.debugRect("p",containing:text) else{return nil}
+        return committed.surface.web.frame.minY-committed.surface.clip.bounds.minY+rect.minY
+    }
+    func debugHeadingViewportY(containing text:String)->CGFloat? {
+        guard let committed,
+              let rect=committed.surface.web.debugRect("h1, h2, h3, h4, h5, h6",containing:text) else{return nil}
         return committed.surface.web.frame.minY-committed.surface.clip.bounds.minY+rect.minY
     }
     var debugScrollMapError:CGFloat? {

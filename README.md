@@ -1,4 +1,4 @@
-# Markato
+to # Markato
 
 <img src="docs/assets/markato-icon.png" alt="Markato app icon" width="128" height="128">
 
@@ -10,9 +10,9 @@ If you like [MacDown](https://github.com/MacDownApp/macdown)'s source-on-the-lef
 
 ## Speed on long documents
 
-In a controlled benchmark on an Apple M4 Pro, Markato opened an **8 MB Markdown document to a visible preview in 0.36 seconds** — **6.9 times faster than [MacDown 2.0](https://github.com/xuanji86/MacDown2.0)** and **33 times faster than MacDown 0.7.3**. [MacDown 3000](https://github.com/schuyler/macdown3000) did not complete that operation within the 60-second limit.
+In a controlled benchmark on an Apple M4 Pro, Markato opened an **8 MB Markdown document to a visible preview in 0.36 seconds** — **6.9 times faster than [MacDown 2.0](https://github.com/xuanji86/MacDown2.0)** and **33 times faster than MacDown 0.7.3**. Neither [MarkViewer](https://markviewer.com/) nor [MacDown 3000](https://github.com/schuyler/macdown3000) completed that operation within the 60-second limit.
 
-![An 8 MB Markdown document opens in 0.36 seconds in Markato, 2.48 seconds in MacDown 2.0, and 11.87 seconds in MacDown 0.7.3; MacDown 3000 exceeds the 60-second timeout.](docs/assets/markato-performance.png)
+![An 8 MB Markdown document opens in 0.36 seconds in Markato, 2.48 seconds in MacDown 2.0, and 11.87 seconds in MacDown 0.7.3; MarkViewer and MacDown 3000 exceed the 60-second timeout.](docs/assets/markato-performance.png)
 
 On the same 8 MB document, an edit reached the visible preview in **0.21 seconds**, compared with **0.23 seconds for MacDown 2.0**. The largest advantage in this comparison is opening long documents.
 

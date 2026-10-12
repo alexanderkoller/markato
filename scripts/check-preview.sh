@@ -9,4 +9,4 @@ swift test --disable-sandbox --cache-path .build/cache --config-path .build/conf
 swift test -c release --disable-sandbox --cache-path .build/cache --config-path .build/config --security-path .build/security
 bash scripts/build-app.sh release
 bash scripts/build-app.sh debug
-exec dist/debug/AstraMarkdown.app/Contents/MacOS/AstraMarkdown --integration-test --diagnostics
+exec dist/debug/Markato.app/Contents/MacOS/Markato --integration-test --diagnostics

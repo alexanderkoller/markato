@@ -43,6 +43,7 @@ final class EditorWindowController: NSWindowController, NSSplitViewDelegate, NSS
     private var isClosed=false
     private var openingRequested=false
     private var hasShownWindow=false
+    private var resizeSession:ViewportResizeSession?
     #if DEBUG
     var cachedBlockCount:Int {preparedDocument.count}
     var cachedByteCost:Int {preparedDocument.byteCost}
@@ -187,14 +188,30 @@ final class EditorWindowController: NSWindowController, NSSplitViewDelegate, NSS
         super.showWindow(sender)
     }
     deinit { NotificationCenter.default.removeObserver(self) }
-    func windowWillStartLiveResize(_ notification:Notification) {source.beginLiveResize();preview.beginLiveResize()}
+    func windowWillStartLiveResize(_ notification:Notification) {
+        source.traceResize("window.willStart.before")
+        let previewAnchor=preview.captureResizeAnchor()
+        let sourceAnchor=source.captureResizeAnchor()
+        let session=ViewportResizeSession(sourceOffset:sourceAnchor.offset,
+            sourceDisplacement:sourceAnchor.displacement,sourceOrigin:sourceAnchor.origin,
+            previewEntryID:previewAnchor.entryID,previewDisplacement:previewAnchor.displacement,
+            previewOrigin:previewAnchor.origin)
+        resizeSession=session
+        preview.beginResize(session);source.beginResize(session)
+        source.traceResize("window.willStart.after")
+    }
     func windowDidEndLiveResize(_ notification:Notification) {
-        // AppKit may deliver the end notification while the final content/split
-        // frames still only carry `needsLayout`. Materialize that complete view
-        // hierarchy first, then release/finalize native source geometry before
-        // the preview builds its resized landmark map.
+        guard resizeSession != nil else{return}
+        source.traceResize("window.didEnd.before")
+        // A final TextKit layout can move the rendered anchor even when the
+        // clip origin is unchanged. Restore the saved source anchor after all
+        // release-time layout, while the resize session still owns the view.
         window?.contentView?.layoutSubtreeIfNeeded()
-        source.endLiveResize();preview.endLiveResize()
+        source.traceResize("window.didEnd.afterLayout")
+        preview.finishResizeLayout()
+        source.finishResizeLayout()
+        source.traceResize("window.didEnd.afterPreview")
+        DispatchQueue.main.async { [weak self] in self?.source.traceResize("window.didEnd.nextTurn") }
     }
     func windowWillClose(_ notification:Notification) {
         isClosed=true;pendingViewport=nil;openingRequested=false

@@ -1,0 +1,7 @@
+{"bundle":"com.markviewer.markviewer","os":"Version 26.6.2 (Build 25G83)","window":"1120x760 offscreen","fixture":"\/private\/tmp\/markviewer-benchmark-vky96b84\/inputs\/prose-1048576-r1.md","version":"1.8.14","type":"metadata","endpoint":"visible H1 plus changed WebKit frame"}
+{"operation":"open","elapsedMs":21280.122416973114,"editIndex":0,"observedHeading":"BENCH_START","type":"sample","dispatchMs":28.546833515167236}
+{"operation":"edit","elapsedMs":16480.735166788101,"editIndex":1,"observedHeading":"E73F89C7F01 BENCH_START","type":"sample","dispatchMs":10537.017583370209}
+{"operation":"edit","elapsedMs":26054.076833248138,"editIndex":2,"observedHeading":"E73F89C7F02 E73F89C7F01 BENCH_START","type":"sample","dispatchMs":25596.443374872208}
+{"operation":"edit","elapsedMs":29029.968999862671,"editIndex":3,"observedHeading":"E73F89C7F03 E73F89C7F02 E73F89C7F01 BENCH_START","type":"sample","dispatchMs":28931.019708156586}
+{"type":"memory","mainProcessRSSBytes":190332928}
+{"type":"complete"}

@@ -1,0 +1,76 @@
+[2026-10-12][08:18:25][app_lib][INFO] File watcher initialized successfully
+[2026-10-12][08:18:25][app_lib][INFO] App launched with 2 args: ["/private/tmp/MarkViewer-benchmark.app/Contents/MacOS/app", "/Users/koller/Documents/ChatGPT/AstraMarkdown/benchmarks/2026-10-12-markviewer/fixtures/warmup.md"]
+[2026-10-12][08:18:25][app_lib][INFO] Found file argument: /Users/koller/Documents/ChatGPT/AstraMarkdown/benchmarks/2026-10-12-markviewer/fixtures/warmup.md
+[2026-10-12][08:18:25][app_lib][INFO] ✅ Command-line file stored in InitialFileState
+[2026-10-12][08:18:25][app_lib::workspace::commands][INFO] [workspace] registry=/Users/koller/Library/Application Support/com.markviewer.markviewer/workspace_registry.json (0 workspaces), session=/Users/koller/Library/Application Support/com.markviewer.markviewer/editor_session.json (0 windows), app_data_dir=/Users/koller/Library/Application Support/com.markviewer.markviewer
+[2026-10-12][08:18:25][app_lib::agent][DEBUG] agent_detect_fast (stat only) → ["claude", "codex"]
+[2026-10-12][08:18:25][app_lib][INFO] ✅ Initial file retrieved successfully
+[2026-10-12][08:18:25][app_lib][INFO] Started watching explorer root: /Users/koller/Documents/ChatGPT/AstraMarkdown/benchmarks/2026-10-12-markviewer/fixtures (canonical /Users/koller/Documents/ChatGPT/AstraMarkdown/benchmarks/2026-10-12-markviewer/fixtures)
+[2026-10-12][08:18:25][app_lib][INFO] Started watching file: /Users/koller/Documents/ChatGPT/AstraMarkdown/benchmarks/2026-10-12-markviewer/fixtures/warmup.md
+[2026-10-12][08:18:25][app_lib::workspace::git_runner][DEBUG] git run: /usr/bin/git ["rev-parse", "--show-toplevel"] (cwd=/Users/koller/Documents/ChatGPT/AstraMarkdown/benchmarks/2026-10-12-markviewer/fixtures)
+[2026-10-12][08:18:25][app_lib::workspace::git_runner][DEBUG] git run: /usr/bin/git ["rev-parse", "--show-toplevel"] (cwd=/Users/koller/Documents/ChatGPT/AstraMarkdown/benchmarks/2026-10-12-markviewer/fixtures)
+[2026-10-12][08:18:25][app_lib::workspace::git_runner][DEBUG] git done in 13.044834ms (exit=Some(0), stderr_len=0)
+[2026-10-12][08:18:25][app_lib::workspace::git_runner][DEBUG] git done in 13.045708ms (exit=Some(0), stderr_len=0)
+[2026-10-12][08:18:25][app_lib::workspace::git_runner][DEBUG] git run: /usr/bin/git ["rev-parse", "--is-bare-repository"] (cwd=/Users/koller/Documents/ChatGPT/AstraMarkdown/benchmarks/2026-10-12-markviewer/fixtures)
+[2026-10-12][08:18:25][app_lib::workspace::git_runner][DEBUG] git run: /usr/bin/git ["rev-parse", "--is-bare-repository"] (cwd=/Users/koller/Documents/ChatGPT/AstraMarkdown/benchmarks/2026-10-12-markviewer/fixtures)
+[2026-10-12][08:18:25][app_lib::workspace::git_runner][DEBUG] git done in 10.34375ms (exit=Some(0), stderr_len=0)
+[2026-10-12][08:18:25][app_lib::workspace::git_runner][DEBUG] git done in 10.358958ms (exit=Some(0), stderr_len=0)
+[2026-10-12][08:18:25][app_lib::workspace::git_runner][DEBUG] git run: /usr/bin/git ["symbolic-ref", "--short", "HEAD"] (cwd=/Users/koller/Documents/ChatGPT/AstraMarkdown/benchmarks/2026-10-12-markviewer/fixtures)
+[2026-10-12][08:18:25][app_lib::workspace::git_runner][DEBUG] git run: /usr/bin/git ["symbolic-ref", "--short", "HEAD"] (cwd=/Users/koller/Documents/ChatGPT/AstraMarkdown/benchmarks/2026-10-12-markviewer/fixtures)
+[2026-10-12][08:18:25][app_lib::workspace::git_runner][DEBUG] git done in 10.288791ms (exit=Some(0), stderr_len=0)
+[2026-10-12][08:18:25][app_lib::workspace::git_runner][DEBUG] git done in 10.279709ms (exit=Some(0), stderr_len=0)
+[2026-10-12][08:18:25][app_lib::workspace::git_runner][DEBUG] git run: /usr/bin/git ["rev-parse", "--verify", "-q", "HEAD"] (cwd=/Users/koller/Documents/ChatGPT/AstraMarkdown/benchmarks/2026-10-12-markviewer/fixtures)
+[2026-10-12][08:18:25][app_lib::workspace::git_runner][DEBUG] git run: /usr/bin/git ["rev-parse", "--verify", "-q", "HEAD"] (cwd=/Users/koller/Documents/ChatGPT/AstraMarkdown/benchmarks/2026-10-12-markviewer/fixtures)
+[2026-10-12][08:18:25][app_lib::workspace::git_runner][DEBUG] git done in 10.672667ms (exit=Some(0), stderr_len=0)
+[2026-10-12][08:18:25][app_lib::workspace::git_runner][DEBUG] git done in 10.699333ms (exit=Some(0), stderr_len=0)
+[2026-10-12][08:18:25][app_lib::workspace::git_runner][DEBUG] git run: /usr/bin/git ["status", "--porcelain"] (cwd=/Users/koller/Documents/ChatGPT/AstraMarkdown/benchmarks/2026-10-12-markviewer/fixtures)
+[2026-10-12][08:18:25][app_lib::workspace::git_runner][DEBUG] git run: /usr/bin/git ["status", "--porcelain"] (cwd=/Users/koller/Documents/ChatGPT/AstraMarkdown/benchmarks/2026-10-12-markviewer/fixtures)
+[2026-10-12][08:18:25][app_lib::workspace::git_runner][DEBUG] git done in 15.737833ms (exit=Some(0), stderr_len=0)
+[2026-10-12][08:18:25][app_lib::workspace::git_runner][DEBUG] git done in 15.721ms (exit=Some(0), stderr_len=0)
+[2026-10-12][08:18:25][app_lib::workspace::git_runner][DEBUG] git run: /usr/bin/git ["rev-parse", "--show-toplevel"] (cwd=/Users/koller/Documents/ChatGPT/AstraMarkdown)
+[2026-10-12][08:18:25][app_lib::workspace::git_runner][DEBUG] git run: /usr/bin/git ["rev-parse", "--show-toplevel"] (cwd=/Users/koller/Documents/ChatGPT/AstraMarkdown)
+[2026-10-12][08:18:25][app_lib::workspace::git_runner][DEBUG] git done in 11.533584ms (exit=Some(0), stderr_len=0)
+[2026-10-12][08:18:25][app_lib::workspace::git_runner][DEBUG] git run: /usr/bin/git ["rev-parse", "--is-bare-repository"] (cwd=/Users/koller/Documents/ChatGPT/AstraMarkdown)
+[2026-10-12][08:18:25][app_lib::workspace::git_runner][DEBUG] git done in 10.551875ms (exit=Some(0), stderr_len=0)
+[2026-10-12][08:18:25][app_lib::workspace::git_runner][DEBUG] git run: /usr/bin/git ["rev-parse", "--is-bare-repository"] (cwd=/Users/koller/Documents/ChatGPT/AstraMarkdown)
+[2026-10-12][08:18:25][app_lib::workspace::git_runner][DEBUG] git done in 9.735834ms (exit=Some(0), stderr_len=0)
+[2026-10-12][08:18:25][app_lib::workspace::git_runner][DEBUG] git run: /usr/bin/git ["symbolic-ref", "--short", "HEAD"] (cwd=/Users/koller/Documents/ChatGPT/AstraMarkdown)
+[2026-10-12][08:18:25][app_lib::workspace::git_runner][DEBUG] git done in 9.492833ms (exit=Some(0), stderr_len=0)
+[2026-10-12][08:18:25][app_lib::workspace::git_runner][DEBUG] git run: /usr/bin/git ["symbolic-ref", "--short", "HEAD"] (cwd=/Users/koller/Documents/ChatGPT/AstraMarkdown)
+[2026-10-12][08:18:25][app_lib::workspace::git_runner][DEBUG] git done in 10.966333ms (exit=Some(0), stderr_len=0)
+[2026-10-12][08:18:25][app_lib::workspace::git_runner][DEBUG] git run: /usr/bin/git ["rev-parse", "--verify", "-q", "HEAD"] (cwd=/Users/koller/Documents/ChatGPT/AstraMarkdown)
+[2026-10-12][08:18:25][app_lib::workspace::git_runner][DEBUG] git done in 10.371417ms (exit=Some(0), stderr_len=0)
+[2026-10-12][08:18:25][app_lib::workspace::git_runner][DEBUG] git run: /usr/bin/git ["rev-parse", "--verify", "-q", "HEAD"] (cwd=/Users/koller/Documents/ChatGPT/AstraMarkdown)
+[2026-10-12][08:18:25][app_lib::workspace::git_runner][DEBUG] git done in 12.640583ms (exit=Some(0), stderr_len=0)
+[2026-10-12][08:18:25][app_lib::workspace::git_runner][DEBUG] git run: /usr/bin/git ["status", "--porcelain"] (cwd=/Users/koller/Documents/ChatGPT/AstraMarkdown)
+[2026-10-12][08:18:25][app_lib::workspace::git_runner][DEBUG] git done in 11.629792ms (exit=Some(0), stderr_len=0)
+[2026-10-12][08:18:25][app_lib::workspace::git_runner][DEBUG] git run: /usr/bin/git ["status", "--porcelain"] (cwd=/Users/koller/Documents/ChatGPT/AstraMarkdown)
+[2026-10-12][08:18:25][app_lib::workspace::git_runner][DEBUG] git done in 13.550667ms (exit=Some(0), stderr_len=0)
+[2026-10-12][08:18:25][app_lib::workspace::git_runner][DEBUG] git run: /usr/bin/git ["worktree", "list", "--porcelain"] (cwd=/Users/koller/Documents/ChatGPT/AstraMarkdown)
+[2026-10-12][08:18:25][app_lib::workspace::git_runner][DEBUG] git done in 12.383708ms (exit=Some(0), stderr_len=0)
+[2026-10-12][08:18:25][app_lib::workspace::git_runner][DEBUG] git run: /usr/bin/git ["worktree", "list", "--porcelain"] (cwd=/Users/koller/Documents/ChatGPT/AstraMarkdown)
+[2026-10-12][08:18:25][app_lib::workspace::git_runner][DEBUG] git done in 11.637334ms (exit=Some(0), stderr_len=0)
+[2026-10-12][08:18:25][app_lib::workspace::git_runner][DEBUG] git done in 10.947833ms (exit=Some(0), stderr_len=0)
+[2026-10-12][08:18:27][app_lib][INFO] ✅ RunEvent::Opened received with 1 URLs
+[2026-10-12][08:18:27][app_lib][INFO] ⏰ Timestamp: SystemTime { tv_sec: 1791793107, tv_nsec: 820342000 }
+[2026-10-12][08:18:27][app_lib][INFO] 📊 Current webview count: 1
+[2026-10-12][08:18:27][app_lib][INFO] Processing URL: file:///private/tmp/markviewer-benchmark-vky96b84/inputs/prose-65536-r1.md
+[2026-10-12][08:18:27][app_lib][INFO] Converted to file path: /private/tmp/markviewer-benchmark-vky96b84/inputs/prose-65536-r1.md
+[2026-10-12][08:18:27][app_lib][INFO] ✅ Markdown file detected: /private/tmp/markviewer-benchmark-vky96b84/inputs/prose-65536-r1.md
+[2026-10-12][08:18:27][app_lib][INFO] 📊 Webview ready: true
+[2026-10-12][08:18:27][app_lib][INFO] 🚀 Webview ready, emitting file open event immediately
+[2026-10-12][08:18:27][app_lib][INFO] Opening and emitting file: /private/tmp/markviewer-benchmark-vky96b84/inputs/prose-65536-r1.md
+[2026-10-12][08:18:27][app_lib][INFO] File read successfully: /private/tmp/markviewer-benchmark-vky96b84/inputs/prose-65536-r1.md (65569 bytes)
+[2026-10-12][08:18:27][app_lib][INFO] Emitting open-external-file to main
+[2026-10-12][08:18:27][app_lib][INFO] Started watching file: /private/tmp/markviewer-benchmark-vky96b84/inputs/prose-65536-r1.md
+[2026-10-12][08:18:28][app_lib][INFO] Starting update check (manual: false, channel: stable)...
+[2026-10-12][08:18:28][tauri_plugin_updater::updater][DEBUG] checking for updates https://github.com/SeungbinBaik/markviewer-releases/releases/latest/download/latest-v2.json
+[2026-10-12][08:18:28][reqwest::connect][DEBUG] starting new connection: https://github.com/
+[2026-10-12][08:18:28][reqwest::connect][DEBUG] proxy(http://127.0.0.1:9/) intercepts 'https://github.com/'
+[2026-10-12][08:18:28][tauri_plugin_updater::updater][ERROR] failed to check for updates: error sending request for url (https://github.com/SeungbinBaik/markviewer-releases/releases/latest/download/latest-v2.json)
+[2026-10-12][08:18:28][app_lib][WARN] v2 update feed unavailable (error sending request for url (https://github.com/SeungbinBaik/markviewer-releases/releases/latest/download/latest-v2.json)); trying the legacy feed
+[2026-10-12][08:18:28][tauri_plugin_updater::updater][DEBUG] checking for updates https://github.com/SeungbinBaik/markviewer-releases/releases/latest/download/latest.json
+[2026-10-12][08:18:28][reqwest::connect][DEBUG] starting new connection: https://github.com/
+[2026-10-12][08:18:28][reqwest::connect][DEBUG] proxy(http://127.0.0.1:9/) intercepts 'https://github.com/'
+[2026-10-12][08:18:28][tauri_plugin_updater::updater][ERROR] failed to check for updates: error sending request for url (https://github.com/SeungbinBaik/markviewer-releases/releases/latest/download/latest.json)
+[2026-10-12][08:18:28][app_lib][ERROR] Error checking for updates: error sending request for url (https://github.com/SeungbinBaik/markviewer-releases/releases/latest/download/latest.json)
