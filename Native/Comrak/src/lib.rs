@@ -16,6 +16,13 @@ use std::{
     slice,
 };
 
+mod highlight;
+#[cfg(test)]
+mod highlight_tests;
+mod mermaid;
+#[cfg(test)]
+mod mermaid_tests;
+
 type MathRenderer =
     Option<unsafe extern "C" fn(*mut c_void, *const u8, usize, bool) -> *mut c_char>;
 unsafe extern "C" {
@@ -503,6 +510,23 @@ fn format_node(
             math(context, node, &c.literal, true)
         }
         NodeValue::CodeBlock(c) if c.info == "math" => Ok(ChildRendering::Skip),
+        NodeValue::CodeBlock(c)
+            if c.fenced && c.info.split_whitespace().next() == Some("mermaid") =>
+        {
+            if entering {
+                match mermaid::image(&c.literal) {
+                    Ok(html) => context.write_str(&html)?,
+                    Err(message) => {
+                        context.write_str("<div class=\"mermaid-error\"><p>")?;
+                        context.escape(message)?;
+                        context.write_str("</p><pre><code class=\"language-mermaid\">")?;
+                        context.escape(&c.literal)?;
+                        context.write_str("</code></pre></div>\n")?;
+                    }
+                }
+            }
+            Ok(ChildRendering::Skip)
+        }
         NodeValue::HtmlBlock(_) if entering => {
             context.write_str("<pre>")?;
             let range = context.user.index.range(node, context.user.source);
@@ -583,15 +607,11 @@ fn parse_source(
         math: callback,
         context: opaque,
     };
-    let state = format_document_with_formatter(
-        root,
-        &options,
-        &mut output,
-        &Plugins::default(),
-        format_node,
-        state,
-    )
-    .map_err(|_| "Markdown or math rendering failed".to_owned())?;
+    let mut plugins = Plugins::default();
+    plugins.render.codefence_syntax_highlighter = Some(&highlight::HIGHLIGHTER);
+    let state =
+        format_document_with_formatter(root, &options, &mut output, &plugins, format_node, state)
+            .map_err(|_| "Markdown or math rendering failed".to_owned())?;
     let index = state.index;
     let mut blocks = Vec::new();
     let mut position = 0;

@@ -53,7 +53,7 @@ public struct HTMLPreviewGeometry: Equatable, Sendable {
             }
             return text
         }
-        self.init(frame:frame,css:resource("KaTeX")+resource("Preview"))
+        self.init(frame:frame,css:resource("KaTeX")+resource("Preview")+resource("CodeHighlight"))
     }
 
     init(frame:NSRect,css:String) {

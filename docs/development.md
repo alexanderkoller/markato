@@ -78,6 +78,10 @@ Its report is written to `/private/tmp/markato-ultralight-integration-timings.js
 
 ## Parser maintenance
 
+Code-fence preview highlighting uses Syntect 5.3.0 with two-face 0.5.2+bat-0.26.1 grammars and generated CSS. See [Code-fence highlighting](highlighting.md) for language coverage, limits, fixtures, and benchmarks. The native regression gate includes `--integration-highlighting`.
+
+Mermaid SVG rendering uses pinned rusty-mermaid 0.2.0 on the parser worker. See [Mermaid rendering](mermaid.md) for compatibility, test documents, native validation, and benchmarks. Its dependency notices are packaged alongside the existing Comrak notices.
+
 Comrak 0.55.0 is vendored with a small source-coordinate correction documented in `Native/vendor/comrak/ASTRA-PATCH.md`. The Rust dependency versions are pinned in `Native/Comrak/Cargo.lock`. Build the native adapter with `bash scripts/build-native.sh`. The bundled KaTeX JavaScript and third-party notices are checked in. To rebuild KaTeX after changing `Parser/math.mjs`:
 
 ```sh

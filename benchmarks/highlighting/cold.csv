@@ -1,0 +1,11 @@
+run,case,stage,input_bytes,samples,median_ms,p95_ms,max_ms
+1,first_python,cold,47,1,2.848833,2.848833,2.848833
+2,first_python,cold,47,1,2.570584,2.570584,2.570584
+3,first_python,cold,47,1,2.459500,2.459500,2.459500
+4,first_python,cold,47,1,2.463208,2.463208,2.463208
+5,first_python,cold,47,1,2.515625,2.515625,2.515625
+6,first_python,cold,47,1,2.565125,2.565125,2.565125
+7,first_python,cold,47,1,2.490292,2.490292,2.490292
+8,first_python,cold,47,1,2.477417,2.477417,2.477417
+9,first_python,cold,47,1,2.581750,2.581750,2.581750
+10,first_python,cold,47,1,2.685708,2.685708,2.685708

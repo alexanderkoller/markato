@@ -20,4 +20,7 @@ blockquote {margin:0;padding-left:14px;border-left:3px solid color-mix(in srgb,C
 ul,ol {margin:0;padding-left:1.8em;} li {line-height:1.5;} li>p {margin:.4em 0;}
 .katex-display {margin:.6em 0;overflow-x:auto;overflow-y:hidden;}
 .katex-error,.math-error {color:#c33737;}
+.mermaid-diagram {overflow-x:auto; background:white; border-radius:5px;}
+.mermaid-diagram img {display:block; max-width:100%; height:auto; margin:0 auto;}
+.mermaid-error > p {color:#c33737;}
 hr {border:0;border-top:1px solid color-mix(in srgb,CanvasText 20%,transparent);}

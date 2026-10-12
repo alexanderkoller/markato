@@ -34,7 +34,8 @@ private func prepare(_ text:String,_ worker:ComrakWorker = ComrakWorker(),revisi
     #expect(table.html?.string().contains(">999</td>")==true)
     let html=result.blocks?.compactMap{$0.html?.string()}.joined() ?? ""
     #expect(html.contains("language-swift"))
-    #expect(html.contains("$literal$"))
+    let codeHTML=try #require(result.blocks?.first(where:{$0.kind == .fencedCode})?.html?.string())
+    #expect(try highlightedCodeText(codeHTML)=="let x = \"$literal$\"\n")
     #expect(!html.contains("class=\"katex\""))
     #expect(html.contains("<pre>&lt;div&gt;literal **HTML**&lt;/div&gt;</pre>"))
     #expect(html.contains("source=images%2Ftest.png"))

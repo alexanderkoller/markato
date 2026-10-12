@@ -24,7 +24,9 @@ See the [complete performance comparison](docs/performance.md) for opening and e
 
 - **Source and preview together.** Edit your Markdown directly, with syntax coloring and a preview that follows the passage you are reading. Drag the divider to adjust the panes, or hide the preview to focus on the source.
 - **Equations alongside your text.** Write inline and display math, including aligned equations and matrices, without installing TeX.
-- **Tables, code, and images.** Preview Markdown tables, fenced code blocks, and local or web images. Wide tables and code blocks scroll horizontally.
+- **Tables, code, and images.** Preview Markdown tables, syntax-highlighted code fences, and local or web images. Wide tables and code blocks scroll horizontally.
+- **Code highlighting.** Native Syntect highlighting with extended grammars, including Swift, TypeScript, and Typst, and light and dark themes. See [languages, fallbacks, and test documents](docs/highlighting.md).
+- **Mermaid diagrams.** Render fenced `mermaid` blocks as SVG with a bundled native renderer. See [syntax, compatibility, and test documents](docs/mermaid.md).
 - **Familiar Mac editing.** Open and save individual Markdown files, undo and redo, search the whole document, and adjust text sizes. Fonts and preview styles are bundled for offline use.
 
 ## Try Markato

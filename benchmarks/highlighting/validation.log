@@ -1,0 +1,295 @@
+
+> test
+> node test.mjs
+
+KaTeX inline/display, matrices, errors and untrusted-input checks passed.
+    Finished `release` profile [optimized] target(s) in 0.08s
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.03s
+     Running unittests src/lib.rs (.build/comrak/debug/deps/astra_comrak-adc159a6108eb1d0)
+
+running 20 tests
+test mermaid_tests::input_limits_have_local_fallbacks ... ok
+test mermaid_tests::mermaid_keeps_fence_kind_and_utf16_source_coverage ... ok
+test mermaid_tests::failures_stay_local_and_source_is_escaped ... ok
+test mermaid_tests::images_isolate_marker_ids_and_escape_unicode_labels ... ok
+test tests::definitions_before_paragraphs_preserve_inline_source_positions ... ok
+test tests::native_html_styles_and_utf16_share_one_tree ... ok
+test tests::one_table_one_container_and_safe_assets ... ok
+test mermaid_tests::representative_families_render_complete_svg_images ... ok
+test highlight_tests::oversized_fences_keep_complete_escaped_source ... ok
+test highlight_tests::unknown_missing_and_plain_languages_stay_escaped_text ... ok
+test mermaid_tests::only_exact_mermaid_fence_language_is_interpreted ... ok
+test mermaid_tests::nested_fences_and_other_markdown_keep_their_context ... ok
+test highlight_tests::markup_in_known_languages_is_never_executable_html ... ok
+test highlight_tests::crlf_unicode_and_aliases_keep_original_source_ranges ... ok
+test highlight_tests::highlighting_preserves_multiline_state_but_never_shares_fence_state ... ok
+test mermaid_tests::many_diagrams_have_complete_ordered_source_coverage ... ok
+test highlight_tests::nested_fences_and_dedicated_renderers_coexist ... ok
+test highlight_tests::extended_grammars_and_aliases_produce_language_tokens ... ok
+test highlight_tests::bundled_languages_produce_token_spans ... ok
+test highlight_tests::many_fences_and_repeated_parses_have_deterministic_output ... ok
+
+test result: ok. 20 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.16s
+
+   Doc-tests astra_comrak
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+Building for debugging...
+[1 / 2]
+[2 / 5] MarkdownCoreTests-product
+[6 / 9] MarkdownCoreTests-product
+[8 / 9] MarkdownCoreTests-product
+Build complete! (2,07 secs)
+Test Suite 'All tests' started at 2026-10-12 19:30:50.181.
+Test Suite 'MarkdownCoreTests.xctest' started at 2026-10-12 19:30:50.182.
+Test Suite 'ScrollLandmarksTests' started at 2026-10-12 19:30:50.182.
+Test Case '-[MarkdownCoreTests.ScrollLandmarksTests testCompressedPassagesAndEdgesNeverReverse]' started.
+Test Case '-[MarkdownCoreTests.ScrollLandmarksTests testCompressedPassagesAndEdgesNeverReverse]' passed (0.067 seconds).
+Test Case '-[MarkdownCoreTests.ScrollLandmarksTests testDirectBoundaryInverseAgainstIndependentNumericalSolution]' started.
+Test Case '-[MarkdownCoreTests.ScrollLandmarksTests testDirectBoundaryInverseAgainstIndependentNumericalSolution]' passed (0.018 seconds).
+Test Case '-[MarkdownCoreTests.ScrollLandmarksTests testImageTopIsAnExactReferenceAndTravelIsLinear]' started.
+Test Case '-[MarkdownCoreTests.ScrollLandmarksTests testImageTopIsAnExactReferenceAndTravelIsLinear]' passed (0.001 seconds).
+Test Case '-[MarkdownCoreTests.ScrollLandmarksTests testInvalidGeometryCannotBreakOrderingOrProduceNonfiniteResults]' started.
+Test Case '-[MarkdownCoreTests.ScrollLandmarksTests testInvalidGeometryCannotBreakOrderingOrProduceNonfiniteResults]' passed (0.000 seconds).
+Test Case '-[MarkdownCoreTests.ScrollLandmarksTests testLinearIntervalsHaveConstantGainAndMeetAtReferences]' started.
+Test Case '-[MarkdownCoreTests.ScrollLandmarksTests testLinearIntervalsHaveConstantGainAndMeetAtReferences]' passed (0.000 seconds).
+Test Case '-[MarkdownCoreTests.ScrollLandmarksTests testMidpointReferenceAndInverseForShortAndLongDocuments]' started.
+Test Case '-[MarkdownCoreTests.ScrollLandmarksTests testMidpointReferenceAndInverseForShortAndLongDocuments]' passed (0.000 seconds).
+Test Suite 'ScrollLandmarksTests' passed at 2026-10-12 19:30:50.268.
+	 Executed 6 tests, with 0 failures (0 unexpected) in 0.086 (0.087) seconds
+Test Suite 'MarkdownCoreTests.xctest' passed at 2026-10-12 19:30:50.268.
+	 Executed 6 tests, with 0 failures (0 unexpected) in 0.086 (0.087) seconds
+Test Suite 'All tests' passed at 2026-10-12 19:30:50.268.
+	 Executed 6 tests, with 0 failures (0 unexpected) in 0.086 (0.087) seconds
+◇ Test run started.
+↳ Testing Library Version: 2084
+↳ Target Platform: arm64e-apple-macos14.0
+◇ Test sharedBlocksRetainHTMLAndMeasuredHeightsAcrossOffsetChanges() started.
+◇ Test measuredHeightCorrectionMatchesTheNextRenderedExtent() started.
+◇ Test unavailableMathStaysLocalToItsExpression() started.
+◇ Test renderedWindowsUseCachedHeightPrefixesAndStopAtCacheHoles() started.
+◇ Test layoutNavigationMatchesIndependentPositionsAfterSuffixEdits() started.
+◇ Test estimatedRegionCanBeNavigatedAndRefinedLocally() started.
+◇ Test retainedStyleRecordsUseRelativeOffsetsAfterMultipleEdits() started.
+◇ Test highlightingCoexistsWithMathAndMermaid() started.
+◇ Test swiftRetainedTreeSuppliesStatelessRegionalParseContext() started.
+◇ Test randomizedEditsMatchUTF16Reference() started.
+◇ Test statelessPublicationTransfersTheCompleteRetainedDocument() started.
+◇ Test mermaidFixturesCrossTheNativeRecordBoundary() started.
+◇ Test resetDoesNotReuseDifferentSource() started.
+◇ Test indexedWholeDocumentStylesEqualClippingAcrossGiantBlocks() started.
+◇ Test manifestSpliceRetainsUnaffectedNodesCachesAndShiftedCoordinates() started.
+◇ Test persistentEditsAndLines() started.
+◇ Test invalidMathStaysLocalToItsExpression() started.
+◇ Test fullContextParserUsesLibrariesForMathAndTables() started.
+◇ Test everyMathDialectUsesTheSameNativeParseAndKaTeX() started.
+◇ Test blankDocumentAndDistantReferencesHaveCompleteCoverage() started.
+◇ Test highlightedUnicodeAndHTMLPreserveLiteralTextExactly() started.
+◇ Test invalidMermaidRecoversAfterEditWithoutResettingTheWorker() started.
+◇ Test tablesCodeRawHTMLAndAssetsKeepTheirContext() started.
+◇ Test sharedDocumentFindsHolesWithoutDiscardingDistantPreparation() started.
+◇ Test overlappingStylePagesPreserveCoverageAndRejectStaleResults() started.
+◇ Test regionalMermaidEditMatchesFreshParseAndKeepsUntouchedBlocks() started.
+◇ Test coalescedEditsMatchFreshParse() started.
+◇ Test regionalDelimiterEditMatchesFreshHighlighting() started.
+◇ Test parserResetCannotReuseOldBlockIdentities() started.
+◇ Test unicodeCRLFAndNestedSourceStylesMatchLiteralText() started.
+◇ Test diagnosticsAreOptInBoundedAndIgnoreOldSessions() started.
+◇ Test layoutPrefixAndDocumentBoundariesStayMeasured() started.
+◇ Test allHighlightingFixturesCrossTheRecordBridge() started.
+◇ Test manifestDeltaHandlesCoalescedEditsWithDifferentTrailingWhitespaceShift() started.
+◇ Test mermaidAndKaTeXRenderInTheSameDocument() started.
+◇ Test giantBlockHTMLAndBoundedStyleCoverageAreIndependent() started.
+◇ Test localLayoutReplacementShiftsRetainedSuffixByItsMeasuredDelta() started.
+◇ Test statelessParserPublishesOwnedCompleteResults() started.
+✔ Test estimatedRegionCanBeNavigatedAndRefinedLocally() passed after 0.001 seconds.
+✔ Test manifestSpliceRetainsUnaffectedNodesCachesAndShiftedCoordinates() passed after 0.001 seconds.
+✔ Test measuredHeightCorrectionMatchesTheNextRenderedExtent() passed after 0.001 seconds.
+✔ Test persistentEditsAndLines() passed after 0.001 seconds.
+✔ Test overlappingStylePagesPreserveCoverageAndRejectStaleResults() passed after 0.001 seconds.
+✔ Test layoutPrefixAndDocumentBoundariesStayMeasured() passed after 0.001 seconds.
+✔ Test sharedBlocksRetainHTMLAndMeasuredHeightsAcrossOffsetChanges() passed after 0.002 seconds.
+✔ Test giantBlockHTMLAndBoundedStyleCoverageAreIndependent() passed after 0.001 seconds.
+✔ Test renderedWindowsUseCachedHeightPrefixesAndStopAtCacheHoles() passed after 0.002 seconds.
+✔ Test retainedStyleRecordsUseRelativeOffsetsAfterMultipleEdits() passed after 0.002 seconds.
+✔ Test unavailableMathStaysLocalToItsExpression() passed after 0.002 seconds.
+✔ Test diagnosticsAreOptInBoundedAndIgnoreOldSessions() passed after 0.002 seconds.
+✔ Test unicodeCRLFAndNestedSourceStylesMatchLiteralText() passed after 0.002 seconds.
+✔ Test resetDoesNotReuseDifferentSource() passed after 0.002 seconds.
+✔ Test parserResetCannotReuseOldBlockIdentities() passed after 0.002 seconds.
+✔ Test statelessPublicationTransfersTheCompleteRetainedDocument() passed after 0.003 seconds.
+✔ Test blankDocumentAndDistantReferencesHaveCompleteCoverage() passed after 0.003 seconds.
+✔ Test coalescedEditsMatchFreshParse() passed after 0.003 seconds.
+✔ Test manifestDeltaHandlesCoalescedEditsWithDifferentTrailingWhitespaceShift() passed after 0.003 seconds.
+✔ Test invalidMermaidRecoversAfterEditWithoutResettingTheWorker() passed after 0.003 seconds.
+✔ Test regionalMermaidEditMatchesFreshParseAndKeepsUntouchedBlocks() passed after 0.003 seconds.
+✔ Test statelessParserPublishesOwnedCompleteResults() passed after 0.006 seconds.
+✔ Test swiftRetainedTreeSuppliesStatelessRegionalParseContext() passed after 0.006 seconds.
+✔ Test regionalDelimiterEditMatchesFreshHighlighting() passed after 0.012 seconds.
+✔ Test sharedDocumentFindsHolesWithoutDiscardingDistantPreparation() passed after 0.013 seconds.
+✔ Test tablesCodeRawHTMLAndAssetsKeepTheirContext() passed after 0.016 seconds.
+✔ Test invalidMathStaysLocalToItsExpression() passed after 0.027 seconds.
+✔ Test everyMathDialectUsesTheSameNativeParseAndKaTeX() passed after 0.028 seconds.
+✔ Test fullContextParserUsesLibrariesForMathAndTables() passed after 0.029 seconds.
+✔ Test mermaidAndKaTeXRenderInTheSameDocument() passed after 0.032 seconds.
+✔ Test highlightedUnicodeAndHTMLPreserveLiteralTextExactly() passed after 0.051 seconds.
+✔ Test highlightingCoexistsWithMathAndMermaid() passed after 0.054 seconds.
+✔ Test indexedWholeDocumentStylesEqualClippingAcrossGiantBlocks() passed after 0.056 seconds.
+✔ Test allHighlightingFixturesCrossTheRecordBridge() passed after 0.082 seconds.
+✔ Test mermaidFixturesCrossTheNativeRecordBoundary() passed after 0.083 seconds.
+✔ Test layoutNavigationMatchesIndependentPositionsAfterSuffixEdits() passed after 0.203 seconds.
+✔ Test localLayoutReplacementShiftsRetainedSuffixByItsMeasuredDelta() passed after 1.174 seconds.
+✔ Test randomizedEditsMatchUTF16Reference() passed after 1.529 seconds.
+✔ Test run with 38 tests in 0 suites passed after 1.530 seconds.
+Building for production...
+[5 / 18]
+[9 / 19] CComrak
+[14 / 23] CUltralightPreview
+[15 / 23] MarkdownCore
+[22 / 30] HTMLPreview
+[26 / 34] HTMLPreview
+[35 / 39] Markato-product
+[36 / 40] MarkdownCoreTests-product
+[40 / 46] MarkdownCoreTests-product
+[42 / 46] MarkdownCoreTests-product
+[42 / 45] Markato-product
+[44 / 45] Markato-product
+[45 / 45] Markato-product
+Build complete! (7,46 secs)
+Test Suite 'All tests' started at 2026-10-12 19:30:59.926.
+Test Suite 'MarkdownCoreTests.xctest' started at 2026-10-12 19:30:59.926.
+Test Suite 'ScrollLandmarksTests' started at 2026-10-12 19:30:59.926.
+Test Case '-[MarkdownCoreTests.ScrollLandmarksTests testCompressedPassagesAndEdgesNeverReverse]' started.
+Test Case '-[MarkdownCoreTests.ScrollLandmarksTests testCompressedPassagesAndEdgesNeverReverse]' passed (0.043 seconds).
+Test Case '-[MarkdownCoreTests.ScrollLandmarksTests testDirectBoundaryInverseAgainstIndependentNumericalSolution]' started.
+Test Case '-[MarkdownCoreTests.ScrollLandmarksTests testDirectBoundaryInverseAgainstIndependentNumericalSolution]' passed (0.002 seconds).
+Test Case '-[MarkdownCoreTests.ScrollLandmarksTests testImageTopIsAnExactReferenceAndTravelIsLinear]' started.
+Test Case '-[MarkdownCoreTests.ScrollLandmarksTests testImageTopIsAnExactReferenceAndTravelIsLinear]' passed (0.000 seconds).
+Test Case '-[MarkdownCoreTests.ScrollLandmarksTests testInvalidGeometryCannotBreakOrderingOrProduceNonfiniteResults]' started.
+Test Case '-[MarkdownCoreTests.ScrollLandmarksTests testInvalidGeometryCannotBreakOrderingOrProduceNonfiniteResults]' passed (0.000 seconds).
+Test Case '-[MarkdownCoreTests.ScrollLandmarksTests testLinearIntervalsHaveConstantGainAndMeetAtReferences]' started.
+Test Case '-[MarkdownCoreTests.ScrollLandmarksTests testLinearIntervalsHaveConstantGainAndMeetAtReferences]' passed (0.000 seconds).
+Test Case '-[MarkdownCoreTests.ScrollLandmarksTests testMidpointReferenceAndInverseForShortAndLongDocuments]' started.
+Test Case '-[MarkdownCoreTests.ScrollLandmarksTests testMidpointReferenceAndInverseForShortAndLongDocuments]' passed (0.000 seconds).
+Test Suite 'ScrollLandmarksTests' passed at 2026-10-12 19:30:59.972.
+	 Executed 6 tests, with 0 failures (0 unexpected) in 0.045 (0.046) seconds
+Test Suite 'MarkdownCoreTests.xctest' passed at 2026-10-12 19:30:59.972.
+	 Executed 6 tests, with 0 failures (0 unexpected) in 0.045 (0.046) seconds
+Test Suite 'All tests' passed at 2026-10-12 19:30:59.972.
+	 Executed 6 tests, with 0 failures (0 unexpected) in 0.045 (0.046) seconds
+◇ Test run started.
+↳ Testing Library Version: 2084
+↳ Target Platform: arm64e-apple-macos14.0
+◇ Test invalidMermaidRecoversAfterEditWithoutResettingTheWorker() started.
+◇ Test estimatedRegionCanBeNavigatedAndRefinedLocally() started.
+◇ Test swiftRetainedTreeSuppliesStatelessRegionalParseContext() started.
+◇ Test persistentEditsAndLines() started.
+◇ Test localLayoutReplacementShiftsRetainedSuffixByItsMeasuredDelta() started.
+◇ Test sharedBlocksRetainHTMLAndMeasuredHeightsAcrossOffsetChanges() started.
+◇ Test mermaidFixturesCrossTheNativeRecordBoundary() started.
+◇ Test giantBlockHTMLAndBoundedStyleCoverageAreIndependent() started.
+◇ Test highlightedUnicodeAndHTMLPreserveLiteralTextExactly() started.
+◇ Test unicodeCRLFAndNestedSourceStylesMatchLiteralText() started.
+◇ Test retainedStyleRecordsUseRelativeOffsetsAfterMultipleEdits() started.
+◇ Test measuredHeightCorrectionMatchesTheNextRenderedExtent() started.
+◇ Test coalescedEditsMatchFreshParse() started.
+◇ Test layoutPrefixAndDocumentBoundariesStayMeasured() started.
+◇ Test regionalDelimiterEditMatchesFreshHighlighting() started.
+◇ Test everyMathDialectUsesTheSameNativeParseAndKaTeX() started.
+◇ Test statelessPublicationTransfersTheCompleteRetainedDocument() started.
+◇ Test regionalMermaidEditMatchesFreshParseAndKeepsUntouchedBlocks() started.
+◇ Test sharedDocumentFindsHolesWithoutDiscardingDistantPreparation() started.
+◇ Test randomizedEditsMatchUTF16Reference() started.
+◇ Test highlightingCoexistsWithMathAndMermaid() started.
+◇ Test invalidMathStaysLocalToItsExpression() started.
+◇ Test manifestSpliceRetainsUnaffectedNodesCachesAndShiftedCoordinates() started.
+◇ Test overlappingStylePagesPreserveCoverageAndRejectStaleResults() started.
+◇ Test manifestDeltaHandlesCoalescedEditsWithDifferentTrailingWhitespaceShift() started.
+◇ Test indexedWholeDocumentStylesEqualClippingAcrossGiantBlocks() started.
+◇ Test statelessParserPublishesOwnedCompleteResults() started.
+◇ Test mermaidAndKaTeXRenderInTheSameDocument() started.
+◇ Test renderedWindowsUseCachedHeightPrefixesAndStopAtCacheHoles() started.
+◇ Test allHighlightingFixturesCrossTheRecordBridge() started.
+◇ Test fullContextParserUsesLibrariesForMathAndTables() started.
+✔ Test persistentEditsAndLines() passed after 0.001 seconds.
+✔ Test giantBlockHTMLAndBoundedStyleCoverageAreIndependent() passed after 0.001 seconds.
+✔ Test retainedStyleRecordsUseRelativeOffsetsAfterMultipleEdits() passed after 0.001 seconds.
+✔ Test sharedBlocksRetainHTMLAndMeasuredHeightsAcrossOffsetChanges() passed after 0.001 seconds.
+✔ Test estimatedRegionCanBeNavigatedAndRefinedLocally() passed after 0.001 seconds.
+✔ Test measuredHeightCorrectionMatchesTheNextRenderedExtent() passed after 0.001 seconds.
+✔ Test overlappingStylePagesPreserveCoverageAndRejectStaleResults() passed after 0.001 seconds.
+✔ Test manifestSpliceRetainsUnaffectedNodesCachesAndShiftedCoordinates() passed after 0.001 seconds.
+✔ Test renderedWindowsUseCachedHeightPrefixesAndStopAtCacheHoles() passed after 0.001 seconds.
+◇ Test tablesCodeRawHTMLAndAssetsKeepTheirContext() started.
+◇ Test layoutNavigationMatchesIndependentPositionsAfterSuffixEdits() started.
+✔ Test layoutPrefixAndDocumentBoundariesStayMeasured() passed after 0.002 seconds.
+✔ Test unicodeCRLFAndNestedSourceStylesMatchLiteralText() passed after 0.002 seconds.
+✔ Test statelessPublicationTransfersTheCompleteRetainedDocument() passed after 0.002 seconds.
+◇ Test resetDoesNotReuseDifferentSource() started.
+◇ Test parserResetCannotReuseOldBlockIdentities() started.
+✔ Test invalidMermaidRecoversAfterEditWithoutResettingTheWorker() passed after 0.003 seconds.
+✔ Test swiftRetainedTreeSuppliesStatelessRegionalParseContext() passed after 0.003 seconds.
+◇ Test blankDocumentAndDistantReferencesHaveCompleteCoverage() started.
+✔ Test indexedWholeDocumentStylesEqualClippingAcrossGiantBlocks() passed after 0.003 seconds.
+✔ Test resetDoesNotReuseDifferentSource() passed after 0.001 seconds.
+✔ Test parserResetCannotReuseOldBlockIdentities() passed after 0.001 seconds.
+✔ Test coalescedEditsMatchFreshParse() passed after 0.003 seconds.
+✔ Test sharedDocumentFindsHolesWithoutDiscardingDistantPreparation() passed after 0.003 seconds.
+✔ Test manifestDeltaHandlesCoalescedEditsWithDifferentTrailingWhitespaceShift() passed after 0.003 seconds.
+✔ Test blankDocumentAndDistantReferencesHaveCompleteCoverage() passed after 0.001 seconds.
+✔ Test regionalMermaidEditMatchesFreshParseAndKeepsUntouchedBlocks() passed after 0.003 seconds.
+✔ Test statelessParserPublishesOwnedCompleteResults() passed after 0.004 seconds.
+✔ Test regionalDelimiterEditMatchesFreshHighlighting() passed after 0.010 seconds.
+✔ Test tablesCodeRawHTMLAndAssetsKeepTheirContext() passed after 0.013 seconds.
+✔ Test invalidMathStaysLocalToItsExpression() passed after 0.040 seconds.
+✔ Test randomizedEditsMatchUTF16Reference() passed after 0.041 seconds.
+✔ Test mermaidAndKaTeXRenderInTheSameDocument() passed after 0.042 seconds.
+✔ Test everyMathDialectUsesTheSameNativeParseAndKaTeX() passed after 0.042 seconds.
+✔ Test fullContextParserUsesLibrariesForMathAndTables() passed after 0.043 seconds.
+✔ Test highlightedUnicodeAndHTMLPreserveLiteralTextExactly() passed after 0.056 seconds.
+✔ Test highlightingCoexistsWithMathAndMermaid() passed after 0.069 seconds.
+✔ Test allHighlightingFixturesCrossTheRecordBridge() passed after 0.083 seconds.
+✔ Test mermaidFixturesCrossTheNativeRecordBoundary() passed after 0.092 seconds.
+✔ Test layoutNavigationMatchesIndependentPositionsAfterSuffixEdits() passed after 0.128 seconds.
+✔ Test localLayoutReplacementShiftsRetainedSuffixByItsMeasuredDelta() passed after 0.681 seconds.
+✔ Test run with 36 tests in 0 suites passed after 0.681 seconds.
+    Finished `release` profile [optimized] target(s) in 0.10s
+Building for production...
+[1 / 8] CUltralightPreview
+[3 / 10] MarkdownCore
+[6 / 11] MarkdownCore
+[13 / 17] HTMLPreview
+[16 / 20] HTMLPreview
+[22 / 25] Markato-product
+[23 / 26] Markato-product
+[25 / 26] Markato-product
+[26 / 26] Markato-product
+Build complete! (6,47 secs)
+Release audit passed: no test runner, test controls, recorder, or development artifacts.
+/Users/koller/Documents/ChatGPT/AstraMarkdown/dist/.app-build.Ew9gcP/Markato.app: replacing existing signature
+/Users/koller/Documents/ChatGPT/AstraMarkdown/dist/Markato.app
+    Finished `release` profile [optimized] target(s) in 0.06s
+Building for debugging...
+[5 / 22]
+[9 / 23] CComrak
+[21 / 34] MarkdownCore
+[24 / 37] MarkdownCore
+[29 / 40] HTMLPreview
+[33 / 39] Markato-product
+[40 / 46] HTMLPreview
+[42 / 47] Markato-product
+[43 / 47] Markato-product
+[44 / 47] CUltralightPreview
+[46 / 47] Markato-product
+Build complete! (2,35 secs)
+/Users/koller/Documents/ChatGPT/AstraMarkdown/dist/debug/.app-build.NSCWi7/Markato.app: replacing existing signature
+/Users/koller/Documents/ChatGPT/AstraMarkdown/dist/debug/Markato.app
+MERMAID INTEGRATION PASSED: SVG image painting, repeated diagrams, math, resize, edit, undo and redo
+HIGHLIGHT INTEGRATION PASSED: token colors, literal code, math, Mermaid, resize, edit, undo and redo
+2026-10-12 19:31:25.962 Markato[1153:50253339] Markdown parsing failed at revision 3: Injected parser failure
+2026-10-12 19:31:26.226 Markato[1153:50253339] Markdown parsing failed at revision 4: Injected parser failure
+2026-10-12 19:31:26.331 Markato[1153:50253339] Markdown parsing failed at revision 4: Injected parser failure
+INTEGRATION PASSED: bounded first view, presentation recovery, automatic and manual parse recovery, retained stale preview, cached navigation, stable paragraph insertion, rapid typing, edit, resize, and return-to-top scrolling

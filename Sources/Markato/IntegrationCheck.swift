@@ -18,11 +18,12 @@ import MarkdownCore
     private struct PixelCapture {
         let width:Int,height:Int,bytes:Data,png:Data,inkRows:[Int]
     }
-    private static func capture(_ view:NSView)->PixelCapture {
-        guard let rep=view.bitmapImageRepForCachingDisplay(in:view.bounds) else {
+    private static func capture(_ view:NSView,rect:NSRect? = nil)->PixelCapture {
+        let region=rect ?? view.bounds
+        guard let rep=view.bitmapImageRepForCachingDisplay(in:region) else {
             fail("Could not allocate visual resize capture")
         }
-        view.cacheDisplay(in:view.bounds,to:rep)
+        view.cacheDisplay(in:region,to:rep)
         guard let pointer=rep.bitmapData,
               let png=rep.representation(using:.png,properties:[:]) else {
             fail("Could not encode visual resize capture")
@@ -71,6 +72,12 @@ import MarkdownCore
     }
     static func run(_ document:MarkdownDocument) {
         guard let controller=document.windowControllers.first as? EditorWindowController else {fail("Missing editor window")}
+        if CommandLine.arguments.contains("--integration-highlighting") {
+            verifyHighlighting(controller,document:document);return
+        }
+        if CommandLine.arguments.contains("--integration-mermaid") {
+            verifyMermaid(controller,document:document);return
+        }
         if CommandLine.arguments.contains("--integration-layout-index") {
             verifyLayoutIndex();return
         }
@@ -91,6 +98,118 @@ import MarkdownCore
             wait(3000);return
         }
         verifyUltralightPreview(controller,document:document)
+    }
+    private static func verifyMermaid(_ controller:EditorWindowController,document:MarkdownDocument) {
+        let preview=controller.preview
+        let fixture=URL(fileURLWithPath:#filePath).deletingLastPathComponent()
+            .deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("Tests/fixtures/mermaid/native.md")
+        guard let text=try? String(contentsOf:fixture,encoding:.utf8) else{fail("Missing Mermaid native fixture")}
+        document.setInitialText(text)
+        func wait(_ remaining:Int,_ images:Int,_ errors:Int,_ completion:@escaping()->Void) {
+            guard remaining>0 else{fail("Mermaid native preview did not settle: \(preview.debugGeometry())")}
+            let web=preview.previewView
+            if preview.lastRevision==document.revision,
+               web.debugCount(".mermaid-diagram img")==images,web.debugCount(".mermaid-error")==errors,
+               (web.debugRect(".mermaid-diagram img")?.height ?? 0)>0 {
+                completion()
+            } else {DispatchQueue.main.asyncAfter(deadline:.now()+0.02){wait(remaining-1,images,errors,completion)}}
+        }
+        wait(500,3,1) {
+            let web=preview.previewView
+            check(web.debugCount(".katex")>0,"Mermaid must coexist with KaTeX in Ultralight")
+            check(web.debugText.contains("surrounding paragraph survives"),"Mermaid errors must preserve neighboring Markdown")
+            check(web.debugCount("svg")==0,"Diagram SVGs must be isolated in images")
+            let before=capture(web)
+            check(before.inkRows.filter{$0>10}.count>30,"Mermaid preview must paint content")
+            try? before.png.write(to:URL(fileURLWithPath:"/private/tmp/markato-mermaid-native.png"))
+            guard let window=controller.window,let original=web.debugRect(".mermaid-diagram img") else {
+                fail("Missing Mermaid window/image geometry")
+            }
+            let diagram=capture(web,rect:original)
+            check(diagram.inkRows.filter{$0>5}.count>8,"The SVG image itself must paint nodes, labels and arrows")
+            let size=window.contentLayoutRect.size
+            window.setContentSize(NSSize(width:700,height:size.height))
+            wait(500,3,1) {
+                guard let resized=preview.previewView.debugRect(".mermaid-diagram img") else{fail("Missing resized Mermaid image")}
+                check(resized.width<=preview.previewView.bounds.width,"Mermaid must fit the preview width")
+                check(abs(original.width/original.height-resized.width/resized.height)<0.02,
+                    "Mermaid resize must preserve aspect ratio")
+                let range=(text as NSString).range(of:"unknownDiagram")
+                document.replace(range,with:"flowchart LR")
+                wait(500,4,0) {
+                    check(preview.previewView.debugText.contains("surrounding paragraph survives"),
+                        "Editing Mermaid must preserve the surrounding preview")
+                    document.undoManager?.undo()
+                    wait(500,3,1) {
+                        document.undoManager?.redo()
+                        wait(500,4,0) {
+                            print("MERMAID INTEGRATION PASSED: SVG image painting, repeated diagrams, math, resize, edit, undo and redo")
+                            exit(EXIT_SUCCESS)
+                        }
+                    }
+                }
+            }
+        }
+    }
+    private static func verifyHighlighting(_ controller:EditorWindowController,document:MarkdownDocument) {
+        let preview=controller.preview
+        let fixture=URL(fileURLWithPath:#filePath).deletingLastPathComponent()
+            .deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("Tests/fixtures/highlighting/native.md")
+        guard let text=try? String(contentsOf:fixture,encoding:.utf8) else{fail("Missing highlighting native fixture")}
+        document.setInitialText(text)
+        func wait(_ remaining:Int,_ label:String,_ completion:@escaping()->Void) {
+            guard remaining>0 else{fail("Code highlighting preview did not settle: \(preview.debugGeometry())")}
+            let web=preview.previewView
+            if preview.lastRevision==document.revision,web.debugText.contains(label),
+               web.debugCount("code .syntax-string")>0 {
+                completion()
+            } else {DispatchQueue.main.asyncAfter(deadline:.now()+0.02){wait(remaining-1,label,completion)}}
+        }
+        wait(500,"NATIVE_HIGHLIGHT_STRING") {
+            let web=preview.previewView
+            check(web.debugCount("code.language-swift .syntax-string")>0 &&
+                  web.debugCount("code.language-typst .syntax-string")>0,
+                "Extended Swift and Typst grammars must render token spans")
+            check(web.debugText.contains("NATIVE_SWIFT_STRING") && web.debugText.contains("NATIVE_TYPST_STRING"),
+                "Extended languages must preserve literal source")
+            check(web.debugCount("code.language-unknown-language span")==0,"Unknown languages must stay plain text")
+            check(web.debugText.contains("<script>NATIVE_LITERAL_HTML</script>"),"Source HTML must remain literal code")
+            check(web.debugCount("script")==0,"Code must never create executable elements")
+            check(web.debugCount(".mermaid-diagram img")==1 && web.debugCount(".katex")>0,
+                "Highlighting must coexist with math and Mermaid")
+            guard let rect=web.debugRect("pre",containing:"NATIVE_HIGHLIGHT_STRING"),
+                  let rep=web.bitmapImageRepForCachingDisplay(in:rect) else{fail("Missing highlighted code geometry")}
+            web.cacheDisplay(in:rect,to:rep)
+            var colored=0
+            for y in stride(from:0,to:rep.pixelsHigh,by:2) {
+                for x in stride(from:0,to:rep.pixelsWide,by:2) {
+                    guard let color=rep.colorAt(x:x,y:y)?.usingColorSpace(.deviceRGB) else{continue}
+                    let components=[color.redComponent,color.greenComponent,color.blueComponent]
+                    if (components.max() ?? 0)-(components.min() ?? 0)>0.15 {colored += 1}
+                }
+            }
+            check(colored>20,"Highlighted code must paint colored token pixels")
+            try? capture(web).png.write(to:URL(fileURLWithPath:"/private/tmp/markato-highlighting-native.png"))
+            guard let window=controller.window else{fail("Missing highlighting window")}
+            window.setContentSize(NSSize(width:700,height:window.contentLayoutRect.height))
+            wait(500,"NATIVE_HIGHLIGHT_STRING") {
+                check(preview.previewView.debugText.contains("NATIVE_HIGHLIGHT_COMMENT"),"Resize must preserve code text")
+                let range=(text as NSString).range(of:"NATIVE_HIGHLIGHT_STRING")
+                document.replace(range,with:"CHANGED_HIGHLIGHT_STRING")
+                wait(500,"CHANGED_HIGHLIGHT_STRING") {
+                    document.undoManager?.undo()
+                    wait(500,"NATIVE_HIGHLIGHT_STRING") {
+                        document.undoManager?.redo()
+                        wait(500,"CHANGED_HIGHLIGHT_STRING") {
+                            print("HIGHLIGHT INTEGRATION PASSED: token colors, literal code, math, Mermaid, resize, edit, undo and redo")
+                            exit(EXIT_SUCCESS)
+                        }
+                    }
+                }
+            }
+        }
     }
     private static func verifyUltralightPreview(_ controller:EditorWindowController,document:MarkdownDocument) {
         let preview=controller.preview

@@ -1,0 +1,27 @@
+{
+  "measured_at": "2026-10-12T18:31:20.143492+02:00",
+  "platform": "macOS-26.6.2-arm64-arm-64bit-Mach-O",
+  "machine": "arm64",
+  "cpu": "Apple M4 Pro",
+  "rustc": "rustc 1.96.0 (ac68faa20 2026-05-25)",
+  "samples": 101,
+  "renderer": "rusty-mermaid 0.2.0",
+  "profile": "release, thin LTO, codegen-units=1",
+  "command": "cargo run --release --locked --manifest-path Native/Comrak/Cargo.toml --target-dir .build/comrak --example mermaid_benchmark -- 101",
+  "timing": "in-process; UTF-16 fixture preparation excluded; native record allocation/free included; no cache",
+  "warmup_ms_per_case": 200,
+  "base_commit": "1d1365fe59f7c8023cd3258162b009e6b1a25462",
+  "working_tree": "Mermaid implementation changes are uncommitted",
+  "sha256": {
+    "Native/Comrak/Cargo.toml": "b1972c1143c207312088781ead474f95e0801831e0226e600aad131d80222701",
+    "Native/Comrak/Cargo.lock": "baee22332eaf1132942c1133e875547d60656216c1716b8ab6ba20499ba17c15",
+    "Native/Comrak/src/lib.rs": "6063f5379cb6fa729d624a5c79552da7b07e69a95f9bb003106677c7e0126882",
+    "Native/Comrak/src/mermaid.rs": "975f6424439e8e3c6ac339ad9d8701ded9903e34153bab2f90d88c37793686e2",
+    "Native/Comrak/examples/mermaid_benchmark.rs": "8048936bb839ef34f0134ed1f07d2a8e88961b730ca5fba8c3bed46507cdbf99",
+    "Tests/fixtures/mermaid/errors.md": "8dd31cb4fc759d4836322b2a25efec68f5692f2a8aa71d0b8ed3a62726772890",
+    "Tests/fixtures/mermaid/families.md": "d8d413fc2e382f2c32ee62dc4447794ede3a2314993681a0fe10aa56424896cc",
+    "Tests/fixtures/mermaid/layout.md": "6f740b0fe44b154ce838870a156899f8c04e01aae4d09113e9bde2a2678ded7e",
+    "Tests/fixtures/mermaid/native.md": "303054843e902d6ad94a0f84bd18d0592ee2400c9fff9fc080a01e1e76d36cee",
+    "Tests/fixtures/mermaid/stress.md": "d1f8fa463c9abac520b85d392100eb78f0f52499d5804d7571cf8f662ae2174a"
+  }
+}

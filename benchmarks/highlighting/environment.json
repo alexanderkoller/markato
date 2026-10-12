@@ -1,0 +1,26 @@
+{
+  "date": "2026-10-12",
+  "cpu": "Apple M4 Pro",
+  "os": "macOS 26.6.2",
+  "rust": "1.96.0",
+  "syntect": "5.3.0",
+  "profile": "release",
+  "samples": 101,
+  "warmup_ms": 200,
+  "cold_processes": 10,
+  "input_sha256": {
+    "Native/Comrak/Cargo.lock": "d59d2d3542f28c73de4bc5e1888dcef3f5c91321b69b3c7381f220488d7695a8",
+    "Native/Comrak/examples/highlight_benchmark.rs": "5c457be0ba4b13329c4b7cb9190468d2af851af4375d1e9e77715b9589877bfa",
+    "Native/Comrak/examples/highlight_styles.rs": "c1e54ca63790fad7d1e252ccfd156a42d0ce765b8253d7b855ccd4598ee58242",
+    "Native/Comrak/src/highlight.rs": "9a31641f5772060e911348eb89dfa538920ecaef9b3317eba7dabe937f836c4c",
+    "Tests/fixtures/highlighting/edge-cases.md": "914c9c9f90ac5cb826cf3566d515364e4eee43e3d7adb76e36cdb719b3a33b73",
+    "Tests/fixtures/highlighting/extended.md": "782ce130137973927a3124fadb432f2c1ebfd655d9964d41be36fa0d1362cdfe",
+    "Tests/fixtures/highlighting/languages.md": "ef562e7e9dd8f5afe54da11305ec9d289b103cced55c960e874332dfaf3755e2",
+    "Tests/fixtures/highlighting/native.md": "301d7cd8c0b87595aad9baf172c8aecdc506ecdcef7049226b666d78af2908e4",
+    "Tests/fixtures/highlighting/stress.md": "18e143bd5179b655355143bf537cfaf0d35878cf648d149d77cd76f1f2b37bd4",
+    "benchmarks/highlighting/measure.py": "bcdff8b55592ebd33c6b0e8178996f62bfec1227cbab41afeef255cff5acc1b3",
+    "docs/supported-languages.txt": "0dff4fb7e6b8940ba926d5698588d539475e9c22c102ad1bb158cf2405c7e86b"
+  },
+  "two_face": "0.5.2+bat-0.26.1",
+  "grammar_entries": 220
+}
