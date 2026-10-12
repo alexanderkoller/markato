@@ -80,7 +80,6 @@ private final class PreviewClipView:NSClipView {
     var editAnchor:Int {get}
     func verticalPosition(for offset:Int)->CGFloat?
     func alignmentVerticalPosition(for offset:Int)->CGFloat?
-    func scrollWheel(with event:NSEvent)
 }
 @MainActor enum PreviewScrolling {
     case independent
@@ -146,6 +145,12 @@ private struct CommittedPresentation {
     private var desired:PreviewRequest?
     private var rendering:PreviewRequest?
     private var independentOrigin:CGFloat=0
+    // A preview-originated vertical gesture temporarily opts out of the
+    // source-driven position without changing the configured relationship
+    // between the panes. The source revision/origin at that moment tells us
+    // when source movement or editing should restore synchronization.
+    private var detachedSourceOrigin:CGFloat?
+    private var detachedSourceRevision:Int?
     private var version=0,measuredSize:NSSize = .zero
     var resizeSession:ViewportResizeSession?
     private var failedParseRevision:Int?
@@ -277,6 +282,7 @@ private struct CommittedPresentation {
     override func draw(_ dirtyRect:NSRect) {NSColor.textBackgroundColor.setFill();dirtyRect.fill()}
     func moveViewport() {
         if resizeSession?.protectsViewport == true {updateLoadingState();return}
+        resumeSourceAlignmentIfNeeded()
         if let pinned=metadataPinnedSourceOrigin,let source,
            abs(source.viewportOrigin-pinned)>=0.01 {
             metadataPinnedOrigin=nil;metadataPinnedSourceOrigin=nil
@@ -316,9 +322,30 @@ private struct CommittedPresentation {
     private func handleVerticalScroll(_ event:NSEvent) {
         metadataPinnedOrigin=nil;metadataPinnedSourceOrigin=nil
         switch scrolling {
-        case .synchronized(let source):source.scrollWheel(with:event)
-        case .independent:independentOrigin=max(0,independentOrigin-event.scrollingDeltaY);place()
+        case .synchronized:
+            scrollPreview(to:independentOrigin-event.scrollingDeltaY,detachFromSource:true)
+        case .independent:
+            scrollPreview(to:independentOrigin-event.scrollingDeltaY,detachFromSource:false)
         }
+    }
+    private func scrollPreview(to proposedOrigin:CGFloat,detachFromSource:Bool) {
+        guard let committed else{return}
+        clearResizePin()
+        let origin=min(max(0,committed.totalHeight-bounds.height),max(0,proposedOrigin))
+        guard abs(origin-independentOrigin)>=0.01 else{return}
+        if detachFromSource,let source {
+            detachedSourceOrigin=source.viewportOrigin
+            detachedSourceRevision=source.contentRevision
+        }
+        independentOrigin=origin;place()
+    }
+    private func resumeSourceAlignmentIfNeeded() {
+        guard let origin=detachedSourceOrigin,let revision=detachedSourceRevision,let source,
+              source.contentRevision != revision || abs(source.viewportOrigin-origin)>=0.01 else{return}
+        detachedSourceOrigin=nil;detachedSourceRevision=nil
+    }
+    private func resumeSourceAlignment() {
+        detachedSourceOrigin=nil;detachedSourceRevision=nil
     }
     func scrollOverflow(_ event:NSEvent)->Bool {
         guard let source,source.contentHeight<=bounds.height+0.001,
@@ -331,6 +358,7 @@ private struct CommittedPresentation {
     func navigatePreview(toEnd:Bool) {
         guard let committed else{return}
         clearResizePin()
+        resumeSourceAlignment()
         metadataPinnedOrigin=nil;metadataPinnedSourceOrigin=nil
         independentOrigin=toEnd ? max(0,committed.totalHeight-bounds.height):0;place()
     }
@@ -350,6 +378,7 @@ private struct CommittedPresentation {
     func invalidate() {
         failedParseRevision=nil
         clearResizePin()
+        resumeSourceAlignment()
         metadataPinnedOrigin=nil;metadataPinnedSourceOrigin=nil
         endScrollGesture();version += 1;content=nil;desired=nil;updateLoadingState()
     }
@@ -596,7 +625,7 @@ private struct CommittedPresentation {
         switch scrolling {
         case .independent:target=independentOrigin
         case .synchronized(let source):
-            if source.contentHeight<=bounds.height+0.001 {target=independentOrigin}
+            if detachedSourceOrigin != nil || source.contentHeight<=bounds.height+0.001 {target=independentOrigin}
             else {
                 guard let map,let origin=centerAlignedOrigin(height:height,map:map,source:source) else{return nil}
                 return origin
@@ -831,6 +860,11 @@ private struct CommittedPresentation {
         CATransaction.commit()
     }
     #if DEBUG
+    var debugIsIndependentlyScrolled:Bool {detachedSourceOrigin != nil}
+    func debugScrollViewport(by delta:CGFloat) {
+        metadataPinnedOrigin=nil;metadataPinnedSourceOrigin=nil
+        scrollPreview(to:independentOrigin+delta,detachFromSource:source != nil)
+    }
     var debugFirstHeadingViewportY:CGFloat? {
         guard let committed,let rect=committed.surface.web.debugRect("h1",containing:"Markato") else{return nil}
         return committed.surface.web.frame.minY-committed.surface.clip.bounds.minY+rect.minY

@@ -236,10 +236,48 @@ import MarkdownCore
             verifyPresentationFailureRecovery(controller,wait:wait) {
                 verifyTopResizeAnchor(controller) {
                     verifyMiddleResizeAnchor(controller,document:document,wait:wait) {
-                        verifyClickEditAlignment(controller,document:document,wait:wait) {
-                            continueAfterTopResize(controller,document:document,startupCount:startupCount,wait:wait)
+                        verifyPreviewSideScrolling(controller,document:document,wait:wait) {
+                            verifyClickEditAlignment(controller,document:document,wait:wait) {
+                                continueAfterTopResize(controller,document:document,startupCount:startupCount,wait:wait)
+                            }
                         }
                     }
+                }
+            }
+        }
+    }
+    private static func verifyPreviewSideScrolling(_ controller:EditorWindowController,document:MarkdownDocument,
+        wait:@escaping(Int,@escaping()->Bool,String,@escaping()->Void)->Void,completion:@escaping()->Void) {
+        let source=controller.source,preview=controller.preview
+        let marker=(document.source.string as NSString).range(of:"## Section 36 —").location
+        guard marker != NSNotFound else{fail("Missing preview-scroll regression fixture")}
+        source.debugAlignViewport(at:marker,viewportY:source.bounds.height/2)
+        wait(800,{preview.coversSourceViewport && preview.debugScrollMapError.map{abs($0)<0.01}==true},
+            "Preview-scroll regression did not reach its aligned starting point") {
+            let sourceOrigin=source.viewportOrigin,previewOrigin=preview.clipOrigin
+            preview.debugScrollViewport(by:120)
+            check(abs(source.viewportOrigin-sourceOrigin)<0.01,
+                "Scrolling over the preview moved the source viewport")
+            check(preview.debugIsIndependentlyScrolled && preview.clipOrigin>previewOrigin+100,
+                "Scrolling over the preview did not move the preview independently")
+            let detachedOrigin=preview.clipOrigin
+            preview.moveViewport()
+            check(abs(preview.clipOrigin-detachedOrigin)<0.01,
+                "An unrelated preview update discarded the independent preview position")
+            source.debugScrollViewport(by:80)
+            wait(800,{!preview.debugIsIndependentlyScrolled &&
+                preview.debugScrollMapError.map{abs($0)<0.01}==true},
+                "Source movement did not restore source/preview alignment") {
+                preview.debugScrollViewport(by:120)
+                check(preview.debugIsIndependentlyScrolled,
+                    "The preview could not detach again before the edit regression")
+                let revision=document.revision+1
+                document.replace(NSRange(location:document.source.count,length:0),with:"\n")
+                wait(800,{document.revision==revision && preview.lastRevision==revision &&
+                    !preview.debugIsIndependentlyScrolled &&
+                    preview.debugScrollMapError.map{abs($0)<0.01}==true},
+                    "A source edit did not restore source/preview alignment") {
+                    completion()
                 }
             }
         }

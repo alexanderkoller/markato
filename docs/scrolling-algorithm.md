@@ -35,11 +35,11 @@ An estimate may position a distant source destination before TextKit has measure
 
 ## Moving the viewport
 
-The native source scroll view owns ordinary vertical input. Each bounds change evaluates the committed map and moves the preview clip. Vertical input over the preview is forwarded to the source. Horizontal preview gestures remain inside Ultralight.
+Vertical input over the source evaluates the committed map and moves the preview clip. Vertical input over the preview moves only the preview and records the source revision and viewport origin where the panes detached. Unrelated preview layout and painting retain that independent position. The next source viewport movement or source revision change clears the detachment and applies the current source-to-preview map, snapping the preview back into alignment. Horizontal preview gestures remain inside Ultralight.
 
 During a covered live-scroll gesture, the committed map is frozen. Background preparation may continue privately, but an unrelated presentation cannot change the scrolling gain mid-gesture. Crossing the mounted window reserve requests another cached window. An unprepared destination shows loading until its content is ready.
 
-When the source has no vertical scroll range but the preview does, the preview may scroll independently. Inspectors also use independent scrolling.
+When the source has no vertical scroll range but the preview does, preview scrolling remains independent. Inspectors also use independent scrolling.
 
 ## Resizing
 

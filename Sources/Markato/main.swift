@@ -189,8 +189,8 @@ func exportProfileRecording(_ path:UnsafePointer<CChar>) {
     let editor = "Markato"
     ```
 
-    - Source owns scrolling.
-    - Preview follows the visible passage.
+    - Scroll the source to keep both panes aligned.
+    - Scroll the preview to inspect it independently.
 
     [Comrak](https://github.com/kivikakk/comrak)
     """#
