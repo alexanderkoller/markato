@@ -1,9 +1,10 @@
 import Foundation
 
 public struct RenderedEntry: Equatable, Sendable {
-    public let id:String
+    public let blockID:BlockID
+    public var id:String {blockID.description}
     public let fragment:PreviewFragment
-    public init(id:String,fragment:PreviewFragment) { self.id=id;self.fragment=fragment }
+    public init(id:BlockID,fragment:PreviewFragment) {blockID=id;self.fragment=fragment}
 }
 public struct RenderedWindow: Sendable {
     public let range:NSRange
@@ -19,21 +20,27 @@ public final class PreparedDocument {
     private final class BlockNode {
         var block: PreparedBlock
         var start: Int, end: Int
+        var syntaxShift=0
         var fragment: PreviewFragment?
         var previewHeight: Double?
         var left: BlockNode?, right: BlockNode?
         weak var parent: BlockNode?
-        var firstGap: Int?
+        var firstGap:Int?,firstStyleGap:Int?
         var depth=1,count=1,preparedCount=0,lazyShift=0
         var previewSum:Double=0
-        init(_ block:PreparedBlock,start:Int,end:Int) {self.block=block;self.start=start;self.end=end}
+        init(_ block:PreparedBlock,start:Int,end:Int) {
+            self.block=block;self.start=start;self.end=end
+        }
+        var hasContent:Bool {block.html != nil || fragment != nil}
         var effectivePreviewHeight:Double {
             previewHeight ?? max(24,ceil(Double(max(1,end-start))/80)*24+12)
         }
         func shift(_ delta:Int) {
             guard delta != 0 else{return}
-            block=PreparedBlock(id:block.id,kind:block.kind,from:block.from+delta,to:block.to+delta)
-            start += delta;end += delta;firstGap=firstGap.map{$0+delta};lazyShift += delta
+            block=PreparedBlock(id:block.id,kind:block.kind,from:block.from+delta,to:block.to+delta,
+                html:block.html,syntax:block.syntax)
+            start += delta;end += delta;firstGap=firstGap.map{$0+delta};firstStyleGap=firstStyleGap.map{$0+delta}
+            syntaxShift += delta;lazyShift += delta
             if let f=fragment {fragment=PreviewFragment(kind:f.kind,from:f.from+delta,to:f.to+delta,html:f.html,id:f.id)}
         }
         func push() {
@@ -44,8 +51,9 @@ public final class PreparedDocument {
             left?.parent=self;right?.parent=self
             depth=1+max(left?.depth ?? 0,right?.depth ?? 0)
             count=1+(left?.count ?? 0)+(right?.count ?? 0)
-            preparedCount=(left?.preparedCount ?? 0)+(fragment == nil ? 0:1)+(right?.preparedCount ?? 0)
-            firstGap=left?.firstGap ?? (fragment==nil ? start:nil) ?? right?.firstGap
+            preparedCount=(left?.preparedCount ?? 0)+(hasContent ? 1:0)+(right?.preparedCount ?? 0)
+            firstGap=left?.firstGap ?? (hasContent ? nil:start) ?? right?.firstGap
+            firstStyleGap=left?.firstStyleGap ?? (block.syntax == nil ? start:nil) ?? right?.firstStyleGap
             previewSum=(left?.previewSum ?? 0)+effectivePreviewHeight+(right?.previewSum ?? 0)
         }
     }
@@ -97,15 +105,16 @@ public final class PreparedDocument {
         init(range:NSRange,records:StyleRecords,shift:Int=0) {self.range=range;self.records=records;self.shift=shift}
     }
     private var root:BlockNode?
-    private var nodes=[String:BlockNode]()
+    private var nodes=[BlockID:BlockNode]()
     private var syntax=[SyntaxPage]()
     public let sourceLayout=LayoutIndex()
     public private(set) var revision = -1
     public private(set) var length=0
+    public private(set) var hasReferences=false
     public var count:Int {root?.count ?? 0}
     public var hasCompleteFragments:Bool {(root?.preparedCount ?? 0)==count}
     public var styleCoverage:[NSRange] {syntax.map(\.range)}
-    public var byteCost:Int {nodes.values.reduce(0){$0+($1.fragment?.html?.utf8.count ?? 0)}}
+    public var byteCost:Int {nodes.values.reduce(0){$0+($1.block.html?.byteCount ?? $1.fragment?.html?.utf8.count ?? 0)}}
     public init() {}
 
     private func build(_ items:[BlockNode],_ from:Int,_ to:Int)->BlockNode? {
@@ -167,13 +176,78 @@ public final class PreparedDocument {
         while let item=current {path.append(item);current=item.parent}
         for item in path.reversed() {item.push()}
     }
+    private func preparedFragment(_ node:BlockNode)->PreviewFragment? {
+        if let fragment=node.fragment {return fragment}
+        guard let html=node.block.html else{return nil}
+        let fragment=PreviewFragment(kind:node.block.kind,from:node.block.from,to:node.block.to,
+            html:html.string(),id:node.block.id)
+        node.fragment=fragment
+        return fragment
+    }
     private func collect(_ node:BlockNode?,_ result:inout [BlockNode]) {
         guard let node else{return};node.push();collect(node.left,&result);result.append(node);collect(node.right,&result)
     }
 
+    private func node(at index:Int)->BlockNode? {
+        guard index>=0,index<count else{return nil}
+        var index=index,current=root
+        while let node=current {
+            node.push();let before=node.left?.count ?? 0
+            if index<before {current=node.left}
+            else if index==before {return node}
+            else {index -= before+1;current=node.right}
+        }
+        return nil
+    }
+    private func firstBlockIndex(where predicate:(PreparedBlock)->Bool)->Int {
+        var base=0,current=root,result=count
+        while let node=current {
+            node.push();let before=node.left?.count ?? 0
+            if predicate(node.block) {result=base+before;current=node.left}
+            else {base += before+1;current=node.right}
+        }
+        return result
+    }
+
+    /// The Swift tree owns edit-region selection and stable block identities.
+    /// Rust receives only this source interval and returns an owned parse.
+    public func regionalContext(for edit:SourceEdit,newLength:Int)->RegionalParseContext? {
+        guard revision>=0,!hasReferences,count>0 else{return nil}
+        let firstOwner=min(count-1,firstBlockIndex{$0.to>edit.range.location})
+        let lastOwner=min(count-1,max(firstOwner,firstBlockIndex{$0.to>=NSMaxRange(edit.range)}))
+        let first=max(0,firstOwner-1),last=min(count-1,lastOwner+1)
+        guard let lastNode=node(at:last) else{return nil}
+        let oldFrom=first==0 ? 0 : node(at:first-1)!.block.to
+        let oldTo=last+1==count ? length:lastNode.block.to
+        let delta=edit.insertedLength-edit.range.length
+        func shiftedStart(_ offset:Int)->Int {
+            if offset<=edit.range.location {return offset}
+            if offset>=NSMaxRange(edit.range) {return offset+delta}
+            return edit.range.location
+        }
+        func shiftedEnd(_ offset:Int)->Int {
+            if offset<edit.range.location {return offset}
+            if offset>=NSMaxRange(edit.range) {return offset+delta}
+            return edit.range.location+edit.insertedLength
+        }
+        let newFrom=shiftedStart(oldFrom),newTo=shiftedEnd(oldTo)
+        guard newFrom>=0,newTo>=newFrom,newTo<=newLength else{return nil}
+        var blocks=[RegionalBlock]();blocks.reserveCapacity(last-first+1)
+        for index in first...last {
+            guard let node=node(at:index),let fragment=preparedFragment(node),let html=fragment.html else{return nil}
+            materialize(node)
+            blocks.append(RegionalBlock(id:node.block.id,kind:node.block.kind,
+                from:node.block.from,to:node.block.to,html:html))
+        }
+        return RegionalParseContext(range:NSRange(location:newFrom,length:newTo-newFrom),
+            prefix:first,suffix:count-last-1,shift:delta,
+            firstGuardID:first<firstOwner ? blocks.first?.id:nil,
+            lastGuardID:last>lastOwner ? blocks.last?.id:nil,blocks:blocks)
+    }
+
     /// The worker determines identity from complete rendering input, including
     /// resolved references. No edit-character heuristics decide cache validity.
-    public func adopt(_ blocks:[PreparedBlock],revision:Int,length:Int) {
+    public func adopt(_ blocks:[PreparedBlock],revision:Int,length:Int,hasReferences:Bool=false) {
         #if DEBUG
         let work=TimingDiagnostics.shared.begin("prepared.adopt")
         defer {TimingDiagnostics.shared.end(work)}
@@ -181,7 +255,7 @@ public final class PreparedDocument {
         guard revision != self.revision else{return}
         let previous=nodes
         let previousSyntax=syntax
-        self.revision=revision;self.length=length;syntax.removeAll(keepingCapacity:true)
+        self.revision=revision;self.length=length;self.hasReferences=hasReferences;syntax.removeAll(keepingCapacity:true)
         nodes.removeAll(keepingCapacity:true)
         var items=[BlockNode]();items.reserveCapacity(blocks.count)
         var start=0
@@ -189,11 +263,16 @@ public final class PreparedDocument {
             precondition(block.from>=start && block.to>=block.from && block.to<=length)
             let end=i==blocks.count-1 ? length:block.to
             let n=BlockNode(block,start:start,end:end)
-            if let old=previous[block.id],let f=old.fragment {
-                n.fragment=PreviewFragment(kind:block.kind,from:block.from,to:block.to,html:f.html,id:block.id)
-                n.previewHeight=old.previewHeight
-            }
             if let old=previous[block.id] {
+                if block.html == nil || block.syntax == nil {
+                    n.block=PreparedBlock(id:block.id,kind:block.kind,from:block.from,to:block.to,
+                        html:block.html ?? old.block.html,syntax:block.syntax ?? old.block.syntax)
+                }
+                if block.html == nil,let f=old.fragment {
+                    n.fragment=PreviewFragment(kind:block.kind,from:block.from,to:block.to,html:f.html,id:block.id)
+                }
+                if block.syntax == nil {n.syntaxShift=old.syntaxShift+block.from-old.block.from}
+                n.previewHeight=old.previewHeight
                 var low=0,high=previousSyntax.count
                 while low<high {let mid=(low+high)/2;if NSMaxRange(previousSyntax[mid].range)<=old.start {low=mid+1}else{high=mid}}
                 let delta=block.from-old.block.from
@@ -237,7 +316,12 @@ public final class PreparedDocument {
             let node=BlockNode(block,start:previousTo,end:isLast ? length:block.to)
             if let old=removedByID[block.id] {
                 materialize(old)
-                if let f=old.fragment {node.fragment=PreviewFragment(kind:block.kind,from:block.from,to:block.to,html:f.html,id:block.id)}
+                if block.html == nil || block.syntax == nil {
+                    node.block=PreparedBlock(id:block.id,kind:block.kind,from:block.from,to:block.to,
+                        html:block.html ?? old.block.html,syntax:block.syntax ?? old.block.syntax)
+                }
+                if block.html == nil,let f=old.fragment {node.fragment=PreviewFragment(kind:block.kind,from:block.from,to:block.to,html:f.html,id:block.id)}
+                if block.syntax == nil {node.syntaxShift=old.syntaxShift+block.from-old.block.from}
                 node.previewHeight=old.previewHeight
             }
             node.update();inserted.append(node);previousTo=block.to
@@ -272,10 +356,13 @@ public final class PreparedDocument {
         for fragment in result.fragments {
             guard let id=fragment.id,let n=nodes[id],fragment.html != nil else{continue}
             materialize(n)
+            n.block=PreparedBlock(id:n.block.id,kind:n.block.kind,from:n.block.from,to:n.block.to,
+                html:fragment.html.map(HTMLPayload.init),syntax:n.block.syntax)
             n.fragment=fragment
             var ancestor:BlockNode?=n
             while let current=ancestor {current.update();ancestor=current.parent}
         }
+        if result.blocks != nil || result.blockChange != nil {return}
         let bounded=NSIntersectionRange(NSRange(location:0,length:length),range)
         guard bounded.length>0 else{return}
         var pages=[SyntaxPage]()
@@ -315,6 +402,10 @@ public final class PreparedDocument {
     }
     public func styles(in range:NSRange)->[SyntaxSpan]? {
         guard range.length>0 else{return []}
+        let blocks=selected(range)
+        if !blocks.isEmpty,blocks.allSatisfy({$0.block.syntax != nil}) {
+            return blocks.flatMap{$0.block.syntax!.clipped(to:range,shift:$0.syntaxShift)}
+        }
         var result=[SyntaxSpan](),position=range.location
         for page in syntax.dropFirst(syntaxStart(position)) {
             if page.range.location>position {return nil}
@@ -324,11 +415,20 @@ public final class PreparedDocument {
         return nil
     }
     public func firstSyntaxGap(from position:Int)->Int {
-        var position=position
-        for page in syntax.dropFirst(syntaxStart(position)) {
-            if page.range.location>position {break};position=NSMaxRange(page.range)
+        var pageEnd=position
+        for page in syntax.dropFirst(syntaxStart(pageEnd)) {
+            if page.range.location>pageEnd {break};pageEnd=NSMaxRange(page.range)
         }
-        return position
+        var nativeGap=length
+        func visit(_ node:BlockNode?) {
+            guard let node,let first=node.firstStyleGap,first<nativeGap else{return}
+            node.push()
+            if node.end>position {visit(node.left)}
+            if node.end>position,node.block.syntax == nil {nativeGap=min(nativeGap,max(position,node.start))}
+            if node.end<nativeGap {visit(node.right)}
+        }
+        visit(root)
+        return max(pageEnd,nativeGap)
     }
     private func selected(_ range:NSRange)->[BlockNode] {
         var result=[BlockNode]()
@@ -344,15 +444,16 @@ public final class PreparedDocument {
     public func entries(covering range:NSRange)->[RenderedEntry]? {
         let blocks=selected(range)
         guard !blocks.isEmpty || length==0 else{return nil}
-        guard blocks.allSatisfy({$0.fragment != nil}) else{return nil}
-        return blocks.map{RenderedEntry(id:$0.block.id,fragment:$0.fragment!)}
+        let fragments=blocks.map(preparedFragment)
+        guard fragments.allSatisfy({$0 != nil}) else{return nil}
+        return zip(blocks,fragments).map{RenderedEntry(id:$0.block.id,fragment:$1!)}
     }
     /// Returns cached blocks around a source viewport. The tree supplies the
     /// global preview extent; no document-sized placeholder enters the HTML engine.
     public func window(covering range:NSRange,before:Double,after:Double)->RenderedWindow? {
         var blocks=selected(range)
         guard let visibleFirst=blocks.first,let visibleLast=blocks.last,
-              blocks.allSatisfy({$0.fragment != nil}) else{return nil}
+              blocks.allSatisfy({$0.hasContent}) else{return nil}
         func predecessor(_ node:BlockNode)->BlockNode? {
             materialize(node)
             if var n=node.left {while true {n.push();if let right=n.right {n=right}else{return n}}}
@@ -368,11 +469,11 @@ public final class PreparedDocument {
             return nil
         }
         var remaining=before,cursor=visibleFirst
-        while remaining>0,let previous=predecessor(cursor),previous.fragment != nil {
+        while remaining>0,let previous=predecessor(cursor),previous.hasContent {
             blocks.insert(previous,at:0);remaining -= previous.effectivePreviewHeight;cursor=previous
         }
         remaining=after;cursor=visibleLast
-        while remaining>0,let next=successor(cursor),next.fragment != nil {
+        while remaining>0,let next=successor(cursor),next.hasContent {
             blocks.append(next);remaining -= next.effectivePreviewHeight;cursor=next
         }
         let first=blocks[0],last=blocks[blocks.count-1]
@@ -382,8 +483,9 @@ public final class PreparedDocument {
             if parent.right === child {top += (parent.left?.previewSum ?? 0)+parent.effectivePreviewHeight}
             child=parent;current=parent.parent
         }
-        return RenderedWindow(range:NSRange(location:first.start,length:last.end-first.start),
-            entries:blocks.map{RenderedEntry(id:$0.block.id,fragment:$0.fragment!)},
+        let entries=blocks.compactMap {node in preparedFragment(node).map{RenderedEntry(id:node.block.id,fragment:$0)}}
+        guard entries.count==blocks.count else{return nil}
+        return RenderedWindow(range:NSRange(location:first.start,length:last.end-first.start),entries:entries,
             previewTop:16+top,previewHeight:32+(root?.previewSum ?? 0))
     }
     public func firstUnpreparedOffset(from position:Int)->Int {
@@ -395,7 +497,7 @@ public final class PreparedDocument {
                 guard let n,let first=n.firstGap,first<gap else{return}
                 n.push()
                 if n.end>position {visit(n.left)}
-                if n.end>position,n.fragment==nil {gap=min(gap,max(position,n.start))}
+                if n.end>position,!n.hasContent {gap=min(gap,max(position,n.start))}
                 if n.end<gap {visit(n.right)}
             }
             visit(root);htmlGap=gap
@@ -406,7 +508,7 @@ public final class PreparedDocument {
     /// preview extent. Callers can apply that correction to the frame they are
     /// about to publish instead of committing once with estimates and again
     /// with measurements.
-    @discardableResult public func recordPreviewHeights(_ heights:[String:Double],revision:Int)->Double {
+    @discardableResult public func recordPreviewHeights(_ heights:[BlockID:Double],revision:Int)->Double {
         guard revision==self.revision else{return 0}
         var extentChange=0.0
         for (id,height) in heights where height.isFinite && height>0 {
@@ -421,7 +523,7 @@ public final class PreparedDocument {
         }
         return extentChange
     }
-    public func heights(for id:String)->(source:Double?,preview:Double?)? {
+    public func heights(for id:BlockID)->(source:Double?,preview:Double?)? {
         guard let n=nodes[id] else{return nil}
         materialize(n)
         let from=sourceLayout.position(at:n.start)?.y

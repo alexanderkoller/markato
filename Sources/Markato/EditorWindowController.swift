@@ -40,6 +40,7 @@ final class EditorWindowController: NSWindowController, NSSplitViewDelegate, NSS
     private var presentationPending=false
     private var completePresentationPendingRevision:Int?
     private var completeEditRevision:Int?
+    private var pendingRegional:(revision:Int,context:RegionalParseContext)?
     private var isClosed=false
     private var openingRequested=false
     private var hasShownWindow=false
@@ -139,6 +140,10 @@ final class EditorWindowController: NSWindowController, NSSplitViewDelegate, NSS
         preview.baseURL = document.fileURL?.deletingLastPathComponent()
         document.edited = { [weak self] selection,_,edit in
             guard let self,!self.isClosed else { return }
+            if self.preparedDocument.revision==document.revision-1,
+               let context=self.preparedDocument.regionalContext(for:edit,newLength:document.source.count) {
+                self.pendingRegional=(document.revision,context)
+            } else {self.pendingRegional=nil}
             self.cancelParseRetry();self.hideParseError()
             self.completePresentationPendingRevision=nil
             if self.preview.displaysCompleteDocument {
@@ -284,33 +289,37 @@ final class EditorWindowController: NSWindowController, NSSplitViewDelegate, NSS
         lastRequest=request
         let cached=preparedDocument.revision==doc.revision ? preparedDocument.entries(covering:range):nil
         let revision = doc.revision
-        doc.parser.request(rope:rope,revision:revision,visible:range,renderHTML:cached==nil,includeFragments:cached==nil) { [weak self] result in
+        let regional=pendingRegional?.revision==revision ? pendingRegional?.context:nil
+        doc.parser.request(rope:rope,revision:revision,visible:range,renderHTML:cached==nil,
+            includeFragments:cached==nil,regionalContext:regional) { [weak self] result in
             guard let self,!self.isClosed,self.markdownDocument.revision==revision,self.lastRequest==request else{return}
             switch result {
             case .success(let parsed):
                 self.cancelParseRetry();self.hideParseError()
+                self.pendingRegional=nil
                 if self.preparedDocument.revision != revision {
                     if let change=parsed.blockChange,self.preparedDocument.revision>=0 {
                         self.preparedDocument.apply(change,revision:revision,length:rope.count)
                     } else if let blocks=parsed.blocks {
-                        self.preparedDocument.adopt(blocks,revision:revision,length:rope.count)
+                        self.preparedDocument.adopt(blocks,revision:revision,length:rope.count,
+                            hasReferences:parsed.hasReferences ?? false)
                     }
                     self.source.reconcilePreparedHighlights()
                 }
-                self.preparedDocument.store(parsed,range:range)
+                let parsedRange=NSRange(location:parsed.from ?? range.location,
+                    length:max(0,(parsed.to ?? NSMaxRange(range))-(parsed.from ?? range.location)))
+                self.preparedDocument.store(parsed,range:parsedRange)
                 self.applyingHighlights=true
-                if self.source.isAwaitingInitialHighlights {self.source.applyInitialHighlights(parsed.spans,in:range)}
-                else {
-                    // Store may merge this request with retained syntax pages.
-                    // Apply the normalized result from that same tree so the
-                    // source view follows the preserved pre-startup path.
-                    let styles=self.preparedDocument.styles(in:range) ?? parsed.spans
-                    self.source.applyHighlights(styles,in:range)
-                }
+                // The retained blocks point into the native span arena, so
+                // initial paint clips only the selected blocks instead of
+                // scanning the complete document-sized span array.
+                let styles=self.preparedDocument.styles(in:range) ?? parsed.spans
+                if self.source.isAwaitingInitialHighlights {self.source.applyInitialHighlights(styles,in:range)}
+                else {self.source.applyHighlights(styles,in:range)}
                 self.applyingHighlights=false
                 self.preview.baseURL = self.markdownDocument.fileURL?.deletingLastPathComponent()
                 if self.completeEditRevision==revision,parsed.blockChange != nil {
-                    // The native tree already contains every retained fragment
+                    // The Swift tree already contains every retained fragment
                     // and height. Publish its cached viewport on the spare
                     // HTML surface; keep the stale complete surface visible
                     // until that bounded replacement is painted. This avoids
@@ -318,12 +327,9 @@ final class EditorWindowController: NSWindowController, NSSplitViewDelegate, NSS
                     // changed block.
                     self.completeEditRevision=nil;self.preview.invalidate()
                     self.showPreparedDocument(revision:revision)
-                    if self.preparedDocument.hasCompleteFragments {
-                        DispatchQueue.main.asyncAfter(deadline:.now()+0.5) { [weak self] in
-                            guard let self,self.markdownDocument.revision==revision else{return}
-                            self.showCompletePreparedDocument(revision:revision)
-                        }
-                    } else {self.prepareDocument(rope:rope,revision:revision)}
+                    if !self.preparedDocument.hasCompleteFragments {
+                        self.prepareDocument(rope:rope,revision:revision)
+                    }
                 } else if self.completeEditRevision==revision {
                     // Whole-document replacement has no local manifest splice.
                     // Publish its prepared viewport, then fill the new tree.

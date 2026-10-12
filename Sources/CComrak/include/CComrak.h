@@ -4,29 +4,43 @@
 #include <stddef.h>
 #include <stdint.h>
 
-typedef struct AstraComrakDocument AstraComrakDocument;
-typedef struct { size_t from, to, inserted; } AstraComrakEdit;
+typedef struct AstraComrakResult AstraComrakResult;
 // Callback returns a malloc-owned UTF-8 string, released by the adapter.
 typedef char *(*AstraMathRenderer)(void *context, const uint8_t *tex, size_t length, bool display);
 
-AstraComrakDocument *astra_comrak_parse(const uint16_t *source, size_t length,
-    const AstraComrakDocument *previous, const AstraComrakEdit *edits, size_t edit_count,
-    AstraMathRenderer math, void *context);
-// Returns a guarded range in the new revision for a candidate regional parse.
-// False asks the caller to use astra_comrak_parse with the complete source.
-bool astra_comrak_edit_region(const AstraComrakDocument *document,
-    const AstraComrakEdit *edits, size_t edit_count, size_t *from, size_t *to);
-// Parses and splices one candidate range into document. False leaves document
-// unchanged and asks the caller to retry with a complete parse.
-bool astra_comrak_update_region(AstraComrakDocument *document,
-    const uint16_t *source, size_t length, size_t base, size_t total_length,
-    const AstraComrakEdit *edits, size_t edit_count,
-    AstraMathRenderer math, void *context);
-void astra_comrak_document_free(AstraComrakDocument *document);
-// Manifest mode is 0 for none, 1 for the initial complete block sequence and
-// 2 for the changed interval relative to the previous parsed document.
-char *astra_comrak_query(const AstraComrakDocument *document, int64_t revision,
-    size_t from, size_t to, uint8_t manifest_mode, bool html, bool fragments);
+typedef struct {
+    const uint8_t *bytes;
+    size_t length;
+} AstraComrakStringView;
+typedef struct {
+    size_t id;
+    uint8_t kind;
+    size_t from, to;
+    size_t span_start, span_count;
+    AstraComrakStringView html;
+} AstraComrakBlockRecord;
+typedef struct {
+    uint8_t kind;
+    size_t from, to;
+} AstraComrakSpanRecord;
+typedef struct {
+    int64_t revision;
+    size_t from, to;
+    bool has_references;
+    const AstraComrakBlockRecord *blocks;
+    size_t block_count;
+    const AstraComrakSpanRecord *spans;
+    size_t span_count;
+} AstraComrakResultView;
+
+// Parses one owned source slice. The result owns the byte slices referenced by
+// its view and remains valid until the caller frees it. The caller may keep it
+// as immutable output storage; Rust retains no parser or document state between calls.
+AstraComrakResult *astra_comrak_parse_records(const uint16_t *source, size_t length,
+    size_t base, int64_t revision, AstraMathRenderer math, void *context);
+bool astra_comrak_result_view(const AstraComrakResult *result, AstraComrakResultView *view);
+void astra_comrak_result_free(AstraComrakResult *result);
+
 void astra_comrak_string_free(char *string);
 char *astra_comrak_error(void);
 #endif

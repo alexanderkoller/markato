@@ -181,7 +181,7 @@ private struct CommittedPresentation {
         // lines. Those lines are already prepared and add no preview element.
         guard content.sourceRange.location<=visible.location,NSMaxRange(content.sourceRange)>=NSMaxRange(visible) else{return false}
         return !content.entries.contains {entry in
-            entry.fragment.kind=="Pending" && (NSIntersectionRange(entry.fragment.range,visible).length>0 ||
+            entry.fragment.kind == .pending && (NSIntersectionRange(entry.fragment.range,visible).length>0 ||
                 (visible.length==0 && entry.fragment.from<=visible.location && entry.fragment.to>visible.location))
         }
     }
@@ -354,8 +354,8 @@ private struct CommittedPresentation {
         endScrollGesture();version += 1;content=nil;desired=nil;updateLoadingState()
     }
     func show(_ result:ParseResult) {
-        let existing=Dictionary((content?.entries ?? []).map{($0.fragment.from,$0.id)},uniquingKeysWith:{first,_ in first})
-        show(result.fragments.map{RenderedEntry(id:$0.id ?? existing[$0.from] ?? UUID().uuidString,fragment:$0)},revision:result.revision)
+        let existing=Dictionary((content?.entries ?? []).map{($0.fragment.from,$0.blockID)},uniquingKeysWith:{first,_ in first})
+        show(result.fragments.map{RenderedEntry(id:$0.id ?? existing[$0.from] ?? BlockID(UInt64.random(in:1...UInt64.max)),fragment:$0)},revision:result.revision)
     }
     func show(_ entries:[RenderedEntry],revision:Int,sourceRange:NSRange?=nil,previewTop:Double?=nil,previewHeight:Double?=nil) {
         failedParseRevision=nil
@@ -393,7 +393,7 @@ private struct CommittedPresentation {
         var fillsPendingContent=false
         for (entry,item) in zip(committed.request.entries,committed.geometry.items) {
             guard entry.id==item.id else{return false}
-            if entry.fragment.kind=="Pending",next[entry.id] != entry {
+            if entry.fragment.kind == .pending,next[entry.id] != entry {
                 // A covered viewport is immutable. An uncovered viewport is
                 // already masked; fill its pending content on the retained DOM.
                 if covered, item.y<visibleWebRange.upperBound {return false}
@@ -429,13 +429,13 @@ private struct CommittedPresentation {
                 windowTop:previous.windowTop,totalHeight:previous.totalHeight)
         }
     }
-    private func measuredHeights(_ geometry:HTMLPreviewGeometry,for entries:[RenderedEntry])->[String:Double] {
+    private func measuredHeights(_ geometry:HTMLPreviewGeometry,for entries:[RenderedEntry])->[BlockID:Double] {
         guard geometry.items.count==entries.count else{return [:]}
-        var heights=[String:Double]();heights.reserveCapacity(entries.count)
+        var heights=[BlockID:Double]();heights.reserveCapacity(entries.count)
         for index in geometry.items.indices {
             let item=geometry.items[index]
             let stride=index+1<geometry.items.count ? geometry.items[index+1].y-item.y:item.height+12
-            heights[entries[index].id]=Double(max(item.height,stride))
+            heights[entries[index].blockID]=Double(max(item.height,stride))
         }
         return heights
     }
@@ -636,7 +636,7 @@ private struct CommittedPresentation {
         guard let source,source.hasMeasuredLayout,source.contentRevision==request.revision,source.sourceLength==request.content.sourceLength else{return nil}
         let revision=source.geometryRevision
         let landmarks=zip(geometry.items,request.entries).compactMap {item,entry -> (previewY:CGFloat,entry:RenderedEntry)? in
-            guard entry.fragment.from != 0,entry.fragment.kind != "Pending" else{return nil}
+            guard entry.fragment.from != 0,entry.fragment.kind != .pending else{return nil}
             return (item.landmark ?? item.y,entry)
         }
         guard !landmarks.isEmpty else{return nil}
@@ -855,13 +855,13 @@ private struct CommittedPresentation {
         let menu=NSMenu();menu.addItem(withTitle:"Inspect Item",action:#selector(inspect(_:)),keyEquivalent:"").target=self;return menu
     }
     @objc private func inspect(_ sender:Any?) {
-        guard let source,let f=committed?.request.entries.first(where:{$0.fragment.from<=source.alignmentAnchor && $0.fragment.to>=source.alignmentAnchor})?.fragment,f.kind != "Pending" else{return}
+        guard let source,let f=committed?.request.entries.first(where:{$0.fragment.from<=source.alignmentAnchor && $0.fragment.to>=source.alignmentAnchor})?.fragment,f.kind != .pending else{return}
         _ = showInspector(for:f)
     }
     func showInspector(for fragment:PreviewFragment)->NSWindowController {
-        precondition(fragment.html != nil && fragment.kind != "Pending")
+        precondition(fragment.html != nil && fragment.kind != .pending)
         let panel=NSPanel(contentRect:NSRect(x:0,y:0,width:760,height:600),styleMask:[.titled,.closable,.resizable],backing:.buffered,defer:false)
-        panel.title=fragment.kind=="Table" ? "Inspect Table":"Inspect Item"
+        panel.title=fragment.kind == .table ? "Inspect Table":"Inspect Item"
         let pane=PreviewPane(frame:panel.contentRect(forFrameRect:panel.frame));pane.baseURL=baseURL;pane.fontSize=fontSize
         pane.show(ParseResult(revision:0,spans:[],fragments:[fragment]))
         panel.contentView=pane;panel.center()

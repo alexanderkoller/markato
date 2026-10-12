@@ -48,7 +48,7 @@ final class MarkdownDocument: NSDocument {
         let units=Array(text.utf16)
         // Comrak consumes the decoded immutable string while the edit-ready
         // rope is built on this thread. The first viewport request is queued
-        // behind this parse and reuses the prepared native document.
+        // behind this parse and reuses the copied Swift records.
         parser.prepareInitial(units,revision:nextRevision)
         #if DEBUG
         let ropeWork=TimingDiagnostics.shared.begin("document.rope")

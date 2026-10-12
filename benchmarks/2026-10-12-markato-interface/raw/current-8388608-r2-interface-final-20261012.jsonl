@@ -1,0 +1,14 @@
+{"bundle":"org.markato.benchmark.interface20261012","os":"Version 26.6.2 (Build 25G83)","edits":"9","fixture":"\/private\/tmp\/astra-md3000-speed\/inputs\/current-8388608-r2-interface-final-20261012.md","editDelayMs":"250","pollIntervalMs":1,"version":"0.1.0","type":"metadata","windowMode":"offscreen"}
+{"editIndex":0,"operation":"open","dispatchMs":74.069958209991455,"observedHeading":"BENCH_START","polls":1,"verifiedSource":true,"elapsedMs":279.73462510108948,"type":"sample","detectionSlackMs":1,"maxPollGapMs":61.801708459854126}
+{"windowWidth":1120,"webClass":"HTMLPreview.HTMLPreviewView","editorClass":"Markato.SourceTextView","type":"views","font":".AppleSystemUIFontMonospaced-Regular","fontSize":13}
+{"editIndex":1,"operation":"edit","dispatchMs":1.5213334560394287,"observedHeading":"EBB4E503C01","polls":1,"verifiedSource":true,"elapsedMs":7.4548332691192627,"type":"sample","detectionSlackMs":1,"maxPollGapMs":0}
+{"editIndex":2,"operation":"edit","dispatchMs":1.2095000743865967,"observedHeading":"EBB4E503C02","polls":3,"verifiedSource":true,"elapsedMs":22.150166511535645,"type":"sample","detectionSlackMs":1,"maxPollGapMs":12.222875118255615}
+{"editIndex":3,"operation":"edit","dispatchMs":1.2394998073577881,"observedHeading":"EBB4E503C03","polls":1,"verifiedSource":true,"elapsedMs":6.7114582061767578,"type":"sample","detectionSlackMs":1,"maxPollGapMs":0}
+{"editIndex":4,"operation":"edit","dispatchMs":1.2427916526794434,"observedHeading":"EBB4E503C04","polls":1,"verifiedSource":true,"elapsedMs":7.1026248931884766,"type":"sample","detectionSlackMs":1,"maxPollGapMs":0}
+{"editIndex":5,"operation":"edit","dispatchMs":1.3583748340606689,"observedHeading":"EBB4E503C05","polls":1,"verifiedSource":true,"elapsedMs":6.9600832462310791,"type":"sample","detectionSlackMs":1,"maxPollGapMs":0}
+{"editIndex":6,"operation":"edit","dispatchMs":1.299541711807251,"observedHeading":"EBB4E503C06","polls":1,"verifiedSource":true,"elapsedMs":6.6182084083557129,"type":"sample","detectionSlackMs":1,"maxPollGapMs":0}
+{"editIndex":7,"operation":"edit","dispatchMs":1.3162500858306885,"observedHeading":"EBB4E503C07","polls":1,"verifiedSource":true,"elapsedMs":6.7792081832885742,"type":"sample","detectionSlackMs":1,"maxPollGapMs":0}
+{"editIndex":8,"operation":"edit","dispatchMs":1.4313333034515381,"observedHeading":"EBB4E503C08","polls":1,"verifiedSource":true,"elapsedMs":7.4715416431427002,"type":"sample","detectionSlackMs":1,"maxPollGapMs":0}
+{"editIndex":9,"operation":"edit","dispatchMs":1.2911665439605713,"observedHeading":"EBB4E503C09","polls":1,"verifiedSource":true,"elapsedMs":6.8633332252502441,"type":"sample","detectionSlackMs":1,"maxPollGapMs":0}
+{"type":"memory","mainProcessRSSBytes":441712640}
+{"type":"complete"}

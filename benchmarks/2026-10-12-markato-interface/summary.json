@@ -1,0 +1,62 @@
+[
+  {
+    "fixture": "prose-1048576.md",
+    "app": "current",
+    "operation": "edit",
+    "experiment": "interface-final-20261012",
+    "n": 27,
+    "medianMs": 11.88112497329712,
+    "minMs": 5.515791654586792,
+    "maxMs": 31.27608346939087
+  },
+  {
+    "fixture": "prose-1048576.md",
+    "app": "current",
+    "operation": "open",
+    "experiment": "interface-final-20261012",
+    "n": 3,
+    "medianMs": 74.29391646385193,
+    "minMs": 59.83787512779236,
+    "maxMs": 79.18704175949097
+  },
+  {
+    "fixture": "prose-65536.md",
+    "app": "current",
+    "operation": "edit",
+    "experiment": "interface-final-20261012",
+    "n": 27,
+    "medianMs": 14.557708263397217,
+    "minMs": 6.093541622161865,
+    "maxMs": 33.19758343696594
+  },
+  {
+    "fixture": "prose-65536.md",
+    "app": "current",
+    "operation": "open",
+    "experiment": "interface-final-20261012",
+    "n": 3,
+    "medianMs": 55.75391674041748,
+    "minMs": 46.535500049591064,
+    "maxMs": 67.19654154777527
+  },
+  {
+    "fixture": "prose-8388608.md",
+    "app": "current",
+    "operation": "edit",
+    "experiment": "interface-final-20261012",
+    "n": 27,
+    "medianMs": 6.960083246231079,
+    "minMs": 6.273541450500488,
+    "maxMs": 23.77187490463257
+  },
+  {
+    "fixture": "prose-8388608.md",
+    "app": "current",
+    "operation": "open",
+    "experiment": "interface-final-20261012",
+    "n": 3,
+    "medianMs": 256.2890000343323,
+    "minMs": 249.3650417327881,
+    "maxMs": 279.7346251010895
+  }
+]

@@ -2,18 +2,16 @@ import Foundation
 import JavaScriptCore
 import CComrak
 
-/// The native parser prepares the complete revision in one run. The first
-/// publication carries the lightweight block manifest plus records for the
-/// requested viewport; later viewport requests query the same prepared AST.
+/// Swift owns retained document state. Each native call parses one source
+/// slice and returns immutable output buffers whose lifetime is owned by Swift.
+/// Rust retains no parser or document state between calls.
 public final class ComrakWorker: @unchecked Sendable {
     private let queue=DispatchQueue(label:"org.astramarkdown.comrak",qos:.userInitiated)
     private let lock=NSLock()
     private var generation=0,documentEpoch=0,latestRevision = -1
     private var pendingEdits=[(revision:Int,edit:SourceEdit)]()
-    private var document:OpaquePointer?
-    private var preparedRevision = -1,publishedRevision = -1
-    private var changeBaseRevision:Int?
-    private var identity=UUID().uuidString
+    private var initial:(revision:Int,result:ParseResult)?
+    private var nextBlockID:UInt64=1
     private let math=MathEngine()
     #if DEBUG
     private var debugFailuresRemaining=0
@@ -24,23 +22,17 @@ public final class ComrakWorker: @unchecked Sendable {
     #endif
 
     public init() {}
-    deinit {if let document {astra_comrak_document_free(document)}}
     public func record(_ edit:SourceEdit,revision:Int) {
         lock.lock();pendingEdits.append((revision,edit));latestRevision=max(latestRevision,revision);lock.unlock()
     }
     public func reset() {
         lock.lock();generation += 1;documentEpoch += 1;let epoch=documentEpoch
         latestRevision = -1;pendingEdits.removeAll();lock.unlock()
-        queue.async { [self] in
-            lock.lock();let current=documentEpoch==epoch;lock.unlock()
-            guard current else{return}
-            if let document {astra_comrak_document_free(document)}
-            document=nil;preparedRevision = -1;publishedRevision = -1;changeBaseRevision=nil;identity=UUID().uuidString
-        }
+        queue.async { [self] in lock.lock();if documentEpoch==epoch {initial=nil};lock.unlock() }
     }
     /// Starts the one complete parse as soon as NSDocument has decoded the
-    /// file. Rope construction can proceed concurrently on the caller. Later
-    /// viewport requests are serialized behind this job and reuse its AST.
+    /// file. Rope construction can proceed concurrently on the caller. Swift
+    /// retains the resulting records for the initial viewport request.
     public func prepareInitial(_ units:[UInt16],revision:Int) {
         lock.lock();generation += 1;documentEpoch += 1
         let epoch=documentEpoch;latestRevision=revision;pendingEdits.removeAll();lock.unlock()
@@ -49,20 +41,16 @@ public final class ComrakWorker: @unchecked Sendable {
             let work=TimingDiagnostics.shared.begin("parse.initial")
             defer {TimingDiagnostics.shared.end(work,values:["documentCharacters":Double(units.count)])}
             #endif
-            let prepared=units.withUnsafeBufferPointer {source in
-                astra_comrak_parse(source.baseAddress,source.count,nil,nil,0,
-                    renderMath,Unmanaged.passUnretained(math).toOpaque())
-            }
+            let prepared=try? parse(units:units,base:0,revision:revision)
             lock.lock();let current=documentEpoch==epoch && latestRevision==revision;lock.unlock()
-            guard current else {if let prepared {astra_comrak_document_free(prepared)};return}
+            guard current else{return}
             guard let prepared else {return}
-            if let document {astra_comrak_document_free(document)}
-            document=prepared;preparedRevision=revision;publishedRevision = -1
-            changeBaseRevision=nil;identity=UUID().uuidString
+            lock.lock();if documentEpoch==epoch && latestRevision==revision {initial=(revision,prepared)};lock.unlock()
         }
     }
     public func request(rope:TextRope,revision:Int,visible:NSRange,
                         renderHTML:Bool = true,includeFragments:Bool = true,
+                        regionalContext:RegionalParseContext? = nil,
                         completion:@escaping(Result<ParseResult,Error>)->Void) {
         #if DEBUG
         let waiting=TimingDiagnostics.shared.begin("parse.queue.wait")
@@ -91,85 +79,26 @@ public final class ComrakWorker: @unchecked Sendable {
             defer {TimingDiagnostics.shared.end(work,values:["revision":Double(revision),"documentCharacters":Double(rope.count),"viewportCharacters":Double(visible.length),"renderHTML":renderHTML ? 1:0])}
             #endif
             do {
-                if preparedRevision != revision {
-                    let baseRevision=preparedRevision
+                let result:ParseResult
+                lock.lock()
+                let cached=changes.isEmpty && initial?.revision==revision ? initial?.result:nil
+                lock.unlock()
+                if let cached {result=cached}
+                else if changes.count==1,let context=regionalContext,
+                        let regional=try regionalResult(rope:rope,revision:revision,edit:changes[0],context:context) {
+                    result=regional
+                } else {
                     #if DEBUG
-                    let input=TimingDiagnostics.shared.begin("parse.input")
-                    #endif
-                    let edits=changes.map{AstraComrakEdit(from:$0.range.location,to:NSMaxRange($0.range),inserted:$0.insertedLength)}
-                    #if DEBUG
-                    TimingDiagnostics.shared.end(input)
                     let native=TimingDiagnostics.shared.begin("parse.comrak")
                     #endif
-                    var prepared:OpaquePointer?,updatedInPlace=false,parsedCharacters=rope.count
-                    if let current=document,!edits.isEmpty {
-                        var from=0,to=0
-                        let regional=edits.withUnsafeBufferPointer {edits in
-                            astra_comrak_edit_region(current,edits.baseAddress,edits.count,&from,&to)
-                        }
-                        if regional,from>=0,to>=from,to<=rope.count {
-                            parsedCharacters=to-from
-                            let units=rope.units(in:NSRange(location:from,length:to-from))
-                            updatedInPlace=units.withUnsafeBufferPointer {source in
-                                edits.withUnsafeBufferPointer {edits in
-                                    astra_comrak_update_region(current,source.baseAddress,source.count,from,rope.count,
-                                        edits.baseAddress,edits.count,renderMath,Unmanaged.passUnretained(math).toOpaque())
-                                }
-                            }
-                            if updatedInPlace {prepared=current}
-                            else {parsedCharacters=rope.count}
-                        }
-                    }
-                    if !updatedInPlace {
-                        prepared=rope.withContiguousUTF16 {source in
-                            edits.withUnsafeBufferPointer {edits in
-                                astra_comrak_parse(source.baseAddress,source.count,document,edits.baseAddress,edits.count,
-                                    renderMath,Unmanaged.passUnretained(math).toOpaque())
-                            }
-                        }
-                    }
+                    let units=rope.units(in:NSRange(location:0,length:rope.count))
+                    let parsed=try parse(units:units,base:0,revision:revision)
                     #if DEBUG
-                    TimingDiagnostics.shared.end(native,values:["regional":updatedInPlace ? 1:0,"parsedCharacters":Double(parsedCharacters)])
+                    TimingDiagnostics.shared.end(native,values:["regional":0,"parsedCharacters":Double(rope.count)])
                     #endif
-                    guard let prepared else {throw WorkerError.message(nativeError())}
-                    if !updatedInPlace,let document {astra_comrak_document_free(document)}
-                    document=prepared;preparedRevision=revision
-                    changeBaseRevision=baseRevision>=0 ? baseRevision:nil
-                    // The native document now includes every edit through this
-                    // revision. Consume those edits at the same transition so
-                    // a superseding request cannot apply them a second time.
-                    lock.lock();pendingEdits.removeAll{$0.revision<=revision};lock.unlock()
+                    result=parsed
                 }
-                // A delta is valid only when the UI published the exact native
-                // revision it was computed from. Superseded intermediate parses
-                // fall back to a full manifest; ordinary edits keep the smaller
-                // delta publication.
-                let manifest:UInt8 = renderHTML && includeFragments
-                    ? (publishedRevision==revision ? 0 : changeBaseRevision==publishedRevision ? 2 : 1) : 0
-                // The complete lightweight manifest seeds the retained block
-                // tree, but syntax and HTML records stay bounded to the
-                // requested viewport. Background queries fill the same nodes.
-                let queryRange=visible
-                guard let document,let json=astra_comrak_query(document,Int64(revision),queryRange.location,NSMaxRange(queryRange),manifest,renderHTML,includeFragments) else {
-                    throw WorkerError.message(nativeError())
-                }
-                defer {astra_comrak_string_free(json)}
-                #if DEBUG
-                let records=TimingDiagnostics.shared.begin("parse.records")
-                #endif
-                let data=Data(bytes:json,count:strlen(json))
-                let decoded=try JSONDecoder().decode(ParseResult.self,from:data)
-                func block(_ value:PreparedBlock)->PreparedBlock {
-                    PreparedBlock(id:identity+":"+value.id,kind:value.kind,from:value.from,to:value.to)
-                }
-                let full=decoded.blocks?.map(block)
-                let change=decoded.blockChange.map{PreparedBlockChange(prefix:$0.prefix,suffix:$0.suffix,shift:$0.shift,blocks:$0.blocks.map(block))}
-                let result=ParseResult(revision:decoded.revision,spans:decoded.spans,
-                    fragments:decoded.fragments.map{PreviewFragment(kind:$0.kind,from:$0.from,to:$0.to,html:$0.html,id:$0.id.map{identity+":"+$0})},
-                    blocks:full,blockChange:change)
-                #if DEBUG
-                TimingDiagnostics.shared.end(records)
-                #endif
+                lock.lock();pendingEdits.removeAll{$0.revision<=revision};lock.unlock()
                 lock.lock();let latest=generation==requestedGeneration;lock.unlock()
                 if latest {
                     #if DEBUG
@@ -182,7 +111,6 @@ public final class ComrakWorker: @unchecked Sendable {
                         TimingDiagnostics.shared.end(delivery)
                         #endif
                         completion(.success(result))
-                        if manifest != 0 {queue.async { [self] in if preparedRevision==revision {publishedRevision=revision}}}
                     }
                 }
             } catch {
@@ -191,29 +119,110 @@ public final class ComrakWorker: @unchecked Sendable {
             }
         }
     }
-    /// Query already prepared Comrak output. Background and jump requests do
-    /// not parse or render Markdown again.
+    /// Complete parses populate Swift's retained tree, so this path is only a
+    /// recovery fallback for an uncovered range.
     public func prepare(rope:TextRope,revision:Int,from:Int,includeFragments:Bool = true,
                         completion:@escaping(Result<(ParseResult,NSRange),Error>)->Void) {
         queue.async { [self] in
             lock.lock();let current=latestRevision==revision;lock.unlock()
-            guard current,preparedRevision==revision,let document else{return}
+            guard current else{return}
             let line=rope.line(at:from),range=rope.lines(line,min(rope.lineCount,line+100))
-            guard let json=astra_comrak_query(document,Int64(revision),range.location,NSMaxRange(range),0,true,includeFragments) else {
-                let message=nativeError();DispatchQueue.main.async {completion(.failure(WorkerError.message(message)))};return
-            }
-            defer {astra_comrak_string_free(json)}
             do {
-                let data=Data(bytes:json,count:strlen(json))
-                let decoded=try JSONDecoder().decode(ParseResult.self,from:data)
-                let fragments=decoded.fragments.map {fragment in
-                    PreviewFragment(kind:fragment.kind,from:fragment.from,to:fragment.to,
-                        html:fragment.html,id:fragment.id.map{identity+":"+$0})
-                }
-                let result=ParseResult(revision:decoded.revision,spans:decoded.spans,fragments:fragments)
+                let result=try parse(units:rope.units(in:range),base:range.location,revision:revision)
                 DispatchQueue.main.async {completion(.success((result,range)))}
             } catch {DispatchQueue.main.async {completion(.failure(error))}}
         }
+    }
+    private func allocateBlockID()->BlockID {
+        defer {nextBlockID &+= 1}
+        return BlockID(nextBlockID)
+    }
+    private func parse(units:[UInt16],base:Int,revision:Int)throws->ParseResult {
+        #if DEBUG
+        let nativeWork=TimingDiagnostics.shared.begin("parse.native")
+        #endif
+        let nativeResult=units.withUnsafeBufferPointer({source in
+            astra_comrak_parse_records(source.baseAddress,source.count,base,Int64(revision),
+                renderMath,Unmanaged.passUnretained(math).toOpaque())
+        })
+        #if DEBUG
+        TimingDiagnostics.shared.end(nativeWork,values:["parsedCharacters":Double(units.count)])
+        #endif
+        guard let result=nativeResult else {throw WorkerError.message(nativeError())}
+        let owner=NativeResultOwner(result)
+        #if DEBUG
+        let recordsWork=TimingDiagnostics.shared.begin("parse.records")
+        defer {TimingDiagnostics.shared.end(recordsWork)}
+        #endif
+        var view=AstraComrakResultView()
+        guard astra_comrak_result_view(result,&view) else {
+            throw WorkerError.message("Comrak returned an invalid record view")
+        }
+        func kind(_ value:UInt8)->MarkdownKind {MarkdownKind(rawValue:value) ?? .paragraph}
+        var htmlViews=[HTMLArena.View]();htmlViews.reserveCapacity(view.block_count)
+        if view.block_count>0,let records=view.blocks {
+            for record in UnsafeBufferPointer(start:records,count:view.block_count) {
+                htmlViews.append(.init(bytes:record.html.bytes,count:record.html.length))
+            }
+        }
+        let arena=HTMLArena(owner:owner,views:htmlViews)
+        var blocks=[PreparedBlock](),spans=[SyntaxSpan]()
+        blocks.reserveCapacity(view.block_count)
+        spans.reserveCapacity(view.span_count)
+        if view.span_count>0,let records=view.spans {
+            for record in UnsafeBufferPointer(start:records,count:view.span_count) {
+                spans.append(SyntaxSpan(kind:kind(record.kind),from:record.from,to:record.to))
+            }
+        }
+        let syntaxArena=SyntaxArena(spans)
+        if view.block_count>0,let records=view.blocks {
+            for (index,record) in UnsafeBufferPointer(start:records,count:view.block_count).enumerated() {
+                blocks.append(PreparedBlock(id:allocateBlockID(),kind:kind(record.kind),from:record.from,to:record.to,
+                    html:HTMLPayload(arena:arena,index:index),
+                    syntax:SyntaxPayload(arena:syntaxArena,range:record.span_start..<(record.span_start+record.span_count))))
+            }
+        }
+        return ParseResult(revision:Int(view.revision),spans:spans,blocks:blocks,
+                           from:view.from,to:view.to,hasReferences:view.has_references)
+    }
+    private func regionalResult(rope:TextRope,revision:Int,edit:SourceEdit,
+                                context:RegionalParseContext)throws->ParseResult? {
+        #if DEBUG
+        let native=TimingDiagnostics.shared.begin("parse.comrak")
+        defer {TimingDiagnostics.shared.end(native,values:["regional":1,"parsedCharacters":Double(context.range.length)])}
+        #endif
+        let parsed=try parse(units:rope.units(in:context.range),base:context.range.location,revision:revision)
+        guard parsed.hasReferences != true,let blocks=parsed.blocks else{return nil}
+        var used=Set<BlockID>(),mapped=[BlockID:BlockID]()
+        func shiftedStart(_ offset:Int)->Int {
+            if offset<=edit.range.location {return offset}
+            if offset>=NSMaxRange(edit.range) {return offset+context.shift}
+            return edit.range.location
+        }
+        func shiftedEnd(_ offset:Int)->Int {
+            if offset<edit.range.location {return offset}
+            if offset>=NSMaxRange(edit.range) {return offset+context.shift}
+            return edit.range.location+edit.insertedLength
+        }
+        for block in blocks {
+            let html=block.html?.string() ?? ""
+            let old=context.blocks.filter{!used.contains($0.id) && $0.kind==block.kind && $0.html==html}.min {
+                let left=abs(shiftedStart($0.from)-block.from)+abs(shiftedEnd($0.to)-block.to)
+                let right=abs(shiftedStart($1.from)-block.from)+abs(shiftedEnd($1.to)-block.to)
+                return left<right
+            }
+            if let old {
+                mapped[block.id]=old.id;used.insert(old.id)
+            } else {
+                mapped[block.id]=allocateBlockID()
+            }
+        }
+        if let guardID=context.firstGuardID,!used.contains(guardID) {return nil}
+        if let guardID=context.lastGuardID,!used.contains(guardID) {return nil}
+        let changed=blocks.map{PreparedBlock(id:mapped[$0.id]!,kind:$0.kind,from:$0.from,to:$0.to,html:$0.html,syntax:$0.syntax)}
+        return ParseResult(revision:revision,spans:parsed.spans,
+            blockChange:PreparedBlockChange(prefix:context.prefix,suffix:context.suffix,shift:context.shift,blocks:changed),
+            from:parsed.from,to:parsed.to,hasReferences:false)
     }
     private func nativeError()->String {
         guard let text=astra_comrak_error() else{return "Comrak failed"}
@@ -224,6 +233,12 @@ public final class ComrakWorker: @unchecked Sendable {
         case message(String)
         public var errorDescription:String? {if case .message(let text)=self{return text};return nil}
     }
+}
+
+private final class NativeResultOwner:@unchecked Sendable {
+    private let result:OpaquePointer
+    init(_ result:OpaquePointer) {self.result=result}
+    deinit {astra_comrak_result_free(result)}
 }
 
 /// KaTeX is a typesetter only. It receives parser-recognized equations, never

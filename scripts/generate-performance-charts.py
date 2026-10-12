@@ -16,32 +16,32 @@ APPS = [
 
 PANELS = [
     ("64 KB", "Open", 400, "ms", {
-        "markato": (92.1, "92.1 ms"), "markviewer": (244.8, "244.8 ms"),
+        "markato": (55.8, "55.8 ms"), "markviewer": (244.8, "244.8 ms"),
         "macdown": (211.4, "211.4 ms"), "md3000": (205.8, "205.8 ms"),
         "md2": (361.3, "361.3 ms"),
     }),
     ("1 MB", "Open", 25000, "s", {
-        "markato": (79.5, "79.5 ms"), "markviewer": (20384.8, "20.38 s"),
+        "markato": (74.3, "74.3 ms"), "markviewer": (20384.8, "20.38 s"),
         "macdown": (1526.2, "1.53 s"), "md3000": (2542.0, "2.54 s"),
         "md2": (637.5, "637.5 ms"),
     }),
     ("8 MB", "Open", 12000, "s", {
-        "markato": (359.8, "359.8 ms"), "markviewer": ("timeout", ">60 s"),
+        "markato": (256.3, "256.3 ms"), "markviewer": ("timeout", ">60 s"),
         "macdown": (11872.3, "11.87 s"), "md3000": ("timeout", ">60 s"),
         "md2": (2480.7, "2.48 s"),
     }),
     ("64 KB", "Edit", 125, "ms", {
-        "markato": (33.9, "33.9 ms"), "markviewer": (112.3, "112.3 ms"),
+        "markato": (14.6, "14.6 ms"), "markviewer": (112.3, "112.3 ms"),
         "macdown": (36.2, "36.2 ms"), "md3000": (52.7, "52.7 ms"),
         "md2": (27.7, "27.7 ms"),
     }),
     ("1 MB", "Edit", 25000, "s", {
-        "markato": (54.7, "54.7 ms"), "markviewer": (23748.5, "23.75 s"),
+        "markato": (11.9, "11.9 ms"), "markviewer": (23748.5, "23.75 s"),
         "macdown": (147.1, "147.1 ms"), "md3000": (2004.1, "2.00 s"),
         "md2": (49.7, "49.7 ms"),
     }),
     ("8 MB", "Edit", 250, "ms", {
-        "markato": (205.5, "205.5 ms"), "markviewer": ("untested", "NOT TESTED · OPEN TIMED OUT"),
+        "markato": (7.0, "7.0 ms"), "markviewer": ("untested", "NOT TESTED · OPEN TIMED OUT"),
         "macdown": ("timeout", ">60 s"), "md3000": ("untested", "NOT TESTED · OPEN TIMED OUT"),
         "md2": (228.9, "228.9 ms"),
     }),
@@ -140,7 +140,7 @@ def complete_chart():
 def hero_chart():
     return '''<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="960" viewBox="0 0 1600 960" role="img" aria-labelledby="title desc">
   <title id="title">8 MB Markdown open performance</title>
-  <desc id="desc">A linear-scale horizontal bar chart comparing end-to-end open latency. Markato takes 0.36 seconds, MacDown 2.0 takes 2.48 seconds, MacDown 0.7.3 takes 11.87 seconds, and both MarkViewer and MacDown 3000 exceed the 60-second timeout.</desc>
+  <desc id="desc">A linear-scale horizontal bar chart comparing end-to-end open latency. Markato takes 0.26 seconds, MacDown 2.0 takes 2.48 seconds, MacDown 0.7.3 takes 11.87 seconds, and both MarkViewer and MacDown 3000 exceed the 60-second timeout.</desc>
   <defs>
     <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#07111d"/><stop offset="1" stop-color="#102333"/></linearGradient>
     <linearGradient id="markato" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#45e0ff"/><stop offset="1" stop-color="#80ffb7"/></linearGradient>
@@ -155,13 +155,13 @@ def hero_chart():
     <g transform="translate(86 278)">
       <g stroke="#a8bdca" stroke-opacity=".18"><line x1="290" y1="0" x2="290" y2="470"/><line x1="515" y1="0" x2="515" y2="470"/><line x1="740" y1="0" x2="740" y2="470"/><line x1="965" y1="0" x2="965" y2="470"/><line x1="1190" y1="0" x2="1190" y2="470"/></g>
       <g fill="#7f98a8" font-size="18" text-anchor="middle"><text x="290" y="-18">0</text><text x="515" y="-18">3 s</text><text x="740" y="-18">6 s</text><text x="965" y="-18">9 s</text><text x="1190" y="-18">12 s</text></g>
-      <text x="0" y="52" fill="#fff" font-size="23" font-weight="720">Markato</text><rect x="290" y="21" width="27" height="48" rx="13" fill="url(#markato)" filter="url(#glow)"/><text x="338" y="53" fill="#80ffb7" font-size="24" font-weight="760">0.36 s</text>
+      <text x="0" y="52" fill="#fff" font-size="23" font-weight="720">Markato</text><rect x="290" y="21" width="19" height="48" rx="10" fill="url(#markato)" filter="url(#glow)"/><text x="330" y="53" fill="#80ffb7" font-size="24" font-weight="760">0.26 s</text>
       <text x="0" y="143" fill="#c1d0da" font-size="23">MacDown 2.0</text><rect x="290" y="112" width="186" height="48" rx="13" fill="#91a7b6"/><text x="497" y="144" fill="#e3ebf0" font-size="23" font-weight="650">2.48 s</text>
       <text x="0" y="234" fill="#c1d0da" font-size="23">MacDown 0.7.3</text><rect x="290" y="203" width="890" height="48" rx="13" fill="#6f899c"/><text x="1201" y="235" fill="#e3ebf0" font-size="23" font-weight="650">11.87 s</text>
       <text x="0" y="325" fill="#c1d0da" font-size="23">MarkViewer</text><rect x="290" y="294" width="900" height="48" rx="13" fill="url(#timeout)"/><path d="M1160 287 l30 31 -30 31" fill="#07111d"/><text x="1211" y="327" fill="#d7ff64" font-size="23" font-weight="720">&gt;60 s timeout</text>
       <text x="0" y="416" fill="#c1d0da" font-size="23">MacDown 3000</text><rect x="290" y="385" width="900" height="48" rx="13" fill="url(#timeout)"/><path d="M1160 378 l30 31 -30 31" fill="#07111d"/><text x="1211" y="418" fill="#d7ff64" font-size="23" font-weight="720">&gt;60 s timeout</text>
     </g>
-    <g transform="translate(86 806)"><rect width="663" height="76" rx="18" fill="#0d1b2a" stroke="#45e0ff" stroke-opacity=".34"/><text x="28" y="49" fill="#fff" font-size="26" font-weight="720">6.9× faster than MacDown 2.0</text><rect x="687" width="594" height="76" rx="18" fill="#0d1b2a" stroke="#45e0ff" stroke-opacity=".34"/><text x="715" y="49" fill="#fff" font-size="26" font-weight="720">MarkViewer did not open in 60 s</text></g>
+    <g transform="translate(86 806)"><rect width="663" height="76" rx="18" fill="#0d1b2a" stroke="#45e0ff" stroke-opacity=".34"/><text x="28" y="49" fill="#fff" font-size="26" font-weight="720">9.7× faster than MacDown 2.0</text><rect x="687" width="594" height="76" rx="18" fill="#0d1b2a" stroke="#45e0ff" stroke-opacity=".34"/><text x="715" y="49" fill="#fff" font-size="26" font-weight="720">MarkViewer did not open in 60 s</text></g>
     <text x="86" y="927" fill="#708797" font-size="16">Median of 3 fresh-process opens where completed · Apple M4 Pro, 14-core · macOS 26.6.2 · 1120 × 760 pt</text>
   </g>
 </svg>'''

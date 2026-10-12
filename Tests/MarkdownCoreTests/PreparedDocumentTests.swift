@@ -61,7 +61,7 @@ private func prepared(_ id:String,_ from:Int,_ to:Int,_ text:String)->PreviewFra
     #expect(doc.styles(in:NSRange(location:50,length:20))?.first?.range==NSRange(location:50,length:10))
     doc.store(ParseResult(revision:1,spans:[],fragments:[]),range:NSRange(location:100,length:9900))
     #expect(doc.firstUnpreparedOffset(from:0)==10000)
-    #expect(doc.entries(covering:NSRange(location:9000,length:500))?.first?.id=="table")
+    #expect(doc.entries(covering:NSRange(location:9000,length:500))?.first?.blockID==BlockID("table"))
 }
 @Test func overlappingStylePagesPreserveCoverageAndRejectStaleResults() {
     let doc=PreparedDocument()
@@ -81,7 +81,7 @@ private func prepared(_ id:String,_ from:Int,_ to:Int,_ text:String)->PreviewFra
     doc.adopt(blocks,revision:1,length:10000)
     doc.store(ParseResult(revision:1,spans:[],fragments:[prepared("900",9000,9010,"destination")]),range:NSRange(location:9000,length:10))
     #expect(doc.firstUnpreparedOffset(from:0)==0)
-    #expect(doc.entries(covering:NSRange(location:9000,length:10))?.first?.id=="900")
+    #expect(doc.entries(covering:NSRange(location:9000,length:10))?.first?.blockID==BlockID("900"))
     let fragments=(0..<1000).filter{$0 != 555}.map{prepared("\($0)",$0*10,($0+1)*10,"\($0)")}
     doc.store(ParseResult(revision:1,spans:[],fragments:fragments),range:NSRange(location:0,length:10000))
     #expect(doc.firstUnpreparedOffset(from:0)==5550)
@@ -100,14 +100,14 @@ private func prepared(_ id:String,_ from:Int,_ to:Int,_ text:String)->PreviewFra
     doc.recordPreviewHeights(["0":10,"1":20,"2":30,"3":40,"4":50],revision:1)
 
     let single=doc.window(covering:NSRange(location:20,length:10),before:0,after:0)
-    #expect(single?.entries.map(\.id)==["2"])
+    #expect(single?.entries.map(\.blockID)==[BlockID("2")])
     #expect(single?.previewTop==46)
     // The unrendered final node still contributes an estimated scrollbar
     // extent, but can never enter the rendered window.
     #expect(single?.previewHeight==218)
 
     let expanded=doc.window(covering:NSRange(location:20,length:10),before:25,after:500)
-    #expect(expanded?.entries.map(\.id)==["0","1","2","3","4"])
+    #expect(expanded?.entries.map(\.blockID)==["0","1","2","3","4"].map{BlockID($0)})
     #expect(expanded?.range==NSRange(location:0,length:50))
     #expect(expanded?.previewTop==16)
 }

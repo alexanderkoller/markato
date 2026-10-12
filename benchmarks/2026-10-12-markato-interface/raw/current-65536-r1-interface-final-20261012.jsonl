@@ -1,0 +1,14 @@
+{"bundle":"org.markato.benchmark.interface20261012","os":"Version 26.6.2 (Build 25G83)","edits":"9","fixture":"\/private\/tmp\/astra-md3000-speed\/inputs\/current-65536-r1-interface-final-20261012.md","editDelayMs":"250","pollIntervalMs":1,"version":"0.1.0","type":"metadata","windowMode":"offscreen"}
+{"editIndex":0,"operation":"open","dispatchMs":20.963666677474976,"observedHeading":"BENCH_START","polls":1,"verifiedSource":true,"elapsedMs":55.75391674041748,"type":"sample","detectionSlackMs":1,"maxPollGapMs":28.16349983215332}
+{"windowWidth":1120,"webClass":"HTMLPreview.HTMLPreviewView","editorClass":"Markato.SourceTextView","type":"views","font":".AppleSystemUIFontMonospaced-Regular","fontSize":13}
+{"editIndex":1,"operation":"edit","dispatchMs":1.4719581604003906,"observedHeading":"EC30358C601","polls":1,"verifiedSource":true,"elapsedMs":7.4130833148956299,"type":"sample","detectionSlackMs":1,"maxPollGapMs":0}
+{"editIndex":2,"operation":"edit","dispatchMs":1.1617498397827148,"observedHeading":"EC30358C602","polls":3,"verifiedSource":true,"elapsedMs":23.235416650772095,"type":"sample","detectionSlackMs":1,"maxPollGapMs":12.754541635513306}
+{"editIndex":3,"operation":"edit","dispatchMs":1.139291524887085,"observedHeading":"EC30358C603","polls":1,"verifiedSource":true,"elapsedMs":6.6607081890106201,"type":"sample","detectionSlackMs":1,"maxPollGapMs":0}
+{"editIndex":4,"operation":"edit","dispatchMs":1.1418333053588867,"observedHeading":"EC30358C604","polls":1,"verifiedSource":true,"elapsedMs":6.0935416221618652,"type":"sample","detectionSlackMs":1,"maxPollGapMs":0}
+{"editIndex":5,"operation":"edit","dispatchMs":1.0938336849212646,"observedHeading":"EC30358C605","polls":1,"verifiedSource":true,"elapsedMs":6.6940417289733887,"type":"sample","detectionSlackMs":1,"maxPollGapMs":0}
+{"editIndex":6,"operation":"edit","dispatchMs":1.1632919311523438,"observedHeading":"EC30358C606","polls":1,"verifiedSource":true,"elapsedMs":6.5997917652130127,"type":"sample","detectionSlackMs":1,"maxPollGapMs":0}
+{"editIndex":7,"operation":"edit","dispatchMs":1.1584584712982178,"observedHeading":"EC30358C607","polls":1,"verifiedSource":true,"elapsedMs":6.5280416011810303,"type":"sample","detectionSlackMs":1,"maxPollGapMs":0}
+{"editIndex":8,"operation":"edit","dispatchMs":1.1588332653045654,"observedHeading":"EC30358C608","polls":1,"verifiedSource":true,"elapsedMs":6.4828333854675293,"type":"sample","detectionSlackMs":1,"maxPollGapMs":0}
+{"editIndex":9,"operation":"edit","dispatchMs":1.2954165935516357,"observedHeading":"EC30358C609","polls":1,"verifiedSource":true,"elapsedMs":7.0550832748413086,"type":"sample","detectionSlackMs":1,"maxPollGapMs":0}
+{"type":"memory","mainProcessRSSBytes":355401728}
+{"type":"complete"}

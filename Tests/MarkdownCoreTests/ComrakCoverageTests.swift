@@ -8,13 +8,13 @@ private func prepare(_ text:String,_ worker:ComrakWorker = ComrakWorker(),revisi
         worker.request(rope:rope,revision:revision,visible:range ?? NSRange(location:0,length:rope.count)) {c.resume(with:$0)}
     }
 }
-@Test func firstPublicationReturnsCompleteManifestAndVisibleRecords() async throws {
+@Test func statelessPublicationTransfersTheCompleteRetainedDocument() async throws {
     let text="# First\n\n"+(0..<200).map{"Paragraph \($0) **bold**.\n\n"}.joined()+"# Last\n"
     let result=try await prepare(text,range:NSRange(location:0,length:8))
-    #expect(result.fragments.first?.html?.contains("<h1>First</h1>")==true)
+    #expect(result.blocks?.first?.html?.string().contains("<h1>First</h1>")==true)
     #expect(result.blocks?.count==202)
-    #expect(result.fragments.count < (result.blocks?.count ?? 0))
-    #expect(result.spans.allSatisfy{$0.from<8 && $0.to<=8})
+    #expect(result.fragments.isEmpty)
+    #expect(result.spans.contains{$0.from>8})
 }
 @Test func unicodeCRLFAndNestedSourceStylesMatchLiteralText() async throws {
     let text="# 😀 Heading\r\n\r\n> 1. Nested ***bold italic*** and [link](https://example.com).\r\n"
@@ -23,16 +23,16 @@ private func prepare(_ text:String,_ worker:ComrakWorker = ComrakWorker(),revisi
     for span in result.spans {#expect(span.from>=0 && span.to<=source.length && span.to>span.from)}
     #expect(result.spans.contains{$0.kind=="StrongEmphasis" && source.substring(with:$0.range).contains("bold italic")})
     #expect(result.spans.contains{$0.kind=="Emphasis" && source.substring(with:$0.range).contains("bold italic")})
-    #expect(result.fragments.last?.html?.contains("<ol>")==true)
-    #expect(result.fragments.last?.kind=="Blockquote")
+    #expect(result.blocks?.last?.html?.string().contains("<ol>")==true)
+    #expect(result.blocks?.last?.kind == .blockquote)
 }
 @Test func tablesCodeRawHTMLAndAssetsKeepTheirContext() async throws {
     let text="| A | B |\n|---|---|\n"+(0..<1000).map{"| \($0) | **cell** |\n"}.joined()+"\n```swift\nlet x = \"$literal$\"\n```\n\n<div>literal **HTML**</div>\n\n![relative](images/test.png)\n\n![file](file:///tmp/test.png)\n\n[bad](javascript:alert(1))\n"
     let result=try await prepare(text)
-    let table=try #require(result.fragments.first(where:{$0.kind=="Table"}))
-    #expect(table.html?.components(separatedBy:"<tr>").count==1002)
-    #expect(table.html?.contains(">999</td>")==true)
-    let html=result.fragments.compactMap{$0.html}.joined()
+    let table=try #require(result.blocks?.first(where:{$0.kind == .table}))
+    #expect(table.html?.string().components(separatedBy:"<tr>").count==1002)
+    #expect(table.html?.string().contains(">999</td>")==true)
+    let html=result.blocks?.compactMap{$0.html?.string()}.joined() ?? ""
     #expect(html.contains("language-swift"))
     #expect(html.contains("$literal$"))
     #expect(!html.contains("class=\"katex\""))
@@ -43,15 +43,15 @@ private func prepare(_ text:String,_ worker:ComrakWorker = ComrakWorker(),revisi
 }
 @Test func everyMathDialectUsesTheSameNativeParseAndKaTeX() async throws {
     let result=try await prepare("$x^2$ and \\(y_1\\).\n\n$$\na=b\n$$\n\n\\[\nc=d\n\\]\n\n```math\nx=y\n```\n")
-    let html=result.fragments.compactMap{$0.html}.joined()
+    let html=result.blocks?.compactMap{$0.html?.string()}.joined() ?? ""
     #expect(html.components(separatedBy:"class=\"katex\"").count==6)
     #expect(html.components(separatedBy:"katex-display").count==4)
-    #expect(result.fragments.filter{$0.kind=="MathBlock"}.count==3)
+    #expect(result.blocks?.filter{$0.kind == .mathBlock}.count==3)
     #expect(result.spans.contains{$0.kind=="MathInline"})
 }
 @Test func invalidMathStaysLocalToItsExpression() async throws {
     let invalid=try await prepare("Before $\\frac{$ after.\n")
-    let invalidHTML=invalid.fragments.compactMap{$0.html}.joined()
+    let invalidHTML=invalid.blocks?.compactMap{$0.html?.string()}.joined() ?? ""
     #expect(invalidHTML.contains("katex-error"))
     #expect(invalidHTML.contains("Before"))
     #expect(invalidHTML.contains("after"))
@@ -61,7 +61,7 @@ private func prepare(_ text:String,_ worker:ComrakWorker = ComrakWorker(),revisi
     let worker=ComrakWorker()
     worker.debugFailNextMathRender()
     let unavailable=try await prepare("Before $x & <y$ after.\n",worker)
-    let unavailableHTML=unavailable.fragments.compactMap{$0.html}.joined()
+    let unavailableHTML=unavailable.blocks?.compactMap{$0.html?.string()}.joined() ?? ""
     #expect(unavailableHTML.contains("class=\"math-error\""))
     #expect(unavailableHTML.contains("x &amp; &lt;y"))
     #expect(unavailableHTML.contains("Before"))
@@ -70,10 +70,10 @@ private func prepare(_ text:String,_ worker:ComrakWorker = ComrakWorker(),revisi
 #endif
 @Test func blankDocumentAndDistantReferencesHaveCompleteCoverage() async throws {
     let blank=try await prepare(String(repeating:"\n",count:300))
-    #expect(blank.fragments.first?.kind=="Empty")
+    #expect(blank.blocks?.first?.kind == .empty)
     let result=try await prepare("A [reference][r].\n\n"+String(repeating:"\n",count:300)+"[r]: https://example.com\n")
-    #expect(result.fragments.first?.html?.contains("href=\"https://example.com\"")==true)
-    #expect(result.blocks?.last?.kind=="LinkReference")
+    #expect(result.blocks?.first?.html?.string().contains("href=\"https://example.com\"")==true)
+    #expect(result.blocks?.last?.kind == .linkReference)
 }
 @Test func indexedWholeDocumentStylesEqualClippingAcrossGiantBlocks() {
     let doc=PreparedDocument()

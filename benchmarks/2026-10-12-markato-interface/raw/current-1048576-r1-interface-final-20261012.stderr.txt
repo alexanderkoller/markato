@@ -1,0 +1,1 @@
+2026-10-12 17:36:20.257 Markato[78535:50072657] ApplePersistenceIgnoreState: Existing state will not be touched. New state will be written to /var/folders/yh/yrjpbrxn1_l703sz640w4ps40000gn/T/org.markato.benchmark.interface20261012.savedState

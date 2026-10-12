@@ -110,7 +110,7 @@ final class SourceTextView:NSTextView {
     }
 }
 
-/// One retained native document. Navigation never reloads text or invents geometry.
+/// One retained Swift document tree. Navigation never reloads text or invents geometry.
 final class SourceEditor:NSView,NSTextViewDelegate,NSTextStorageDelegate,ScrollSource {
     let scroll:NSScrollView=SourceScrollView()
     let canvas=FlippedView()
@@ -324,12 +324,12 @@ final class SourceEditor:NSView,NSTextViewDelegate,NSTextStorageDelegate,ScrollS
     /// Source syntax is deliberately paint-only. Changing font metrics here
     /// would invalidate wrapped-line geometry and turn coloring a viewport into
     /// a TextKit layout operation. The preview retains semantic typography.
-    private func syntaxColor(_ kind:String)->NSColor? {
-        if kind.hasPrefix("ATXHeading") || kind.hasPrefix("SetextHeading") {return .systemIndigo}
-        if kind=="StrongEmphasis" || kind=="Emphasis" {return .systemOrange}
-        if kind.contains("Mark") {return .secondaryLabelColor}
-        if kind=="Link" || kind=="URL" {return .linkColor}
-        if kind.hasPrefix("Math") {return .systemPurple}
+    private func syntaxColor(_ kind:MarkdownKind)->NSColor? {
+        if kind.isHeading {return .systemIndigo}
+        if kind == .strongEmphasis || kind == .emphasis {return .systemOrange}
+        if kind.isMark {return .secondaryLabelColor}
+        if kind == .link || kind == .url {return .linkColor}
+        if kind == .mathBlock || kind == .mathInline {return .systemPurple}
         return nil
     }
     private func updateDimensions() {

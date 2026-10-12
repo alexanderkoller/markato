@@ -2,12 +2,12 @@
 
 Markato is designed to keep the work performed for the visible preview bounded,
 even when the source document is large. On the benchmark machine, an 8 MB
-Markdown file reached a visible preview in **359.8 ms**. That was **6.9 times
-faster than MacDown 2.0** and **33 times faster than MacDown 0.7.3**. Neither
+Markdown file reached a visible preview in **256.3 ms**. That was **9.7 times
+faster than MacDown 2.0** and **46 times faster than MacDown 0.7.3**. Neither
 [MarkViewer](https://markviewer.com/) nor MacDown 3000 finished within the
 60-second operation limit.
 
-![Markato opens an 8 MB Markdown document in 0.36 seconds, while MarkViewer and MacDown 3000 exceed the 60-second timeout.](assets/markato-performance.png)
+![Markato opens an 8 MB Markdown document in 0.26 seconds, while MarkViewer and MacDown 3000 exceed the 60-second timeout.](assets/markato-performance.png)
 
 The website-ready graphic is available as a standalone
 [PNG](assets/markato-performance.png), with an editable and resolution-independent
@@ -32,18 +32,31 @@ renderer-only microbenchmarks.
 
 | Application | 64 KB open | 64 KB edit | 1 MB open | 1 MB edit | 8 MB open | 8 MB edit |
 |---|---:|---:|---:|---:|---:|---:|
-| **Markato, bounded Ultralight snapshot** | **92.1 ms** | 33.9 ms | **79.5 ms** | 54.7 ms | **359.8 ms** | **205.5 ms** |
+| **Markato, bounded Ultralight snapshot** | **55.8 ms** | **14.6 ms** | **74.3 ms** | **11.9 ms** | **256.3 ms** | **7.0 ms** |
 | [MarkViewer 1.8.14](https://github.com/SeungbinBaik/markviewer-releases/releases/tag/v1.8.14) | 244.8 ms | 112.3 ms | 20,384.8 ms | 23,748.5 ms | >60 s timeout | not tested — open timed out |
 | MacDown 0.7.3 | 211.4 ms | 36.2 ms | 1,526.2 ms | 147.1 ms | 11,872.3 ms | >60 s timeout |
 | MacDown 3000 3000.0.7 | 205.8 ms | 52.7 ms | 2,542.0 ms | 2,004.1 ms | >60 s timeout | not tested — open timed out |
-| [MacDown 2.0](https://github.com/xuanji86/MacDown2.0), release build at `e20d2f2` | 361.3 ms | **27.7 ms** | 637.5 ms | **49.7 ms** | 2,480.7 ms | 228.9 ms |
+| [MacDown 2.0](https://github.com/xuanji86/MacDown2.0), release build at `e20d2f2` | 361.3 ms | 27.7 ms | 637.5 ms | 49.7 ms | 2,480.7 ms | 228.9 ms |
 
-At 8 MB, Markato's 205.5 ms edit result and MacDown 2.0's 228.9 ms result are
-close. The large difference is document opening: Markato presents a bounded
-first window, whereas the comparison applications perform more work before the
-first preview becomes visible. The table keeps the faster value in each
-completed column in bold rather than implying that Markato wins every
-individual measurement.
+At 8 MB, Markato's edit reached visible paint in 7.0 ms, compared with 228.9 ms
+for MacDown 2.0. Markato presents a bounded first window and now keeps local
+edits on that bounded path, while the comparison applications perform more work
+before their first preview or edited preview becomes visible. The fastest value
+in each completed column is bold.
+
+## Change from the prior Markato snapshot
+
+The October 12 interface rerun used the same probe, fixture bytes, window size,
+and visible-paint endpoint as the earlier Markato snapshot.
+
+| Condition | Prior | Current | Change |
+|---|---:|---:|---:|
+| 64 KB open | 92.1 ms | 55.8 ms | 39.5% faster |
+| 64 KB edit | 33.9 ms | 14.6 ms | 57.1% faster |
+| 1 MB open | 79.5 ms | 74.3 ms | 6.5% faster |
+| 1 MB edit | 54.7 ms | 11.9 ms | 78.3% faster |
+| 8 MB open | 359.8 ms | 256.3 ms | 28.8% faster |
+| 8 MB edit | 205.5 ms | 7.0 ms | 96.6% faster |
 
 MarkViewer's own site says it [“launches in under a
 second”](https://markviewer.com/markdown-preview-mac). Its 244.8 ms result on the
@@ -75,9 +88,10 @@ Every application used a 1120 by 760 point window and the same deterministic
 64 KB, 1 MB, and 8 MB fixtures. Those are conventional display labels for files
 generated to at least the requested byte threshold; complete block boundaries
 make the exact files 65,569, 1,048,632, and 8,388,717 bytes. The fixtures contain
-no external images, fonts, or network resources. Completed cells report the
-median of three process opens and nine edits. Each operation had a 60-second
-limit.
+no external images, fonts, or network resources. The current Markato cells
+report the median of three fresh-process opens and 27 edits, nine per process.
+The preserved comparison cells use their original three opens and nine edits.
+Each operation had a 60-second limit.
 
 The measurements ran on a 14-core Apple M4 Pro (10 performance and 4 efficiency
 cores) under macOS 26.6.2 (Build 25G83). They are a controlled same-machine
@@ -102,8 +116,10 @@ are documented in [How synchronized scrolling works](scrolling-algorithm.md).
 
 ## Versions and provenance
 
-- **Markato:** bounded Ultralight application snapshot from this repository. The
-  benchmark snapshot used the earlier internal `AstraMarkdown` executable and module names; current builds use `Markato`.
+- **Markato:** release build from this repository after removing retained Rust
+  parser state and avoiding eager interface copies. The raw records and
+  aggregates are preserved in
+  [`benchmarks/2026-10-12-markato-interface`](../benchmarks/2026-10-12-markato-interface/README.md).
 - **MacDown:** version 0.7.3.
 - **MacDown 3000:** version 3000.0.7.
 - **MacDown 2.0:** release build of commit
