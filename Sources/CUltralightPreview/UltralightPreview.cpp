@@ -289,6 +289,20 @@ char* astra_ul_surface_link_at(AstraULSurface* surface, double x, double y) {
   return href ? copy_string(*href) : nullptr;
 }
 
+bool astra_ul_surface_link_rect_at(AstraULSurface* surface, double x, double y,
+                                   double* rect_x, double* rect_y,
+                                   double* width, double* height) {
+  if (!surface) return false;
+  auto element = surface->document.elementFromPoint(x, y).closest("a[href]");
+  if (!element) return false;
+  auto rect = element.getBoundingClientRect();
+  if (rect_x) *rect_x = rect.x;
+  if (rect_y) *rect_y = rect.y;
+  if (width) *width = rect.width;
+  if (height) *height = rect.height;
+  return true;
+}
+
 char* astra_ul_surface_selected_text(AstraULSurface* surface) {
   if (!surface) return nullptr;
   return copy_string(surface->document.getSelection().toString());

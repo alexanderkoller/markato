@@ -77,7 +77,6 @@ private final class PreviewClipView:NSClipView {
     var sourceLength:Int {get}
     var visibleSourceRange:NSRange {get}
     var alignmentAnchor:Int {get}
-    var editAnchor:Int {get}
     func verticalPosition(for offset:Int)->CGFloat?
     func alignmentVerticalPosition(for offset:Int)->CGFloat?
 }
@@ -129,8 +128,31 @@ private struct CommittedPresentation {
     override var isFlipped:Bool {true}
     var scrolling:PreviewScrolling = .independent {didSet {sourceLayoutChanged()}}
     var openAnchor:((String)->Void)?
+    var openComment:((String,NSView,NSRect)->Void)?
+    var commentAnchorChanged:((NSRect?)->Void)?
     var fontSize:CGFloat=15 {didSet {if fontSize != oldValue {endScrollGesture();requestPresentation()}}}
     var baseURL:URL? {didSet {if baseURL != oldValue {endScrollGesture();requestPresentation()}}}
+    var comments=[ResolvedMarkdownComment]() {
+        // Comment resolution follows source edits. Moving the viewport here
+        // would align the still-visible old preview bitmap against the new
+        // source geometry, producing a large transient jump on every key.
+        // If the parser has not published this source revision yet, wait: its
+        // presentation will read the new comments. Repainting the previous
+        // revision with shifted comment ranges creates exactly the stale-map
+        // jump this guard avoids.
+        didSet {
+            if comments != oldValue,
+               source == nil || content?.revision==source?.contentRevision {requestPresentation()}
+        }
+    }
+    var selectedCommentID:String? {
+        didSet {
+            if selectedCommentID != oldValue {
+                if selectedCommentID == nil {commentAnchorChanged?(nil)}
+                endScrollGesture();requestPresentation()
+            }
+        }
+    }
     private let surfaces:[PreviewSurface]
     private var displayed:PreviewSurface {committed?.surface ?? surfaces[0]}
     private var web:HTMLPreviewView {displayed.web}
@@ -272,8 +294,13 @@ private struct CommittedPresentation {
                 self.viewportDidResize(surface)
             }
             view.verticalWheel={ [weak self] event in self?.handleVerticalScroll(event) }
-            view.openURL={ [weak self] url in
-                if let fragment=url.fragment {self?.openAnchor?(fragment)}
+            view.openURL={ [weak self,weak view] url,anchor in
+                if url.scheme?.lowercased()=="markato-comment" {
+                    let prefix="markato-comment:"
+                    let value=url.absoluteString.hasPrefix(prefix) ? String(url.absoluteString.dropFirst(prefix.count)):url.absoluteString
+                    guard let view else{return}
+                    self?.openComment?(value.removingPercentEncoding ?? value,view,anchor)
+                } else if let fragment=url.fragment {self?.openAnchor?(fragment)}
                 else if ["http","https","mailto"].contains(url.scheme?.lowercased() ?? "") {NSWorkspace.shared.open(url)}
             }
         }
@@ -378,7 +405,6 @@ private struct CommittedPresentation {
     func invalidate() {
         failedParseRevision=nil
         clearResizePin()
-        resumeSourceAlignment()
         metadataPinnedOrigin=nil;metadataPinnedSourceOrigin=nil
         endScrollGesture();version += 1;content=nil;desired=nil;updateLoadingState()
     }
@@ -406,7 +432,11 @@ private struct CommittedPresentation {
     private func requestPresentation() {
         guard let content else{return}
         version += 1
-        desired=PreviewRequest(id:version,content:content,fontSize:fontSize,baseURL:baseURL,width:bounds.width)
+        let presented=PreviewContent(revision:content.revision,
+            entries:MarkdownCommentHTML.decorate(content.entries,with:comments,selectedID:selectedCommentID),
+            sourceLength:content.sourceLength,sourceRange:content.sourceRange,
+            previewTop:content.previewTop,previewHeight:content.previewHeight)
+        desired=PreviewRequest(id:version,content:presented,fontSize:fontSize,baseURL:baseURL,width:bounds.width)
         preparePresentation()
     }
     private func canExtendDisplayedDocument(_ request:PreviewRequest)->Bool {
@@ -452,8 +482,12 @@ private struct CommittedPresentation {
         case .synchronized(let source):
             guard covers(request.content,visible:source.visibleSourceRange),
                   let map=makeMap(request,geometry:previous.geometry,windowTop:previous.windowTop,
-                    totalHeight:previous.totalHeight),
-                  let origin=centerAlignedOrigin(height:previous.totalHeight,map:map,source:source) else{return nil}
+                    totalHeight:previous.totalHeight) else{return nil}
+            // An edit that leaves the rendered pixels unchanged is still an
+            // edit. Keep the user's preview position instead of snapping it
+            // back to the newly calculated source alignment.
+            let origin=min(max(0,previous.totalHeight-bounds.height),
+                max(0,previous.surface.logicalOrigin))
             return PresentationPosition(map:map,sourceGeometryRevision:source.geometryRevision,origin:origin,
                 windowTop:previous.windowTop,totalHeight:previous.totalHeight)
         }
@@ -646,16 +680,9 @@ private struct CommittedPresentation {
         return min(max(0,totalHeight-bounds.height),
             max(0,windowTop+item.y+session.previewDisplacement))
     }
-    private func editedBlockOrigin(_ request:PreviewRequest,geometry:HTMLPreviewGeometry,
-        windowTop:CGFloat,totalHeight:CGFloat,source:ScrollSource)->CGFloat? {
-        guard committed?.request.revision != request.revision else{return nil}
-        let offset=source.editAnchor
-        guard let (entry,item)=Array(zip(request.entries,geometry.items))
-            .last(where:{$0.0.fragment.from<=offset && $0.0.fragment.to>=offset}),
-              let sourceY=source.alignmentVerticalPosition(for:entry.fragment.from) else{return nil}
-        let viewportY=sourceY-source.viewportOrigin
-        guard viewportY>=0,viewportY<bounds.height else{return nil}
-        return min(max(0,totalHeight-bounds.height),max(0,windowTop+item.y-viewportY))
+    private func retainedEditOrigin(_ request:PreviewRequest,totalHeight:CGFloat)->CGFloat? {
+        guard let previous=committed,previous.request.revision != request.revision else{return nil}
+        return min(max(0,totalHeight-bounds.height),max(0,previous.surface.logicalOrigin))
     }
     private func makeMap(_ request:PreviewRequest,geometry:HTMLPreviewGeometry,windowTop:CGFloat,totalHeight:CGFloat)->ScrollLandmarks? {
         #if DEBUG
@@ -705,7 +732,7 @@ private struct CommittedPresentation {
             }
             guard let map=makeMap(request,geometry:geometry,windowTop:extent.top,totalHeight:extent.total) else{return nil}
             guard let origin=resizeOrigin(geometry:geometry,windowTop:extent.top,totalHeight:extent.total) ??
-                    editedBlockOrigin(request,geometry:geometry,windowTop:extent.top,totalHeight:extent.total,source:source) ??
+                    retainedEditOrigin(request,totalHeight:extent.total) ??
                     targetOrigin(height:extent.total,map:map) else{return nil}
             return PresentationPosition(map:map,sourceGeometryRevision:source.geometryRevision,origin:origin,windowTop:extent.top,totalHeight:extent.total)
         }
@@ -728,7 +755,11 @@ private struct CommittedPresentation {
             else if surface === previousPresentation.surface {inPlaceCrossRevisionCommitCount += 1}
         }
         #endif
-        if !reusesPixels {metadataPinnedOrigin=nil;metadataPinnedSourceOrigin=nil}
+        let preservesEditOrigin=previousPresentation.map{$0.request.revision != request.revision} ?? false
+        if preservesEditOrigin {
+            metadataPinnedOrigin=position.origin
+            metadataPinnedSourceOrigin=source?.viewportOrigin
+        } else if !reusesPixels {metadataPinnedOrigin=nil;metadataPinnedSourceOrigin=nil}
         let hadFocus=previous.map{(window?.firstResponder as? NSView)?.isDescendant(of:$0.web)==true} == true
         CATransaction.begin();CATransaction.setDisableActions(true)
         committed=CommittedPresentation(request:request,geometry:geometry,surface:surface,map:position.map,sourceGeometryRevision:position.sourceGeometryRevision,viewportHeight:bounds.height,windowTop:position.windowTop,totalHeight:position.totalHeight)
@@ -745,6 +776,7 @@ private struct CommittedPresentation {
         if hadFocus {window?.makeFirstResponder(surface.web)}
         assert(surfaces.filter{!$0.clip.isHidden}.count==1 && !surface.web.isHidden)
         CATransaction.commit()
+        updateCommentAnchor(closeIfMissing:true)
         if let session=resizeSession,session.protectsViewport {
             session.previewOrigin=position.origin
         }
@@ -776,6 +808,7 @@ private struct CommittedPresentation {
                 width:bounds.width,viewportHeight:bounds.height)
         }
         if resizeSession?.protectsViewport != true {place()}
+        updateCommentAnchor(closeIfMissing:false)
         preparePresentation()
     }
     func captureResizeAnchor()->(entryID:String?,displacement:CGFloat,origin:CGFloat) {
@@ -841,6 +874,7 @@ private struct CommittedPresentation {
         self.committed=CommittedPresentation(request:committed.request,geometry:geometry,
             surface:surface,map:committed.map,sourceGeometryRevision:committed.sourceGeometryRevision,
             viewportHeight:bounds.height,windowTop:extent.top,totalHeight:extent.total)
+        updateCommentAnchor(closeIfMissing:false)
     }
     private func refreshMap() {
         guard let committed,let source,(committed.map == nil || committed.sourceGeometryRevision != source.geometryRevision || committed.viewportHeight != bounds.height) else{return}
@@ -860,9 +894,27 @@ private struct CommittedPresentation {
         committed.surface.scroll(to:origin)
         independentOrigin=origin
         CATransaction.commit()
+        updateCommentAnchor(closeIfMissing:false)
+    }
+    private func updateCommentAnchor(closeIfMissing:Bool) {
+        guard selectedCommentID != nil,committed != nil else{return}
+        guard let viewport=selectedCommentAnchor else {
+            if closeIfMissing {commentAnchorChanged?(nil)}
+            return
+        }
+        commentAnchorChanged?(bounds.intersects(viewport) ? viewport:nil)
+    }
+    var selectedCommentAnchor:NSRect? {
+        guard let committed,let rect=committed.surface.web.elementRect(".markato-comment-bubble.is-selected") else{return nil}
+        let viewport=NSRect(
+            x:committed.surface.web.frame.minX-committed.surface.clip.bounds.minX+rect.minX,
+            y:committed.surface.web.frame.minY-committed.surface.clip.bounds.minY+rect.minY,
+            width:rect.width,height:rect.height)
+        return viewport
     }
     #if DEBUG
     var debugIsIndependentlyScrolled:Bool {detachedSourceOrigin != nil}
+    var debugSelectedCommentAnchor:NSRect? {selectedCommentAnchor}
     func debugScrollViewport(by delta:CGFloat) {
         metadataPinnedOrigin=nil;metadataPinnedSourceOrigin=nil
         scrollPreview(to:independentOrigin+delta,detachFromSource:source != nil)

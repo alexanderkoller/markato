@@ -61,7 +61,7 @@ public struct HTMLPreviewGeometry: Equatable, Sendable {
 /// does not know about Ultralight DOM, resources, input, or bitmap formats.
 @MainActor public final class HTMLPreviewView:NSView {
     public var verticalWheel:((NSEvent)->Void)?
-    public var openURL:((URL)->Void)?
+    public var openURL:((URL,NSRect)->Void)?
     public var viewportResized:(()->Void)?
     public var isEngineReady:Bool {engine != nil}
     private var engine:OpaquePointer?
@@ -79,6 +79,15 @@ public struct HTMLPreviewGeometry: Equatable, Sendable {
     private var pixelSize=(width:UInt32(0),height:UInt32(0),scale:CGFloat(0))
     private var scrollPoint:NSPoint?
     private var pixelData=Data()
+    public func elementRect(_ selector:String,containing text:String="")->NSRect? {
+        guard let engine else{return nil}
+        var x=0.0,y=0.0,width=0.0,height=0.0
+        let found=selector.withCString {selector in text.withCString {text in
+            astra_ul_surface_text_rect(engine,selector,text,&x,&y,&width,&height)
+        }}
+        return found ? NSRect(x:x,y:y,width:width,height:height):nil
+    }
+
     #if DEBUG
     public private(set) var debugPaintedBitmapTop:CGFloat?
     private var debugFailsNextPresentation=false
@@ -277,14 +286,8 @@ public struct HTMLPreviewGeometry: Equatable, Sendable {
         return selector.withCString{Int(astra_ul_surface_selector_count(engine,$0))}
     }
     public func debugRect(_ selector:String,containing text:String="")->NSRect? {
-        guard let engine else{return nil}
-        var x=0.0,y=0.0,width=0.0,height=0.0
-        let found=selector.withCString {selector in text.withCString {text in
-            astra_ul_surface_text_rect(engine,selector,text,&x,&y,&width,&height)
-        }}
-        return found ? NSRect(x:x,y:y,width:width,height:height):nil
+        elementRect(selector,containing:text)
     }
-
     #endif
 
     public override func scrollWheel(with event:NSEvent) {
@@ -324,7 +327,10 @@ public struct HTMLPreviewGeometry: Equatable, Sendable {
         let point=convert(event.locationInWindow,from:nil)
         if let raw=astra_ul_surface_link_at(engine,point.x,point.y) {
             let value=String(cString:raw);astra_ul_string_free(raw)
-            if let url=URL(string:value,relativeTo:baseURL)?.absoluteURL {openURL?(url)}
+            var x=Double(point.x),y=Double(point.y),width=0.0,height=0.0
+            _=astra_ul_surface_link_rect_at(engine,Double(point.x),Double(point.y),&x,&y,&width,&height)
+            let anchor=NSRect(x:x,y:y,width:width,height:height)
+            if let url=URL(string:value,relativeTo:baseURL)?.absoluteURL {openURL?(url,anchor)}
         }
     }
     public override func rightMouseDown(with event:NSEvent) {fireMouse(event,type:1,button:3);NSMenu.popUpContextMenu(menu(for:event) ?? NSMenu(),with:event,for:self)}

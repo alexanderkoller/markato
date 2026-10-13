@@ -9,7 +9,7 @@ for inspect in symbols strings; do
     else
         captured="$(strings -a "$binary")"
     fi
-    if printf '%s\n' "$captured" | rg 'astra_timing_|IntegrationCheck|TimingDiagnostics|INTEGRATION FAILED|MERMAID INTEGRATION|HIGHLIGHT INTEGRATION|EMPTY EDITS INTEGRATION|SMOKE:|STARTUP:|SECOND OPEN:|NEW DOCUMENT:|CLOSE ALL:|MARKATO_INTEGRATION_DEFAULT_STARTUP|--integration-test|--integration-startup|--integration-finder-document|--integration-second-document|--integration-new-document|--integration-close-all|--integration-mermaid|--integration-highlighting|--integration-empty-edits|--integration-preview-jump|--smoke-test|--diagnostics|debugGeometry|patchCount|debugMeasuredPosition'; then
+    if printf '%s\n' "$captured" | rg 'astra_timing_|IntegrationCheck|TimingDiagnostics|INTEGRATION FAILED|MERMAID INTEGRATION|HIGHLIGHT INTEGRATION|EMPTY EDITS INTEGRATION|COMMENTS INTEGRATION|SMOKE:|STARTUP:|SECOND OPEN:|NEW DOCUMENT:|CLOSE ALL:|MARKATO_INTEGRATION_DEFAULT_STARTUP|--integration-test|--integration-startup|--integration-finder-document|--integration-second-document|--integration-new-document|--integration-close-all|--integration-mermaid|--integration-highlighting|--integration-empty-edits|--integration-comments|--integration-preview-jump|--smoke-test|--diagnostics|debugGeometry|patchCount|debugMeasuredPosition'; then
         echo "Release contains development $inspect" >&2
         exit 1
     fi

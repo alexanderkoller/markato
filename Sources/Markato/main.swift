@@ -77,6 +77,7 @@ func exportProfileRecording(_ path:UnsafePointer<CChar>) {
     @objc func showFind(_ sender:Any?) { currentEditor?.showFind(sender) }
     @objc func findNext(_ sender:Any?) { currentEditor?.findNext(sender) }
     @objc func findPrevious(_ sender:Any?) { currentEditor?.findPrevious(sender) }
+    @objc func addComment(_ sender:Any?) { currentEditor?.addComment(sender) }
     @objc func toggleSidebar(_ sender:Any?) { currentEditor?.toggleSidebar(sender) }
     @objc func togglePreview(_ sender:Any?) { currentEditor?.togglePreview(sender) }
     @objc func increaseFont(_ sender:Any?) { currentEditor?.increaseFont(sender) }
@@ -371,7 +372,7 @@ func exportProfileRecording(_ path:UnsafePointer<CChar>) {
                  tag:Int?=nil) {
             let item=NSMenuItem(title:title,action:action,keyEquivalent:key);item.keyEquivalentModifierMask=modifiers
             if let tag {item.tag=tag}
-            let routed:Set<String> = ["undo:","redo:","showFind:","findNext:","findPrevious:","toggleSidebar:","togglePreview:","increaseFont:","decreaseFont:","performMarkdownCommand:","saveDocument:","saveDocumentAs:","revertDocumentToSaved:","newDocument:","exportHTML:","exportPDF:","printDocument:","closeAllDocuments:"]
+            let routed:Set<String> = ["undo:","redo:","showFind:","findNext:","findPrevious:","addComment:","toggleSidebar:","togglePreview:","increaseFont:","decreaseFont:","performMarkdownCommand:","saveDocument:","saveDocumentAs:","revertDocumentToSaved:","newDocument:","exportHTML:","exportPDF:","printDocument:","closeAllDocuments:"]
             if routed.contains(NSStringFromSelector(action)) { item.target = self }
             if action == #selector(NSDocumentController.openDocument(_:)) { item.target = NSDocumentController.shared }
             menu.addItem(item)
@@ -394,6 +395,7 @@ func exportProfileRecording(_ path:UnsafePointer<CChar>) {
         add(edit,"Undo",#selector(EditorWindowController.undo(_:)),"z");add(edit,"Redo",#selector(EditorWindowController.redo(_:)),"z",[.command,.shift]);edit.addItem(.separator())
         add(edit,"Cut",#selector(NSText.cut(_:)),"x");add(edit,"Copy",#selector(NSText.copy(_:)),"c");add(edit,"Paste",#selector(NSText.paste(_:)),"v");add(edit,"Select All",#selector(NSText.selectAll(_:)),"a")
         edit.addItem(.separator());add(edit,"Find…",#selector(EditorWindowController.showFind(_:)),"f");add(edit,"Find Next",#selector(EditorWindowController.findNext(_:)),"g");add(edit,"Find Previous",#selector(EditorWindowController.findPrevious(_:)),"g",[.command,.shift])
+        edit.addItem(.separator());add(edit,"Add Comment",#selector(addComment(_:)),"m",[.command,.shift])
         let format=submenu("Format")
         func formatItem(_ title:String,_ command:MarkdownMenuCommand,_ key:String="",_ modifiers:NSEvent.ModifierFlags = .command) {
             add(format,title,#selector(performMarkdownCommand(_:)),key,modifiers,tag:command.rawValue)

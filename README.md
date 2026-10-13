@@ -27,6 +27,7 @@ See the [complete performance comparison](docs/performance.md) for opening and e
 - **Tables, code, and images.** Preview Markdown tables, syntax-highlighted code fences, and local or web images. Wide tables and code blocks scroll horizontally.
 - **Code highlighting.** Native Syntect highlighting with extended grammars, including Swift, TypeScript, and Typst, and light and dark themes. See [languages, fallbacks, and test documents](docs/highlighting.md).
 - **Mermaid diagrams.** Render fenced `mermaid` blocks as SVG with a bundled native renderer. See [syntax, compatibility, and test documents](docs/mermaid.md).
+- **Review comments.** Add unrestricted comments to selected text or an insertion point, navigate them from the sidebar, and export them as standard PDF annotations. The [comment format](docs/comments.md) remains invisible to ordinary Markdown renderers and readable by coding agents.
 - **Familiar Mac editing.** Open and save individual Markdown files, undo and redo, search the whole document, and adjust text sizes. Fonts and preview styles are bundled for offline use.
 
 ## Try Markato

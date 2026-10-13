@@ -9,7 +9,95 @@ final class EditorSplitView:NSSplitView {
     override var preservesContentDuringLiveResize:Bool {false}
 }
 
-final class EditorWindowController: NSWindowController, NSSplitViewDelegate, NSSearchFieldDelegate, NSMenuItemValidation, NSWindowDelegate, NSToolbarDelegate {
+private final class CommentTextView:NSTextView {
+    private static let bodyFont=NSFont.systemFont(ofSize:13)
+    private static let bodyColor=NSColor(calibratedWhite:0.18,alpha:1)
+    var submit:(()->Void)?,cancel:(()->Void)?
+    func setBody(_ body:String) {
+        let attributes:[NSAttributedString.Key:Any]=[.font:Self.bodyFont,.foregroundColor:Self.bodyColor]
+        textStorage?.setAttributedString(NSAttributedString(string:body,attributes:attributes))
+        typingAttributes=attributes
+    }
+    override func keyDown(with event:NSEvent) {
+        if event.keyCode==36 || event.keyCode==76 {
+            if event.modifierFlags.contains(.shift) {insertNewline(nil)} else {submit?()}
+            return
+        }
+        if event.keyCode==53 {cancel?();return}
+        super.keyDown(with:event)
+    }
+}
+
+private final class CommentPopoverViewController:NSViewController {
+    let editor=CommentTextView()
+    let deleteButton=NSButton()
+    var submit:(()->Void)? {didSet {editor.submit=submit}}
+    var cancel:(()->Void)? {didSet {editor.cancel=cancel}}
+    var delete:(()->Void)?
+    private let focusOnShow:Bool
+    var body:String {editor.string}
+    init(comment:MarkdownComment,focusOnShow:Bool=false,canDelete:Bool=false) {
+        self.focusOnShow=focusOnShow
+        super.init(nibName:nil,bundle:nil)
+        let container=NSView(frame:NSRect(x:0,y:0,width:360,height:280))
+        container.wantsLayer=true
+        container.layer?.backgroundColor=NSColor(calibratedRed:0.98,green:0.91,blue:0.68,alpha:1).cgColor
+        let header=NSTextField(labelWithString:Self.header(for:comment))
+        header.font=NSFont.systemFont(ofSize:11,weight:.medium);header.textColor = .secondaryLabelColor
+        header.lineBreakMode = .byTruncatingTail;header.translatesAutoresizingMaskIntoConstraints=false
+        deleteButton.image=NSImage(systemSymbolName:"trash",accessibilityDescription:"Delete Comment")
+        deleteButton.isBordered=false;deleteButton.bezelStyle = .inline
+        deleteButton.imageScaling = .scaleProportionallyDown
+        deleteButton.toolTip="Delete Comment";deleteButton.isHidden = !canDelete
+        deleteButton.target=self;deleteButton.action=#selector(deleteComment)
+        deleteButton.translatesAutoresizingMaskIntoConstraints=false
+        let scroll=NSScrollView();scroll.hasVerticalScroller=true;scroll.autohidesScrollers=true
+        scroll.drawsBackground=false;scroll.translatesAutoresizingMaskIntoConstraints=false
+        // The popover has a fixed width. Giving its document view a flexible
+        // width before Auto Layout sizes the scroll view doubles that width
+        // (the scroll view starts at zero), leaving half the text offscreen.
+        editor.frame=NSRect(x:0,y:0,width:344,height:240);editor.autoresizingMask=[]
+        editor.isRichText=false;editor.allowsUndo=true
+        editor.textColor=NSColor(calibratedWhite:0.18,alpha:1);editor.insertionPointColor=editor.textColor
+        editor.backgroundColor = .clear;editor.drawsBackground=false
+        editor.textContainerInset=NSSize(width:4,height:5)
+        editor.isVerticallyResizable=true;editor.isHorizontallyResizable=false
+        editor.minSize=NSSize(width:0,height:0);editor.maxSize=NSSize(width:CGFloat.greatestFiniteMagnitude,height:CGFloat.greatestFiniteMagnitude)
+        editor.textContainer?.containerSize=NSSize(width:344,height:CGFloat.greatestFiniteMagnitude)
+        editor.textContainer?.widthTracksTextView=true;editor.textContainer?.heightTracksTextView=false
+        editor.setBody(comment.body);editor.setAccessibilityLabel("Comment by \(comment.author)")
+        scroll.documentView=editor;container.addSubview(header);container.addSubview(deleteButton);container.addSubview(scroll)
+        NSLayoutConstraint.activate([
+            header.leadingAnchor.constraint(equalTo:container.leadingAnchor,constant:12),
+            header.trailingAnchor.constraint(equalTo:deleteButton.leadingAnchor,constant:-5),
+            header.topAnchor.constraint(equalTo:container.topAnchor,constant:10),
+            header.heightAnchor.constraint(equalToConstant:17),
+            deleteButton.trailingAnchor.constraint(equalTo:container.trailingAnchor,constant:-8),
+            deleteButton.centerYAnchor.constraint(equalTo:header.centerYAnchor),
+            deleteButton.widthAnchor.constraint(equalToConstant:20),
+            deleteButton.heightAnchor.constraint(equalToConstant:20),
+            scroll.leadingAnchor.constraint(equalTo:container.leadingAnchor,constant:8),
+            scroll.trailingAnchor.constraint(equalTo:container.trailingAnchor,constant:-8),
+            scroll.topAnchor.constraint(equalTo:header.bottomAnchor,constant:3),
+            scroll.bottomAnchor.constraint(equalTo:container.bottomAnchor,constant:-8)
+        ])
+        view=container;preferredContentSize=container.frame.size
+    }
+    @objc private func deleteComment(_ sender:Any?) {delete?()}
+    required init?(coder:NSCoder) {fatalError()}
+    override func viewDidAppear() {
+        super.viewDidAppear()
+        guard focusOnShow else{return}
+        view.window?.makeFirstResponder(editor);editor.setSelectedRange(NSRange(location:editor.string.utf16.count,length:0))
+    }
+    private static func header(for comment:MarkdownComment)->String {
+        guard let date=ISO8601DateFormatter().date(from:comment.created) else{return comment.author}
+        let formatter=DateFormatter();formatter.dateStyle = .medium;formatter.timeStyle = .short
+        return "\(comment.author) · \(formatter.string(from:date))"
+    }
+}
+
+final class EditorWindowController: NSWindowController, NSSplitViewDelegate, NSSearchFieldDelegate, NSMenuItemValidation, NSWindowDelegate, NSToolbarDelegate, NSPopoverDelegate {
     private static let sidebarToolbarItem=NSToolbarItem.Identifier("MarkatoSidebar")
     private struct ParseRequest:Equatable {
         let revision:Int
@@ -40,6 +128,19 @@ final class EditorWindowController: NSWindowController, NSSplitViewDelegate, NSS
     private var savedDivider: CGFloat = 0.5
     private var savedSidebarWidth:CGFloat = 240
     private(set) var isSidebarVisible=false
+    private var comments=[ResolvedMarkdownComment]()
+    private var selectedCommentID:String?
+    private var commentPopover:NSPopover?
+    private var commentPopoverController:CommentPopoverViewController?
+    private var commentPopoverID:String?
+    private var pendingCommentPopoverID:String?
+    private enum CommentEditTarget {
+        case new(selection:NSRange,author:String,created:String)
+        case existing(id:String)
+    }
+    private var commentEditTarget:CommentEditTarget?
+    private var finishingCommentPopover=false
+    private var commentRefreshGeneration=0
     // Prepared document content is retained. Viewport movement never evicts it.
     private let preparedDocument=PreparedDocument()
     private var backgroundRevision = -1
@@ -68,7 +169,7 @@ final class EditorWindowController: NSWindowController, NSSplitViewDelegate, NSS
         DispatchQueue.main.asyncAfter(deadline:.now()+0.005,execute:work)
     }
     var hasPreparedDocument:Bool {preparedDocument.revision==markdownDocument.revision && preparedDocument.firstUnpreparedOffset(from:0)>=markdownDocument.source.count}
-    private var markdownDocument: MarkdownDocument { document as! MarkdownDocument }
+    private var markdownDocument: MarkdownDocument {(document as? MarkdownDocument) ?? source.document}
     init(document:MarkdownDocument) {
         source = SourceEditor(document:document,prepared:preparedDocument,deferInitialLayout:true)
         var initialSize=NSSize(width:1360,height:760)
@@ -124,7 +225,12 @@ final class EditorWindowController: NSWindowController, NSSplitViewDelegate, NSS
             self.source.reveal(heading.range.location,alignTop:true)
             if focusSource {self.window?.makeFirstResponder(self.source.textView)}
         }
+        sidebar.activateComment = { [weak self] id,focusSource in self?.revealComment(id,focusSource:focusSource) }
+        sidebar.openComment = { [weak self] id in self?.openSidebarComment(id) }
+        sidebar.clearCommentSelection = { [weak self] in self?.clearCommentSelection() }
+        sidebar.toggleCommentResolved = { [weak self] id in self?.toggleCommentResolved(id) }
         source.viewportChanged = { [weak self] range in self?.viewportChanged(range) }
+        source.sourceClicked = { [weak self] in self?.clearCommentSelection() }
         source.scrollGestureChanged = { [weak self] active in
             if active {self?.preview.beginScrollGesture()}else{
                 self?.preview.endScrollGesture()
@@ -137,6 +243,14 @@ final class EditorWindowController: NSWindowController, NSSplitViewDelegate, NSS
             }
         }
         preview.preparedDocument=preparedDocument
+        preview.openComment = { [weak self] id,view,anchor in
+            guard let self else{return}
+            let stableAnchor=self.preview.convert(anchor,from:view)
+            self.sidebar.selectComment(id:id,activate:false)
+            self.revealComment(id,focusSource:false)
+            self.showCommentPopover(id:id,relativeTo:self.preview.selectedCommentAnchor ?? stableAnchor)
+        }
+        preview.commentAnchorChanged = { [weak self] anchor in self?.commentAnchorDidChange(anchor) }
         preview.presentationSettled = { [weak self] in
             guard let self,!self.isClosed,let document=self.document as? MarkdownDocument else{return}
             if self.openingRequested {self.showWindow(nil)}
@@ -194,7 +308,9 @@ final class EditorWindowController: NSWindowController, NSSplitViewDelegate, NSS
             self.source.endScrollGesture()
             self.presentationPending=false
             if self.completeEditRevision != document.revision {self.preview.invalidate()}
+            self.shiftResolvedComments(for:edit)
             self.source.documentEdited(selection:selection,edit:edit)
+            self.scheduleCommentRefresh(insertedText:edit.insertedLength>0 ? document.source.string(in:NSRange(location:edit.range.location,length:edit.insertedLength)):"")
         }
         workspaceSplit.adjustSubviews()
         workspaceSplit.setPosition(0,ofDividerAt:0)
@@ -203,6 +319,7 @@ final class EditorWindowController: NSWindowController, NSSplitViewDelegate, NSS
         // their actual sizes. A zero-width initial layout wraps every character.
         content.layoutSubtreeIfNeeded()
         source.reveal(0,alignTop:true);window.makeFirstResponder(source.textView)
+        scheduleCommentRefresh(force:true)
     }
     required init?(coder:NSCoder) { fatalError() }
     override func showWindow(_ sender:Any?) {
@@ -243,13 +360,16 @@ final class EditorWindowController: NSWindowController, NSSplitViewDelegate, NSS
         DispatchQueue.main.async { [weak self] in self?.source.traceResize("window.didEnd.nextTurn") }
     }
     func windowWillClose(_ notification:Notification) {
+        finishCommentPopover(save:true)
         isClosed=true;pendingViewport=nil;openingRequested=false
         cancelParseRetry()
-        source.viewportChanged=nil;source.geometryChanged=nil
+        source.viewportChanged=nil;source.geometryChanged=nil;source.sourceClicked=nil
         source.scrollGestureChanged=nil;source.navigationRequested=nil
         source.scrollOverflow=nil
         preview.presentationSettled=nil
         sidebar.activateHeading=nil
+        sidebar.activateComment=nil;sidebar.openComment=nil;sidebar.clearCommentSelection=nil;sidebar.toggleCommentResolved=nil
+        preview.openComment=nil;preview.commentAnchorChanged=nil
     }
     @objc private func contentResized(_ notification:Notification) { layoutContent() }
     private func layoutContent() {
@@ -503,6 +623,232 @@ final class EditorWindowController: NSWindowController, NSSplitViewDelegate, NSS
     }
     @objc func undo(_ sender:Any?) { markdownDocument.undoManager?.undo() }
     @objc func redo(_ sender:Any?) { markdownDocument.undoManager?.redo() }
+    @objc func addComment(_ sender:Any?) {
+        guard canAddComment else{return}
+        let selected=source.selection
+        let author=NSFullUserName().trimmingCharacters(in:.whitespacesAndNewlines)
+        let created=ISO8601DateFormatter().string(from:Date())
+        let draft=MarkdownComment(anchor:MarkdownComments.anchor(in:markdownDocument.source.string,selection:selected),
+            author:author.isEmpty ? "You":author,created:created,body:"")
+        presentCommentPopover(comment:draft,target:.new(selection:selected,author:draft.author,created:created),
+            relativeTo:source.commentPopoverAnchor(for:selected),of:source,focus:true)
+    }
+    private var canAddComment:Bool {
+        guard !source.textView.hasMarkedText() else{return false}
+        let selection=source.selection
+        let contentEnd=comments.map{$0.recordRange.location}.min() ?? markdownDocument.source.count
+        return selection.location>=0 && NSMaxRange(selection)<=contentEnd
+    }
+    private func insertComment(body:String,selection:NSRange,author:String?=nil,created:String?=nil) {
+        let sourceText=markdownDocument.source.string
+        let displayAuthor=author ?? NSFullUserName().trimmingCharacters(in:.whitespacesAndNewlines)
+        let rendered=selection.length>0 ? preparedDocument.entries(covering:selection) ?? []:[]
+        let comment=MarkdownComments.comment(in:sourceText,selection:selection,body:body,
+            author:displayAuthor.isEmpty ? "You":displayAuthor,
+            created:created ?? ISO8601DateFormatter().string(from:Date()),renderedEntries:rendered)
+        let insertion=MarkdownComments.insertion(for:comment,in:sourceText,newline:markdownDocument.newline)
+        markdownDocument.replace(NSRange(location:markdownDocument.source.count,length:0),with:insertion,
+            selection:selection,name:"Add Comment")
+        // Prepare the relevant pane for the next explicit sidebar reveal, but
+        // never change the user's sidebar visibility as a side effect.
+        sidebar.showMode(.comments)
+    }
+    private func scheduleCommentRefresh(insertedText:String="",force:Bool=false) {
+        guard force || !comments.isEmpty || insertedText.contains(MarkdownComments.marker) else{return}
+        commentRefreshGeneration &+= 1
+        let generation=commentRefreshGeneration,revision=markdownDocument.revision,rope=markdownDocument.source
+        DispatchQueue.global(qos:.userInitiated).async { [weak self] in
+            let parsed=MarkdownComments.records(in:rope.string)
+            DispatchQueue.main.async {
+                guard let self,!self.isClosed,self.commentRefreshGeneration==generation,
+                      self.markdownDocument.revision==revision else{return}
+                self.comments=parsed;self.sidebar.setComments(parsed)
+                self.source.setCollapsedCommentRecords(parsed.map(\.recordRange))
+                let active=parsed.filter{$0.comment.status == .open}.compactMap(\.anchorRange)
+                let selectedComment=self.selectedCommentID.flatMap {id in parsed.first(where:{$0.comment.id==id})}
+                if self.selectedCommentID != nil && selectedComment == nil {self.selectedCommentID=nil}
+                let selected=selectedComment.map {
+                    $0.anchorRange ?? NSRange(location:min($0.comment.anchor.position ?? 0,self.markdownDocument.source.count),length:0)
+                }
+                self.source.setCommentRanges(active);self.source.setSelectedCommentRange(selected)
+                self.preview.comments=parsed;self.preview.selectedCommentID=self.selectedCommentID
+            }
+        }
+    }
+    private func shiftResolvedComments(for edit:SourceEdit) {
+        guard !comments.isEmpty else{return}
+        let delta=edit.insertedLength-edit.range.length
+        func shifted(_ range:NSRange)->NSRange? {
+            if edit.range.length==0 {
+                if edit.range.location<=range.location {
+                    return NSRange(location:range.location+delta,length:range.length)
+                }
+                if edit.range.location>=NSMaxRange(range) {return range}
+                return nil
+            }
+            if NSMaxRange(edit.range)<=range.location {
+                return NSRange(location:range.location+delta,length:range.length)
+            }
+            if edit.range.location>=NSMaxRange(range) {return range}
+            return nil
+        }
+        comments=comments.map {value in
+            ResolvedMarkdownComment(comment:value.comment,
+                recordRange:shifted(value.recordRange) ?? value.recordRange,
+                anchorRange:value.anchorRange.flatMap(shifted))
+        }
+        sidebar.setComments(comments)
+        let active=comments.filter{$0.comment.status == .open}.compactMap(\.anchorRange)
+        let selectedComment=selectedCommentID.flatMap {id in comments.first(where:{$0.comment.id==id})}
+        let selected=selectedComment.map {
+            $0.anchorRange ?? NSRange(location:min($0.comment.anchor.position ?? 0,markdownDocument.source.count),length:0)
+        }
+        source.setCommentRanges(active);source.setSelectedCommentRange(selected)
+        preview.comments=comments
+    }
+    private func revealComment(_ id:String,focusSource:Bool) {
+        guard let comment=comments.first(where:{$0.comment.id==id}) else{return}
+        let range=comment.anchorRange ?? NSRange(location:min(comment.comment.anchor.position ?? 0,markdownDocument.source.count),length:0)
+        selectedCommentID=id;source.setSelectedCommentRange(range);preview.selectedCommentID=id
+        source.reveal(range.location)
+        source.textView.setSelectedRange(NSRange(location:range.location,length:0))
+        if range.length>0 {source.textView.scrollRangeToVisible(range)}
+        if focusSource {window?.makeFirstResponder(source.textView)}
+    }
+    private func clearCommentSelection() {
+        finishCommentPopover(save:true)
+        pendingCommentPopoverID=nil
+        sidebar.deselectComment()
+        selectedCommentID=nil;source.setSelectedCommentRange(nil);preview.selectedCommentID=nil
+    }
+    private func openSidebarComment(_ id:String) {
+        revealComment(id,focusSource:false)
+        if let anchor=preview.selectedCommentAnchor {showCommentPopover(id:id,relativeTo:anchor)}
+        else {pendingCommentPopoverID=id}
+    }
+    private func showCommentPopover(id:String,relativeTo anchor:NSRect) {
+        guard let comment=comments.first(where:{$0.comment.id==id})?.comment else{return}
+        presentCommentPopover(comment:comment,target:.existing(id:id),relativeTo:anchor,of:preview,focus:false)
+    }
+    private func presentCommentPopover(comment:MarkdownComment,target:CommentEditTarget,
+        relativeTo anchor:NSRect,of positioningView:NSView,focus:Bool) {
+        finishCommentPopover(save:true)
+        let canDelete:Bool
+        if case .existing = target {canDelete=true}else{canDelete=false}
+        let controller=CommentPopoverViewController(comment:comment,focusOnShow:focus,canDelete:canDelete)
+        controller.submit={ [weak self] in self?.finishCommentPopover(save:true) }
+        controller.cancel={ [weak self] in self?.finishCommentPopover(save:false) }
+        controller.delete={ [weak self] in self?.deleteCommentFromPopover() }
+        let popover=NSPopover();popover.behavior = .transient;popover.animates=false;popover.delegate=self
+        popover.contentViewController=controller
+        commentPopover=popover;commentPopoverController=controller;commentEditTarget=target
+        if case .existing(let id)=target {commentPopoverID=id}else{commentPopoverID=nil}
+        pendingCommentPopoverID=nil
+        popover.show(relativeTo:anchor,of:positioningView,preferredEdge:.minX)
+    }
+    private func finishCommentPopover(save:Bool,close:Bool=true) {
+        guard !finishingCommentPopover,commentPopover != nil || commentEditTarget != nil else{return}
+        finishingCommentPopover=true
+        let popover=commentPopover,controller=commentPopoverController,target=commentEditTarget
+        popover?.delegate=nil
+        if close {popover?.close()}
+        commentPopover=nil;commentPopoverController=nil;commentEditTarget=nil;commentPopoverID=nil
+        finishingCommentPopover=false
+        guard save,let target,let body=controller?.body else{return}
+        switch target {
+        case .new(let selection,let author,let created):
+            guard !body.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty else{return}
+            insertComment(body:body,selection:selection,author:author,created:created)
+        case .existing(let id):
+            guard let resolved=comments.first(where:{$0.comment.id==id}),resolved.comment.body != body else{return}
+            var comment=resolved.comment;comment.body=body
+            let replacement=MarkdownComments.serialize(comment,newline:markdownDocument.newline)
+            markdownDocument.replace(resolved.recordRange,with:replacement,selection:source.selection,name:"Edit Comment")
+        }
+    }
+    private func deleteCommentFromPopover() {
+        guard case .existing(let id)=commentEditTarget,
+              let resolved=comments.first(where:{$0.comment.id==id}) else{return}
+        let text=markdownDocument.source.string as NSString
+        var range=resolved.recordRange
+        let newline=markdownDocument.newline as NSString
+        if NSMaxRange(range)+newline.length<=text.length,
+           text.substring(with:NSRange(location:NSMaxRange(range),length:newline.length))==markdownDocument.newline {
+            range.length += newline.length
+        }
+        finishCommentPopover(save:false)
+        pendingCommentPopoverID=nil;sidebar.deselectComment();selectedCommentID=nil
+        source.setSelectedCommentRange(nil);preview.selectedCommentID=nil
+        comments.removeAll{$0.comment.id==id};sidebar.setComments(comments)
+        source.setCollapsedCommentRecords(comments.map(\.recordRange))
+        source.setCommentRanges(comments.filter{$0.comment.status == .open}.compactMap(\.anchorRange))
+        preview.comments=comments
+        let selection=source.selection
+        markdownDocument.replace(range,with:"",selection:selection,undoSelection:selection,name:"Delete Comment")
+    }
+    func popoverWillClose(_ notification:Notification) {
+        guard notification.object as? NSPopover === commentPopover else{return}
+        finishCommentPopover(save:true,close:false)
+    }
+    private func commentAnchorDidChange(_ anchor:NSRect?) {
+        if let id=pendingCommentPopoverID,id==selectedCommentID,let anchor {
+            showCommentPopover(id:id,relativeTo:anchor);return
+        }
+        moveCommentPopover(to:anchor)
+    }
+    private func moveCommentPopover(to anchor:NSRect?) {
+        guard let popover=commentPopover,popover.isShown else{return}
+        // New-comment editors are anchored to the source selection, not to a
+        // preview bubble, so preview scrolling must not dismiss or move them.
+        guard commentPopoverID != nil else{return}
+        guard let anchor else {
+            finishCommentPopover(save:true)
+            return
+        }
+        guard commentPopoverID==selectedCommentID else{return}
+        popover.show(relativeTo:anchor,of:preview,preferredEdge:.minX)
+    }
+    private func toggleCommentResolved(_ id:String) {
+        guard let resolved=comments.first(where:{$0.comment.id==id}) else{return}
+        var comment=resolved.comment;comment.status = comment.status == .open ? .resolved:.open
+        let replacement=MarkdownComments.serialize(comment,newline:markdownDocument.newline)
+        markdownDocument.replace(resolved.recordRange,with:replacement,selection:source.selection,
+            name:comment.status == .resolved ? "Resolve Comment":"Reopen Comment")
+    }
+    #if DEBUG
+    func debugBeginAddComment(selection:NSRange) {
+        source.textView.setSelectedRange(selection);addComment(nil)
+    }
+    var debugComments:[ResolvedMarkdownComment] {comments}
+    var debugCommentPopoverView:NSView? {commentPopover?.contentViewController?.view}
+    var debugCommentPopoverIsShown:Bool {commentPopover?.isShown == true}
+    var debugCommentPopoverPositioningRect:NSRect? {commentPopover?.isShown == true ? commentPopover?.positioningRect:nil}
+    var debugCommentPopoverText:String? {commentPopoverController?.body}
+    var debugCommentPopoverEditorIsEditable:Bool {commentPopoverController?.editor.isEditable == true}
+    var debugCommentPopoverCanDelete:Bool {commentPopoverController?.deleteButton.isHidden == false}
+    var debugCommentPopoverEditorView:NSView? {commentPopoverController?.editor}
+    var debugCommentPopoverTextContainerWidth:CGFloat? {
+        commentPopoverController?.editor.textContainer?.containerSize.width
+    }
+    func debugSetCommentPopoverText(_ text:String) {
+        guard let editor=commentPopoverController?.editor else{return}
+        editor.setBody(text);editor.setSelectedRange(NSRange(location:text.utf16.count,length:0))
+    }
+    @discardableResult func debugPressCommentReturn(shift:Bool)->Bool {
+        guard let editor=commentPopoverController?.editor,
+              let event=NSEvent.keyEvent(with:.keyDown,location:.zero,
+                modifierFlags:shift ? .shift:[],timestamp:0,windowNumber:window?.windowNumber ?? 0,
+                context:nil,characters:"\r",charactersIgnoringModifiers:"\r",isARepeat:false,keyCode:36)
+        else{return false}
+        editor.keyDown(with:event);return true
+    }
+    func debugClearCommentSelection() {clearCommentSelection()}
+    @discardableResult func debugDeleteCommentFromPopover()->Bool {
+        guard debugCommentPopoverCanDelete else{return false}
+        commentPopoverController?.deleteButton.performClick(nil);return true
+    }
+    func debugToggleCommentResolved(_ id:String) {toggleCommentResolved(id)}
+    #endif
     @objc func performMarkdownCommand(_ sender:Any?) {
         guard let item=sender as? NSMenuItem,let menuCommand=MarkdownMenuCommand(rawValue:item.tag),
               canPerformMarkdownCommand else{return}
@@ -656,6 +1002,7 @@ final class EditorWindowController: NSWindowController, NSSplitViewDelegate, NSS
         case #selector(redo(_:)): menuItem.title = markdownDocument.undoManager?.redoMenuItemTitle ?? "Redo"; return markdownDocument.undoManager?.canRedo == true
         case #selector(toggleSidebar(_:)): menuItem.state = isSidebarVisible ? .on:.off; return true
         case #selector(togglePreview(_:)): menuItem.state = preview.isHidden ? .off : .on; return true
+        case #selector(addComment(_:)): return canAddComment
         case #selector(performMarkdownCommand(_:)): return canPerformMarkdownCommand
         default:return true
         }

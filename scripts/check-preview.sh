@@ -12,4 +12,7 @@ bash scripts/build-app.sh debug
 dist/debug/Markato.app/Contents/MacOS/Markato --integration-test --integration-mermaid
 dist/debug/Markato.app/Contents/MacOS/Markato --integration-test --integration-highlighting
 dist/debug/Markato.app/Contents/MacOS/Markato --integration-test --integration-empty-edits
+dist/debug/Markato.app/Contents/MacOS/Markato --integration-test --integration-comments
+dist/debug/Markato.app/Contents/MacOS/Markato --integration-test --integration-comment-edit-stability
+dist/debug/Markato.app/Contents/MacOS/Markato --integration-test --integration-paragraph-edit-stability
 exec dist/debug/Markato.app/Contents/MacOS/Markato --integration-test --diagnostics

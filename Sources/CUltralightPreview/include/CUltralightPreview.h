@@ -59,6 +59,9 @@ void astra_ul_surface_mouse(AstraULSurface* surface, int type, int x, int y,
 void astra_ul_surface_horizontal_scroll(AstraULSurface* surface, int delta_x,
                                         int x, int y);
 char* astra_ul_surface_link_at(AstraULSurface* surface, double x, double y);
+bool astra_ul_surface_link_rect_at(AstraULSurface* surface, double x, double y,
+                                   double* rect_x, double* rect_y,
+                                   double* width, double* height);
 char* astra_ul_surface_selected_text(AstraULSurface* surface);
 char* astra_ul_surface_text(AstraULSurface* surface);
 size_t astra_ul_surface_selector_count(AstraULSurface* surface, const char* selector);

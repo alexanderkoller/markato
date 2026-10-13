@@ -51,14 +51,86 @@ body {
   padding: 32px;
 }
 section {
+  position: relative;
   display: flow-root;
   margin: 0 0 16px;
   overflow-wrap: anywhere;
+}
+.markato-comment-highlight {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: .2em;
+  background: rgba(255, 213, 79, .42);
+  color: inherit;
+  font: inherit;
+  line-height: inherit;
+}
+.markato-comment-highlight.is-selected {
+  outline: 1px solid rgba(9, 105, 218, .9);
+  outline-offset: 1px;
+}
+[data-markato-comment-block] {
+  border-radius: .2em;
+  background: rgba(255, 213, 79, .42);
+}
+[data-markato-comment-selected] {
+  outline: 1px solid rgba(9, 105, 218, .9);
+  outline-offset: 1px;
+}
+.markato-comment-bubble {
+  position: absolute;
+  right: -24px;
+  z-index: 3;
+  display: block;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 1px solid rgba(31, 35, 40, .24);
+  border-radius: 11px;
+  background: var(--bg-default);
+  box-shadow: 0 1px 3px rgba(31, 35, 40, .18);
+  font-size: 12px;
+  line-height: 20px;
+  text-align: center;
+  text-decoration: none;
+  cursor: pointer;
+}
+.markato-comment-bubble::before {
+  position: absolute;
+  top: 6px;
+  left: 5px;
+  width: 9px;
+  height: 7px;
+  border: 1px solid var(--fg-muted);
+  border-radius: 5px;
+  content: "";
+}
+.markato-comment-bubble::after {
+  position: absolute;
+  top: 12px;
+  left: 8px;
+  width: 3px;
+  height: 3px;
+  border-bottom: 1px solid var(--fg-muted);
+  border-left: 1px solid var(--fg-muted);
+  background: var(--bg-default);
+  content: "";
+  transform: skewY(-35deg);
+}
+.markato-comment-bubble.is-selected {
+  outline: 1px solid rgba(9, 105, 218, .95);
+  outline-offset: 1px;
+}
+.markato-comment-bubble:hover {
+  background: var(--bg-muted);
+  text-decoration: none;
 }
 section:has(> h1, > h2, > h3, > h4, > h5, > h6) { margin-top: 24px; }
 section:first-child { margin-top: 0; }
 section.last-block { margin-bottom: 0; }
 section > :first-child { margin-top: 0; }
+section > .markato-comment-bubble + :not(.markato-comment-bubble) { margin-top: 0; }
 section > :last-child { margin-bottom: 0; }
 .paint-group { display: flow-root; contain: paint; }
 

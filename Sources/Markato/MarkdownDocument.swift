@@ -25,11 +25,13 @@ final class MarkdownDocument: NSDocument {
         let controller = EditorWindowController(document: self)
         addWindowController(controller)
     }
-    func replace(_ range: NSRange, with text: String, selection: NSRange? = nil, name: String = "Typing") {
+    func replace(_ range: NSRange, with text: String, selection: NSRange? = nil,
+                 undoSelection:NSRange? = nil,name: String = "Typing") {
         let previous = source.string(in: range)
         let inverse = NSRange(location:range.location,length:text.utf16.count)
         undoManager?.registerUndo(withTarget:self) { doc in
-            doc.replace(inverse, with:previous, selection:range, name:name)
+            doc.replace(inverse,with:previous,selection:undoSelection ?? range,
+                undoSelection:selection,name:name)
         }
         undoManager?.setActionName(name)
         sourceLock.lock(); storedSource = storedSource.replacing(range, with:text);initialDecodedText=nil;sourceLock.unlock()
@@ -94,4 +96,7 @@ final class MarkdownDocument: NSDocument {
     override func printDocument(_ sender:Any?) {outputCoordinator.printDocument(sender)}
     override func saveToPDF(_ sender:Any?) {outputCoordinator.exportPDF(sender)}
     override func canAsynchronouslyWrite(to url: URL, ofType typeName: String, for saveOperation: NSDocument.SaveOperationType) -> Bool { true }
+    #if DEBUG
+    func debugExportPDF(to url:URL) {outputCoordinator.debugExportPDF(to:url)}
+    #endif
 }
