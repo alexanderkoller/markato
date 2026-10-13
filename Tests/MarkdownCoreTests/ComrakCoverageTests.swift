@@ -27,7 +27,7 @@ private func prepare(_ text:String,_ worker:ComrakWorker = ComrakWorker(),revisi
     #expect(result.blocks?.last?.kind == .blockquote)
 }
 @Test func tablesCodeRawHTMLAndAssetsKeepTheirContext() async throws {
-    let text="| A | B |\n|---|---|\n"+(0..<1000).map{"| \($0) | **cell** |\n"}.joined()+"\n```swift\nlet x = \"$literal$\"\n```\n\n<div>literal **HTML**</div>\n\n![relative](images/test.png)\n\n![file](file:///tmp/test.png)\n\n[bad](javascript:alert(1))\n"
+    let text="| A | B |\n|---|---|\n"+(0..<1000).map{"| \($0) | **cell** |\n"}.joined()+"\n```swift\nlet x = \"$literal$\"\n```\n\n<div>literal **HTML**</div>\n\n~~removed~~\n\n![relative](images/test.png)\n\n![file](file:///tmp/test.png)\n\n[bad](javascript:alert(1))\n"
     let result=try await prepare(text)
     let table=try #require(result.blocks?.first(where:{$0.kind == .table}))
     #expect(table.html?.string().components(separatedBy:"<tr>").count==1002)
@@ -37,7 +37,10 @@ private func prepare(_ text:String,_ worker:ComrakWorker = ComrakWorker(),revisi
     let codeHTML=try #require(result.blocks?.first(where:{$0.kind == .fencedCode})?.html?.string())
     #expect(try highlightedCodeText(codeHTML)=="let x = \"$literal$\"\n")
     #expect(!html.contains("class=\"katex\""))
-    #expect(html.contains("<pre>&lt;div&gt;literal **HTML**&lt;/div&gt;</pre>"))
+    #expect(html.contains("<div>literal **HTML**</div>"))
+    #expect(html.contains("<del>removed</del>"))
+    #expect(result.spans.contains{$0.kind == .strikethrough})
+    #expect(result.spans.filter{$0.kind == .strikethroughMark}.count==2)
     #expect(html.contains("source=images%2Ftest.png"))
     #expect(html.contains("source=file%3A%2F%2F%2Ftmp%2Ftest.png"))
     #expect(!html.contains("href=\"javascript:"))

@@ -7,6 +7,7 @@ public enum MarkdownKind:UInt8,Sendable,CaseIterable {
     case mathBlock=14,orderedList,bulletList,blockquote,table,fencedCode,codeBlock,horizontalRule
     case htmlBlock=22,linkReference,empty,headerMark,strongEmphasis,emphasis,emphasisMark,link
     case linkMark=30,url,codeMark,mathInline,listMark,quoteMark
+    case strikethrough=36,strikethroughMark
 
     public var name:String {
         switch self {
@@ -24,6 +25,7 @@ public enum MarkdownKind:UInt8,Sendable,CaseIterable {
         case .strongEmphasis:"StrongEmphasis";case .emphasis:"Emphasis";case .emphasisMark:"EmphasisMark"
         case .link:"Link";case .linkMark:"LinkMark";case .url:"URL";case .codeMark:"CodeMark"
         case .mathInline:"MathInline";case .listMark:"ListMark";case .quoteMark:"QuoteMark"
+        case .strikethrough:"Strikethrough";case .strikethroughMark:"StrikethroughMark"
         }
     }
     public init(name:String) {self=Self.allCases.first{$0.name==name} ?? .paragraph}
@@ -40,7 +42,7 @@ public enum MarkdownKind:UInt8,Sendable,CaseIterable {
         }
     }
     public var isMark:Bool {
-        switch self {case .headerMark,.emphasisMark,.linkMark,.codeMark,.listMark,.quoteMark:true;default:false}
+        switch self {case .headerMark,.emphasisMark,.linkMark,.codeMark,.listMark,.quoteMark,.strikethroughMark:true;default:false}
     }
 }
 public func ==(lhs:MarkdownKind,rhs:String)->Bool {lhs.name==rhs}

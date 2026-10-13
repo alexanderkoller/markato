@@ -1,5 +1,6 @@
 import AppKit
 import MarkdownCore
+import UniformTypeIdentifiers
 
 /// NSSplitView preserves pixels from the preceding frame during a live resize
 /// by default. The source and HTML panes redraw independently, so those stale
@@ -502,6 +503,76 @@ final class EditorWindowController: NSWindowController, NSSplitViewDelegate, NSS
     }
     @objc func undo(_ sender:Any?) { markdownDocument.undoManager?.undo() }
     @objc func redo(_ sender:Any?) { markdownDocument.undoManager?.redo() }
+    @objc func performMarkdownCommand(_ sender:Any?) {
+        guard let item=sender as? NSMenuItem,let menuCommand=MarkdownMenuCommand(rawValue:item.tag),
+              canPerformMarkdownCommand else{return}
+        if menuCommand == .insertImage {chooseImage();return}
+        let command:MarkdownEditingCommand
+        switch menuCommand {
+        case .bold:command = .bold
+        case .italic:command = .italic
+        case .strikethrough:command = .strikethrough
+        case .inlineCode:command = .inlineCode
+        case .link:command = .link(destination:clipboardURL())
+        case .heading1:command = .heading(1)
+        case .heading2:command = .heading(2)
+        case .heading3:command = .heading(3)
+        case .heading4:command = .heading(4)
+        case .heading5:command = .heading(5)
+        case .heading6:command = .heading(6)
+        case .paragraph:command = .paragraph
+        case .bulletedList:command = .bulletedList
+        case .numberedList:command = .numberedList
+        case .blockquote:command = .blockquote
+        case .insertTable:command = .table
+        case .codeBlock:command = .codeBlock
+        case .horizontalRule:command = .horizontalRule
+        case .insertImage:return
+        }
+        apply(command)
+    }
+    private func apply(_ command:MarkdownEditingCommand) {
+        guard let storage=source.textView.textStorage,
+              let edit=MarkdownEditing.edit(command,in:storage.mutableString,
+                selection:source.selection,newline:markdownDocument.newline) else{return}
+        markdownDocument.replace(edit.range,with:edit.replacement,selection:edit.selection,name:edit.undoName)
+        window?.makeFirstResponder(source.textView)
+    }
+    private var canPerformMarkdownCommand:Bool {
+        guard !source.textView.hasMarkedText() else{return false}
+        if let active=window?.firstResponder as? NSTextView,active !== source.textView {return false}
+        return true
+    }
+    private func clipboardURL()->String? {
+        let pasteboard=NSPasteboard.general
+        let value=pasteboard.string(forType:.URL) ?? pasteboard.string(forType:.string)
+        guard let trimmed=value?.trimmingCharacters(in:.whitespacesAndNewlines),!trimmed.isEmpty,
+              !trimmed.contains(where:{$0.isWhitespace}),let components=URLComponents(string:trimmed),
+              components.scheme?.isEmpty == false else{return nil}
+        return trimmed
+    }
+    private func chooseImage() {
+        let panel=NSOpenPanel()
+        panel.allowedContentTypes=[.image];panel.allowsMultipleSelection=false
+        panel.canChooseDirectories=false;panel.canChooseFiles=true
+        panel.message="Choose an image to include in the Markdown document."
+        let completion:@MainActor (NSApplication.ModalResponse)->Void = { [weak self] response in
+            guard response == .OK,let self,let url=panel.url else{return}
+            self.apply(.image(source:self.markdownImagePath(for:url)))
+        }
+        if let window {panel.beginSheetModal(for:window,completionHandler:completion)}
+        else {panel.begin(completionHandler:completion)}
+    }
+    private func markdownImagePath(for imageURL:URL)->String {
+        let image=imageURL.standardizedFileURL
+        guard let documentURL=markdownDocument.fileURL?.standardizedFileURL else{return image.absoluteString}
+        let base=documentURL.deletingLastPathComponent().pathComponents
+        let target=image.pathComponents
+        var common=0
+        while common<base.count,common<target.count,base[common]==target[common] {common+=1}
+        guard common>0 else{return image.absoluteString}
+        return (Array(repeating:"..",count:base.count-common)+Array(target.dropFirst(common))).joined(separator:"/")
+    }
     func toolbarAllowedItemIdentifiers(_ toolbar:NSToolbar)->[NSToolbarItem.Identifier] {
         [Self.sidebarToolbarItem]
     }
@@ -585,6 +656,7 @@ final class EditorWindowController: NSWindowController, NSSplitViewDelegate, NSS
         case #selector(redo(_:)): menuItem.title = markdownDocument.undoManager?.redoMenuItemTitle ?? "Redo"; return markdownDocument.undoManager?.canRedo == true
         case #selector(toggleSidebar(_:)): menuItem.state = isSidebarVisible ? .on:.off; return true
         case #selector(togglePreview(_:)): menuItem.state = preview.isHidden ? .off : .on; return true
+        case #selector(performMarkdownCommand(_:)): return canPerformMarkdownCommand
         default:return true
         }
     }

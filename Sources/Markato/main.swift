@@ -79,6 +79,7 @@ func exportProfileRecording(_ path:UnsafePointer<CChar>) {
     @objc func togglePreview(_ sender:Any?) { currentEditor?.togglePreview(sender) }
     @objc func increaseFont(_ sender:Any?) { currentEditor?.increaseFont(sender) }
     @objc func decreaseFont(_ sender:Any?) { currentEditor?.decreaseFont(sender) }
+    @objc func performMarkdownCommand(_ sender:Any?) { currentEditor?.performMarkdownCommand(sender) }
     @objc func saveDocument(_ sender:Any?) { (currentEditor?.document as? NSDocument)?.save(sender) }
     @objc func saveDocumentAs(_ sender:Any?) { (currentEditor?.document as? NSDocument)?.saveAs(sender) }
     @objc func revertDocumentToSaved(_ sender:Any?) { (currentEditor?.document as? NSDocument)?.revertToSaved(sender) }
@@ -312,9 +313,11 @@ func exportProfileRecording(_ path:UnsafePointer<CChar>) {
     private func buildMenus() {
         let main = NSMenu(); NSApp.mainMenu = main
         func submenu(_ title:String)->NSMenu { let item=NSMenuItem(); item.title=title;let menu=NSMenu(title:title);item.submenu=menu;main.addItem(item);return menu }
-        func add(_ menu:NSMenu,_ title:String,_ action:Selector,_ key:String="",_ modifiers:NSEvent.ModifierFlags = .command) {
+        func add(_ menu:NSMenu,_ title:String,_ action:Selector,_ key:String="",_ modifiers:NSEvent.ModifierFlags = .command,
+                 tag:Int?=nil) {
             let item=NSMenuItem(title:title,action:action,keyEquivalent:key);item.keyEquivalentModifierMask=modifiers
-            let routed:Set<String> = ["undo:","redo:","showFind:","findNext:","findPrevious:","toggleSidebar:","togglePreview:","increaseFont:","decreaseFont:","saveDocument:","saveDocumentAs:","revertDocumentToSaved:","newDocument:"]
+            if let tag {item.tag=tag}
+            let routed:Set<String> = ["undo:","redo:","showFind:","findNext:","findPrevious:","toggleSidebar:","togglePreview:","increaseFont:","decreaseFont:","performMarkdownCommand:","saveDocument:","saveDocumentAs:","revertDocumentToSaved:","newDocument:"]
             if routed.contains(NSStringFromSelector(action)) { item.target = self }
             if action == #selector(NSDocumentController.openDocument(_:)) { item.target = NSDocumentController.shared }
             menu.addItem(item)
@@ -332,6 +335,29 @@ func exportProfileRecording(_ path:UnsafePointer<CChar>) {
         add(edit,"Undo",#selector(EditorWindowController.undo(_:)),"z");add(edit,"Redo",#selector(EditorWindowController.redo(_:)),"z",[.command,.shift]);edit.addItem(.separator())
         add(edit,"Cut",#selector(NSText.cut(_:)),"x");add(edit,"Copy",#selector(NSText.copy(_:)),"c");add(edit,"Paste",#selector(NSText.paste(_:)),"v");add(edit,"Select All",#selector(NSText.selectAll(_:)),"a")
         edit.addItem(.separator());add(edit,"Find…",#selector(EditorWindowController.showFind(_:)),"f");add(edit,"Find Next",#selector(EditorWindowController.findNext(_:)),"g");add(edit,"Find Previous",#selector(EditorWindowController.findPrevious(_:)),"g",[.command,.shift])
+        let format=submenu("Format")
+        func formatItem(_ title:String,_ command:MarkdownMenuCommand,_ key:String="",_ modifiers:NSEvent.ModifierFlags = .command) {
+            add(format,title,#selector(performMarkdownCommand(_:)),key,modifiers,tag:command.rawValue)
+        }
+        formatItem("Bold",.bold,"b");formatItem("Italic",.italic,"i")
+        formatItem("Strikethrough",.strikethrough,"x",[.command,.shift])
+        formatItem("Inline Code",.inlineCode,"k");formatItem("Link",.link,"k",[.command,.shift])
+        format.addItem(.separator())
+        let headings=NSMenu(title:"Heading")
+        let headingItem=NSMenuItem(title:"Heading",action:nil,keyEquivalent:"");headingItem.submenu=headings;format.addItem(headingItem)
+        for (title,command,key) in [("Heading 1",MarkdownMenuCommand.heading1,"1"),("Heading 2",.heading2,"2"),
+            ("Heading 3",.heading3,"3"),("Heading 4",.heading4,"4"),("Heading 5",.heading5,"5"),
+            ("Heading 6",.heading6,"6"),("Paragraph",.paragraph,"0")] {
+            add(headings,title,#selector(performMarkdownCommand(_:)),key,.command,tag:command.rawValue)
+        }
+        formatItem("Bulleted List",.bulletedList,"u",[.command,.shift])
+        formatItem("Numbered List",.numberedList,"o",[.command,.shift])
+        formatItem("Blockquote",.blockquote,"b",[.command,.shift])
+        format.addItem(.separator())
+        formatItem("Insert Image…",.insertImage,"i",[.command,.shift])
+        formatItem("Insert Table",.insertTable,"t",[.command,.option])
+        formatItem("Code Block",.codeBlock,"k",[.command,.option])
+        formatItem("Horizontal Rule",.horizontalRule)
         let view=submenu("View")
         add(view,"Show Sidebar",#selector(EditorWindowController.toggleSidebar(_:)),"s",[.command,.control])
         add(view,"Show Preview",#selector(EditorWindowController.togglePreview(_:)),"p",[.command,.option]);add(view,"Increase Font Size",#selector(EditorWindowController.increaseFont(_:)),"+");add(view,"Decrease Font Size",#selector(EditorWindowController.decreaseFont(_:)),"-")

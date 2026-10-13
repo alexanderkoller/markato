@@ -132,6 +132,8 @@ mod kind {
     pub const MATH_INLINE: u8 = 33;
     pub const LIST_MARK: u8 = 34;
     pub const QUOTE_MARK: u8 = 35;
+    pub const STRIKETHROUGH: u8 = 36;
+    pub const STRIKETHROUGH_MARK: u8 = 37;
     pub fn heading(setext: bool, level: u8) -> u8 {
         (if setext { 8 } else { 2 }) + level.saturating_sub(1).min(5)
     }
@@ -383,6 +385,13 @@ impl Render<'_> {
                     self.span(kind::EMPHASIS_MARK, range.end - width..range.end);
                 }
             }
+            NodeValue::Strikethrough => {
+                self.span(kind::STRIKETHROUGH, range.clone());
+                if raw.len() >= 4 {
+                    self.span(kind::STRIKETHROUGH_MARK, range.start..range.start + 2);
+                    self.span(kind::STRIKETHROUGH_MARK, range.end - 2..range.end);
+                }
+            }
             NodeValue::Link(_) | NodeValue::Image(_) => {
                 self.span(kind::LINK, range.clone());
                 for (offset, ch) in raw.char_indices() {
@@ -556,15 +565,6 @@ fn format_node(
             }
             Ok(ChildRendering::Skip)
         }
-        NodeValue::HtmlBlock(_) if entering => {
-            context.write_str("<pre>")?;
-            let range = context.user.index.range(node, context.user.source);
-            let text = context.user.source[range].to_owned();
-            context.escape(&text)?;
-            context.write_str("</pre>\n")?;
-            Ok(ChildRendering::Skip)
-        }
-        NodeValue::HtmlBlock(_) => Ok(ChildRendering::Skip),
         NodeValue::Link(link) => {
             if entering {
                 context.write_str("<a href=\"")?;
@@ -618,10 +618,11 @@ fn parse_source(
     let has_references = has_reference_syntax(&source);
     let mut options = Options::default();
     options.extension.table = true;
+    options.extension.strikethrough = true;
     options.extension.math_dollars = true;
     options.extension.math_latex = true;
     options.extension.math_code = true;
-    options.render.escape = true;
+    options.render.r#unsafe = true;
     let arena = Arena::new();
     let root = parse_document(&arena, &source, &options);
     let index = Index::new(&source);

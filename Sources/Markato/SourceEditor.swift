@@ -326,7 +326,7 @@ final class SourceEditor:NSView,NSTextViewDelegate,NSTextStorageDelegate,ScrollS
     /// a TextKit layout operation. The preview retains semantic typography.
     private func syntaxColor(_ kind:MarkdownKind)->NSColor? {
         if kind.isHeading {return .systemIndigo}
-        if kind == .strongEmphasis || kind == .emphasis {return .systemOrange}
+        if kind == .strongEmphasis || kind == .emphasis || kind == .strikethrough {return .systemOrange}
         if kind.isMark {return .secondaryLabelColor}
         if kind == .link || kind == .url {return .linkColor}
         if kind == .mathBlock || kind == .mathInline {return .systemPurple}
