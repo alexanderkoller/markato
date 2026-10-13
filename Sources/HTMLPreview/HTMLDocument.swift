@@ -1,0 +1,57 @@
+import Foundation
+
+public enum HTMLDocument {
+    public static func render(title:String,fragments:[String],baseURL:URL?=nil)->String {
+        let assets=HTMLAssetResolver()
+        let sections=fragments.enumerated().map { index,fragment in
+            let body=assets.resolve(in:fragment,baseURL:baseURL)
+            let last=index==fragments.count-1 ? " class=\"last-block\"":""
+            return "<section\(last)>\(body)</section>"
+        }.joined(separator:"\n")
+        let safeTitle=escape(title)
+        return #"""
+        <!doctype html>
+        <html lang="en">
+        <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data: http: https:; style-src 'unsafe-inline'; font-src data:">
+        <title>\#(safeTitle)</title>
+        <style>\#(HTMLPreviewResources.stylesheet)\n\#(printStylesheet)</style>
+        </head>
+        <body><main id="preview">\#(sections)</main></body>
+        </html>
+        """#
+    }
+
+    private static func escape(_ text:String)->String {
+        text.replacingOccurrences(of:"&",with:"&amp;")
+            .replacingOccurrences(of:"<",with:"&lt;")
+            .replacingOccurrences(of:">",with:"&gt;")
+            .replacingOccurrences(of:"\"",with:"&quot;")
+    }
+
+    private static let printStylesheet=#"""
+    @media print {
+      :root {
+        color-scheme: light;
+        --fg-default: #1f2328;
+        --fg-muted: #59636e;
+        --fg-accent: #0969da;
+        --bg-default: #ffffff;
+        --bg-muted: #f6f8fa;
+        --bg-neutral-muted: #818b981f;
+        --border-default: #d1d9e0;
+        --border-muted: #d1d9e0b3;
+        --danger: #d1242f;
+      }
+      html, body { background: white; }
+      #preview { padding: 0; }
+      pre, blockquote, table, img, .katex-display, .mermaid-diagram {
+        break-inside: avoid;
+      }
+      thead { display: table-header-group; }
+      a { color: inherit; text-decoration: underline; }
+    }
+    """#
+}

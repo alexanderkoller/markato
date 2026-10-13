@@ -8,7 +8,10 @@ let ultralightSDK = ProcessInfo.processInfo.environment["ASTRA_ULTRALIGHT_SDK"] 
 let package = Package(
     name: "Markato",
     platforms: [.macOS(.v15)],
-    products: [.executable(name: "Markato", targets: ["Markato"])],
+    products: [
+        .executable(name: "Markato", targets: ["Markato"]),
+        .executable(name: "MarkatoPrintRenderer", targets: ["MarkatoPrintRenderer"])
+    ],
     dependencies: [],
     targets: [
         .target(name: "CComrak", linkerSettings: [
@@ -27,7 +30,9 @@ let package = Package(
         .executableTarget(name: "Markato", dependencies: [
             "MarkdownCore", "HTMLPreview"
         ]),
-        .testTarget(name: "MarkdownCoreTests", dependencies: ["MarkdownCore"])
+        .executableTarget(name: "MarkatoPrintRenderer"),
+        .testTarget(name: "MarkdownCoreTests", dependencies: ["MarkdownCore"]),
+        .testTarget(name: "HTMLPreviewTests", dependencies: ["HTMLPreview"])
     ],
     swiftLanguageModes: [.v5]
 )

@@ -2,6 +2,48 @@ import AppKit
 import CUltralightPreview
 import MarkdownCore
 
+public enum HTMLPreviewResources {
+    public static let stylesheet:String = {
+        func resource(_ name:String)->String {
+            guard let url=Bundle.module.url(forResource:name,withExtension:"css"),
+                  let text=try? String(contentsOf:url,encoding:.utf8) else {
+                preconditionFailure("Missing HTMLPreview resource: \(name).css")
+            }
+            return text
+        }
+        return resource("KaTeX")+resource("Preview")+resource("CodeHighlight")
+    }()
+}
+
+public final class HTMLAssetResolver {
+    private var embeddedAssets=[URL:String]()
+    public init() {}
+    public func resolve(in html:String,baseURL:URL?)->String {
+        let pattern=#"astra-asset://[^\"']+"#
+        guard let expression=try? NSRegularExpression(pattern:pattern) else{return html}
+        let ns=html as NSString
+        var result=html
+        for match in expression.matches(in:html,range:NSRange(location:0,length:ns.length)).reversed() {
+            let token=ns.substring(with:match.range).replacingOccurrences(of:"&amp;",with:"&")
+            guard let components=URLComponents(string:token),
+                  let source=components.queryItems?.first(where:{$0.name=="source"})?.value,
+                  let url=URL(string:source,relativeTo:baseURL)?.absoluteURL else{continue}
+            let replacement:String
+            if url.isFileURL {
+                if let cached=embeddedAssets[url] {replacement=cached}
+                else if let data=try? Data(contentsOf:url,options:.mappedIfSafe) {
+                    let mime:[String:String]=["png":"image/png","jpg":"image/jpeg","jpeg":"image/jpeg",
+                        "gif":"image/gif","webp":"image/webp","svg":"image/svg+xml"]
+                    replacement="data:\(mime[url.pathExtension.lowercased()] ?? "application/octet-stream");base64,\(data.base64EncodedString())"
+                    embeddedAssets[url]=replacement
+                } else {continue}
+            } else {replacement=url.absoluteString}
+            if let range=Range(match.range,in:result) {result.replaceSubrange(range,with:replacement)}
+        }
+        return result
+    }
+}
+
 public struct HTMLPreviewGeometry: Equatable, Sendable {
     public struct Item: Equatable, Sendable {
         public let id:String
@@ -27,7 +69,7 @@ public struct HTMLPreviewGeometry: Equatable, Sendable {
     private var imageSize:NSSize = .zero
     private var entryIDs=[String]()
     private var baseURL:URL?
-    private var embeddedAssets=[URL:String]()
+    private let assetResolver=HTMLAssetResolver()
     private var horizontalGesture:Bool?
     private var axisReset:DispatchWorkItem?
     private var resourcePump:Timer?
@@ -46,14 +88,7 @@ public struct HTMLPreviewGeometry: Equatable, Sendable {
     public override var acceptsFirstResponder:Bool {true}
 
     public convenience override init(frame:NSRect) {
-        func resource(_ name:String)->String {
-            guard let url=Bundle.module.url(forResource:name,withExtension:"css"),
-                  let text=try? String(contentsOf:url,encoding:.utf8) else {
-                preconditionFailure("Missing HTMLPreview resource: \(name).css")
-            }
-            return text
-        }
-        self.init(frame:frame,css:resource("KaTeX")+resource("Preview")+resource("CodeHighlight"))
+        self.init(frame:frame,css:HTMLPreviewResources.stylesheet)
     }
 
     init(frame:NSRect,css:String) {
@@ -88,7 +123,7 @@ public struct HTMLPreviewGeometry: Equatable, Sendable {
         astra_ul_surface_begin_update(engine,next.count,fontSize)
         for entry in next {
             guard let html=entry.fragment.html else{return nil}
-            let resolved=resolveAssets(in:html,baseURL:baseURL)
+            let resolved=assetResolver.resolve(in:html,baseURL:baseURL)
             entry.id.withCString {id in resolved.withCString {body in
                 astra_ul_surface_add_entry(engine,id,body)
             }}
@@ -113,31 +148,6 @@ public struct HTMLPreviewGeometry: Equatable, Sendable {
                 landmark:item.has_landmark ? item.landmark_y:nil))
         }
         return HTMLPreviewGeometry(width:value.width,height:value.height,items:items)
-    }
-
-    private func resolveAssets(in html:String,baseURL:URL?)->String {
-        let pattern=#"astra-asset://[^\"']+"#
-        guard let expression=try? NSRegularExpression(pattern:pattern) else{return html}
-        let ns=html as NSString
-        var result=html
-        for match in expression.matches(in:html,range:NSRange(location:0,length:ns.length)).reversed() {
-            let token=ns.substring(with:match.range).replacingOccurrences(of:"&amp;",with:"&")
-            guard let components=URLComponents(string:token),
-                  let source=components.queryItems?.first(where:{$0.name=="source"})?.value,
-                  let url=URL(string:source,relativeTo:baseURL)?.absoluteURL else{continue}
-            let replacement:String
-            if url.isFileURL {
-                if let cached=embeddedAssets[url] {replacement=cached}
-                else if let data=try? Data(contentsOf:url,options:.mappedIfSafe) {
-                    let mime:[String:String]=["png":"image/png","jpg":"image/jpeg","jpeg":"image/jpeg",
-                        "gif":"image/gif","webp":"image/webp","svg":"image/svg+xml"]
-                    replacement="data:\(mime[url.pathExtension.lowercased()] ?? "application/octet-stream");base64,\(data.base64EncodedString())"
-                    embeddedAssets[url]=replacement
-                } else {continue}
-            } else {replacement=url.absoluteString}
-            if let range=Range(match.range,in:result) {result.replaceSubrange(range,with:replacement)}
-        }
-        return result
     }
 
     public func scroll(to point:NSPoint) {

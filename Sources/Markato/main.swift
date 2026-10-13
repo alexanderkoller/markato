@@ -60,6 +60,7 @@ func exportProfileRecording(_ path:UnsafePointer<CChar>) {
     private let launchConfiguration:LaunchConfiguration
     private var receivedDocumentOpenRequest=false
     private var openedStartupFallback=false
+    private var isClosingAllDocuments=false
     fileprivate init(launchConfiguration:LaunchConfiguration) {self.launchConfiguration=launchConfiguration}
     private var currentEditor:EditorWindowController? {
         for window in [NSApp.keyWindow,NSApp.mainWindow].compactMap({$0}) {
@@ -70,6 +71,7 @@ func exportProfileRecording(_ path:UnsafePointer<CChar>) {
         }
         return NSDocumentController.shared.documents.last?.windowControllers.first as? EditorWindowController
     }
+    private var currentDocument:MarkdownDocument? {currentEditor?.document as? MarkdownDocument}
     @objc func undo(_ sender:Any?) { currentEditor?.undo(sender) }
     @objc func redo(_ sender:Any?) { currentEditor?.redo(sender) }
     @objc func showFind(_ sender:Any?) { currentEditor?.showFind(sender) }
@@ -84,6 +86,19 @@ func exportProfileRecording(_ path:UnsafePointer<CChar>) {
     @objc func saveDocumentAs(_ sender:Any?) { (currentEditor?.document as? NSDocument)?.saveAs(sender) }
     @objc func revertDocumentToSaved(_ sender:Any?) { (currentEditor?.document as? NSDocument)?.revertToSaved(sender) }
     @objc func newDocument(_ sender:Any?) {openUntitledDocument()}
+    @objc func exportHTML(_ sender:Any?) {currentDocument?.exportHTML(sender)}
+    @objc func exportPDF(_ sender:Any?) {currentDocument?.saveToPDF(sender)}
+    @objc func printDocument(_ sender:Any?) {currentDocument?.printDocument(sender)}
+    @objc func closeAllDocuments(_ sender:Any?) {
+        guard !isClosingAllDocuments,!NSDocumentController.shared.documents.isEmpty else{return}
+        isClosingAllDocuments=true
+        NSDocumentController.shared.closeAllDocuments(withDelegate:self,
+            didCloseAllSelector:#selector(didCloseAllDocuments(_:didCloseAll:contextInfo:)),contextInfo:nil)
+    }
+    @objc private func didCloseAllDocuments(_ controller:NSDocumentController,didCloseAll:Bool,
+                                            contextInfo:UnsafeMutableRawPointer?) {
+        isClosingAllDocuments=false
+    }
     #if DEBUG
     @objc func toggleTimingDiagnostics(_ sender:Any?) {
         if TimingDiagnostics.shared.isRecording {TimingDiagnostics.shared.stop()}
@@ -122,6 +137,14 @@ func exportProfileRecording(_ path:UnsafePointer<CChar>) {
     #endif
     func validateMenuItem(_ menuItem:NSMenuItem)->Bool {
         if menuItem.action == #selector(newDocument(_:)) {return true}
+        if menuItem.action == #selector(closeAllDocuments(_:)) {
+            menuItem.keyEquivalent="W";menuItem.keyEquivalentModifierMask = .command
+            return !isClosingAllDocuments && !NSDocumentController.shared.documents.isEmpty
+        }
+        if menuItem.action == #selector(exportHTML(_:)) || menuItem.action == #selector(exportPDF(_:))
+            || menuItem.action == #selector(printDocument(_:)) {
+            return currentDocument.map{!$0.isProducingOutput} ?? false
+        }
         #if DEBUG
         if menuItem.action == #selector(toggleTimingDiagnostics(_:)) {
             menuItem.title=TimingDiagnostics.shared.isRecording ? "Stop Timing Diagnostics":"Start Timing Diagnostics"
@@ -243,6 +266,37 @@ func exportProfileRecording(_ path:UnsafePointer<CChar>) {
                     }
                     return
                 }
+                if CommandLine.arguments.contains("--integration-close-all") {
+                    openUntitledDocument()
+                    DispatchQueue.main.asyncAfter(deadline:.now()+0.25) {
+                        NSApp.mainMenu?.update()
+                        let count=NSDocumentController.shared.documents.count
+                        guard let item=NSApp.mainMenu?.item(withTitle:"File")?.submenu?.item(withTitle:"Close All Windows") else {
+                            print("CLOSE ALL FAILED: menu item missing, documents=\(count)")
+                            exit(2)
+                        }
+                        // AppKit represents Shift-Command-letter menu shortcuts
+                        // as an uppercase key equivalent with the Command mask.
+                        let shortcut=item.keyEquivalent=="W" && item.keyEquivalentModifierMask == .command
+                        let enabled=item.isEnabled
+                        let sent=item.action.map{NSApp.sendAction($0,to:item.target,from:item)} ?? false
+                        guard count==2,enabled,shortcut,sent else {
+                            print("CLOSE ALL FAILED: documents=\(count), enabled=\(enabled), shortcut=\(shortcut), sent=\(sent), key=\(item.keyEquivalent), modifiers=\(item.keyEquivalentModifierMask.rawValue), userKey=\(item.userKeyEquivalent)")
+                            exit(2)
+                        }
+                        DispatchQueue.main.asyncAfter(deadline:.now()+0.5) {
+                            let documents=NSDocumentController.shared.documents
+                            let visible=NSApp.windows.filter{$0.isVisible}
+                            guard documents.isEmpty,visible.isEmpty else {
+                                print("CLOSE ALL FAILED: documents=\(documents.count), visibleWindows=\(visible.count)")
+                                exit(2)
+                            }
+                            print("CLOSE ALL: documents=0, visibleWindows=0, shortcut=shift-command-w")
+                            exit(EXIT_SUCCESS)
+                        }
+                    }
+                    return
+                }
                 if let option=CommandLine.arguments.first(where:{$0.hasPrefix("--integration-second-document=")}) {
                     let path=String(option.dropFirst("--integration-second-document=".count))
                     openMarkdownFiles([path]) {success in
@@ -317,7 +371,7 @@ func exportProfileRecording(_ path:UnsafePointer<CChar>) {
                  tag:Int?=nil) {
             let item=NSMenuItem(title:title,action:action,keyEquivalent:key);item.keyEquivalentModifierMask=modifiers
             if let tag {item.tag=tag}
-            let routed:Set<String> = ["undo:","redo:","showFind:","findNext:","findPrevious:","toggleSidebar:","togglePreview:","increaseFont:","decreaseFont:","performMarkdownCommand:","saveDocument:","saveDocumentAs:","revertDocumentToSaved:","newDocument:"]
+            let routed:Set<String> = ["undo:","redo:","showFind:","findNext:","findPrevious:","toggleSidebar:","togglePreview:","increaseFont:","decreaseFont:","performMarkdownCommand:","saveDocument:","saveDocumentAs:","revertDocumentToSaved:","newDocument:","exportHTML:","exportPDF:","printDocument:","closeAllDocuments:"]
             if routed.contains(NSStringFromSelector(action)) { item.target = self }
             if action == #selector(NSDocumentController.openDocument(_:)) { item.target = NSDocumentController.shared }
             menu.addItem(item)
@@ -329,8 +383,13 @@ func exportProfileRecording(_ path:UnsafePointer<CChar>) {
         app.addItem(.separator());add(app,"Quit Markato",#selector(NSApplication.terminate(_:)),"q")
         let file=submenu("File")
         add(file,"New",#selector(newDocument(_:)),"n");add(file,"Open…",#selector(NSDocumentController.openDocument(_:)),"o")
-        file.addItem(.separator());add(file,"Close",#selector(NSWindow.performClose(_:)),"w");add(file,"Save",#selector(NSDocument.save(_:)),"s");add(file,"Save As…",#selector(NSDocument.saveAs(_:)),"s",[.command,.shift])
+        file.addItem(.separator());add(file,"Close",#selector(NSWindow.performClose(_:)),"w")
+        add(file,"Close All Windows",#selector(closeAllDocuments(_:)),"W",.command)
+        file.addItem(.separator());add(file,"Save",#selector(NSDocument.save(_:)),"s");add(file,"Save As…",#selector(NSDocument.saveAs(_:)),"s",[.command,.shift])
         add(file,"Revert to Saved…",#selector(NSDocument.revertToSaved(_:)))
+        file.addItem(.separator());add(file,"Export as HTML…",#selector(exportHTML(_:)))
+        add(file,"Export as PDF…",#selector(exportPDF(_:)))
+        file.addItem(.separator());add(file,"Print…",#selector(printDocument(_:)),"p")
         let edit=submenu("Edit")
         add(edit,"Undo",#selector(EditorWindowController.undo(_:)),"z");add(edit,"Redo",#selector(EditorWindowController.redo(_:)),"z",[.command,.shift]);edit.addItem(.separator())
         add(edit,"Cut",#selector(NSText.cut(_:)),"x");add(edit,"Copy",#selector(NSText.copy(_:)),"c");add(edit,"Paste",#selector(NSText.paste(_:)),"v");add(edit,"Select All",#selector(NSText.selectAll(_:)),"a")

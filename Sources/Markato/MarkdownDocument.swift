@@ -11,6 +11,8 @@ final class MarkdownDocument: NSDocument {
     private var hasBOM = false
     private(set) var newline = "\n"
     let parser = ComrakWorker()
+    private lazy var outputCoordinator=DocumentOutputCoordinator(document:self)
+    var isProducingOutput:Bool {outputCoordinator.isBusy}
     var edited: ((NSRange, String, SourceEdit) -> Void)?
     override init() { super.init(); hasUndoManager = true; fileType = "Markdown" }
     override func makeWindowControllers() {
@@ -88,5 +90,8 @@ final class MarkdownDocument: NSDocument {
         if encoding == .utf8 && hasBOM { data.insert(contentsOf:[0xef,0xbb,0xbf],at:0) }
         return data
     }
+    @objc func exportHTML(_ sender:Any?) {outputCoordinator.exportHTML(sender)}
+    override func printDocument(_ sender:Any?) {outputCoordinator.printDocument(sender)}
+    override func saveToPDF(_ sender:Any?) {outputCoordinator.exportPDF(sender)}
     override func canAsynchronouslyWrite(to url: URL, ofType typeName: String, for saveOperation: NSDocument.SaveOperationType) -> Bool { true }
 }

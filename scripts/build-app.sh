@@ -25,8 +25,10 @@ stage_dir="$(mktemp -d "$app_parent/.app-build.XXXXXX")"
 trap 'rm -rf "$stage_dir"' EXIT
 staged_app="$stage_dir/Markato.app"
 mkdir -p "$staged_app/Contents/MacOS" "$staged_app/Contents/Resources" "$staged_app/Contents/Frameworks"
+mkdir -p "$staged_app/Contents/Helpers"
 cp App/Info.plist "$staged_app/Contents/Info.plist"
 cp ".build/$build_configuration/Markato" "$staged_app/Contents/MacOS/"
+cp ".build/$build_configuration/MarkatoPrintRenderer" "$staged_app/Contents/Helpers/"
 for resource in Example.md ExampleImage.png Markato.icns; do
     cp "App/Resources/$resource" "$staged_app/Contents/Resources/"
 done
