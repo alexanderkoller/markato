@@ -15,11 +15,13 @@ The script builds the pinned Rust static library and release executable, package
 
 The build also regenerates the application icon from the transparent [1024-pixel master](../App/Branding/Markato-1024.png). `bash scripts/build-icons.sh` produces the standard 16, 32, 128, 256, and 512-point representations at 1× and 2× in `App/Branding/Markato.iconset`, packages `App/Resources/Markato.icns`, and updates the README image. Both debug and release bundles include the icon through `CFBundleIconFile`. Icon generation uses macOS `sips` and Python 3 (standard library only); it does not require `iconutil` or access to IconServices.
 
-Starting the app without another document opens a bundled example of about 135 KB, with 80 sections, local images, equations, code, an 800-row table, and a long paragraph. File → New creates a blank document. To explicitly open the example document:
+Starting the app without another document opens a blank, untitled Markdown document. Passing one Markdown filename opens that file instead. To explicitly open the bundled example document of about 135 KB for development and performance testing, run:
 
 ```sh
-dist/Markato.app/Contents/MacOS/Markato --sample
+bash scripts/open-sample.sh
 ```
+
+The launcher starts a separate instance of the release app, so it also works when another Markato instance is already running. The equivalent direct command is `dist/Markato.app/Contents/MacOS/Markato --sample`.
 
 ## Validation
 

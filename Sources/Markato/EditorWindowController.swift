@@ -76,7 +76,7 @@ final class EditorWindowController: NSWindowController, NSSplitViewDelegate, NSS
         super.init(window:window)
         window.delegate = self
         window.minSize = NSSize(width:640,height:380); window.center()
-        window.tabbingMode = .preferred
+        window.tabbingMode = .disallowed
         // Native checks use a reproducible fixture and must not read or overwrite
         // the user's saved document-window dimensions.
         #if DEBUG

@@ -15,10 +15,10 @@
 <key>NSHumanReadableCopyright</key><string>Markato</string>
 <key>CFBundleDocumentTypes</key><array><dict>
 <key>CFBundleTypeName</key><string>Markdown</string>
-<key>CFBundleTypeExtensions</key><array><string>md</string><string>markdown</string><string>mdown</string><string>mkd</string><string>txt</string></array>
+<key>CFBundleTypeExtensions</key><array><string>md</string><string>markdown</string><string>mdown</string><string>mkd</string></array>
 <key>CFBundleTypeRole</key><string>Editor</string>
 <key>NSDocumentClass</key><string>Markato.MarkdownDocument</string>
-<key>LSItemContentTypes</key><array><string>net.daringfireball.markdown</string><string>public.plain-text</string></array>
+<key>LSItemContentTypes</key><array><string>net.daringfireball.markdown</string></array>
 </dict></array>
 <key>UTImportedTypeDeclarations</key><array><dict>
 <key>UTTypeIdentifier</key><string>net.daringfireball.markdown</string>

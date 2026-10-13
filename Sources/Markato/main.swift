@@ -2,6 +2,51 @@ import AppKit
 import MarkdownCore
 import UniformTypeIdentifiers
 
+private let markdownFilenameExtensions:Set<String> = ["md","markdown","mdown","mkd"]
+
+private enum DocumentRequestError: LocalizedError {
+    case tooManyFiles(Int)
+    case missingFile(String)
+    case notRegularFile(String)
+    case notMarkdown(String)
+
+    var errorDescription:String? {
+        switch self {
+        case .tooManyFiles(let count): return "Markato opens one Markdown file per request, but received \(count)."
+        case .missingFile(let path): return "The file does not exist: \(path)"
+        case .notRegularFile(let path): return "The path is not a regular file: \(path)"
+        case .notMarkdown(let path): return "The file is not a supported Markdown file: \(path)"
+        }
+    }
+}
+
+private func validatedMarkdownURL(_ path:String) throws -> URL {
+    let url=URL(fileURLWithPath:path).standardizedFileURL
+    guard FileManager.default.fileExists(atPath:url.path) else {throw DocumentRequestError.missingFile(path)}
+    let values=try url.resourceValues(forKeys:[.isRegularFileKey])
+    guard values.isRegularFile == true else {throw DocumentRequestError.notRegularFile(path)}
+    guard markdownFilenameExtensions.contains(url.pathExtension.lowercased()) else {throw DocumentRequestError.notMarkdown(path)}
+    return url
+}
+
+private struct LaunchConfiguration {
+    let opensSample:Bool
+    let documentURL:URL?
+
+    static func parse(_ arguments:[String]) throws ->LaunchConfiguration {
+        let values=Array(arguments.dropFirst())
+        if values.contains("--sample") {return LaunchConfiguration(opensSample:true,documentURL:nil)}
+        var paths=[String](),optionsEnded=false
+        for value in values {
+            if !optionsEnded && value == "--" {optionsEnded=true;continue}
+            if !optionsEnded && value.hasPrefix("-") {continue}
+            paths.append(value)
+        }
+        guard paths.count<=1 else {throw DocumentRequestError.tooManyFiles(paths.count)}
+        return LaunchConfiguration(opensSample:false,documentURL:try paths.first.map(validatedMarkdownURL))
+    }
+}
+
 #if DEBUG
 @_cdecl("astra_timing_start")
 func startProfileRecording() { TimingDiagnostics.shared.start() }
@@ -12,6 +57,10 @@ func exportProfileRecording(_ path:UnsafePointer<CChar>) {
 #endif
 
 @MainActor final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
+    private let launchConfiguration:LaunchConfiguration
+    private var receivedDocumentOpenRequest=false
+    private var openedStartupFallback=false
+    fileprivate init(launchConfiguration:LaunchConfiguration) {self.launchConfiguration=launchConfiguration}
     private var currentEditor:EditorWindowController? {
         for window in [NSApp.keyWindow,NSApp.mainWindow].compactMap({$0}) {
             if let controller = window.windowController as? EditorWindowController { return controller }
@@ -82,13 +131,19 @@ func exportProfileRecording(_ path:UnsafePointer<CChar>) {
         #if DEBUG
         if CommandLine.arguments.contains("--diagnostics") {TimingDiagnostics.shared.start()}
         let checking=CommandLine.arguments.contains("--integration-test") || CommandLine.arguments.contains("--smoke-test")
+        let checkingDefaultStartup=ProcessInfo.processInfo.environment["MARKATO_INTEGRATION_DEFAULT_STARTUP"] == "1"
+        let checkingFinderPath=CommandLine.arguments.first(where:{$0.hasPrefix("--integration-finder-document=")})
+            .map{String($0.dropFirst("--integration-finder-document=".count))}
+        let checkingStartup=CommandLine.arguments.contains("--integration-startup") || checkingDefaultStartup || checkingFinderPath != nil
         #else
         let checking=false
+        let checkingDefaultStartup=false
+        let checkingFinderPath:String?=nil
+        let checkingStartup=false
         #endif
-        NSWindow.allowsAutomaticWindowTabbing = true
         buildMenus()
-        if NSDocumentController.shared.documents.isEmpty || CommandLine.arguments.contains("--sample") || checking {
-            let document = MarkdownDocument(); document.setInitialText(Self.sample)
+        if launchConfiguration.opensSample || (checking && !checkingStartup) {
+            let document=MarkdownDocument();document.setInitialText(Self.sample)
             NSDocumentController.shared.addDocument(document); document.makeWindowControllers()
             #if DEBUG
             if checking {document.windowControllers.first?.window?.setFrameOrigin(NSPoint(x:-10000,y:0))}
@@ -108,10 +163,92 @@ func exportProfileRecording(_ path:UnsafePointer<CChar>) {
             #else
             document.showWindows()
             #endif
+        } else if launchConfiguration.documentURL == nil {
+            scheduleStartupDocumentFallback()
+            #if DEBUG
+            if let path=checkingFinderPath {
+                DispatchQueue.main.async { [self] in
+                    receivedDocumentOpenRequest=true
+                    openMarkdownFiles([path]) {_ in}
+                }
+            }
+            #endif
         }
+        #if DEBUG
+        if checkingStartup {
+            DispatchQueue.main.asyncAfter(deadline:.now()+3) { [self,launchConfiguration] in
+                let documents=NSDocumentController.shared.documents
+                let finderURL=checkingFinderPath.flatMap{try? validatedMarkdownURL($0)}
+                let expectedURL=launchConfiguration.documentURL ?? finderURL
+                guard documents.count==1,let document=documents.first as? MarkdownDocument,
+                      document.windowControllers.count==1,
+                      document.windowControllers.first?.window?.tabbingMode == .disallowed,
+                      document.fileURL?.standardizedFileURL == expectedURL?.standardizedFileURL,
+                      expectedURL != nil || document.source.count==0,
+                      !checkingDefaultStartup || openedStartupFallback else {
+                    print("STARTUP FAILED: documents=\(documents.count)")
+                    exit(2)
+                }
+                print("STARTUP: empty=\(document.source.count==0), file=\(document.fileURL?.path ?? "untitled"), tabbing=disallowed, fallback=\(openedStartupFallback)")
+                if let option=CommandLine.arguments.first(where:{$0.hasPrefix("--integration-second-document=")}) {
+                    let path=String(option.dropFirst("--integration-second-document=".count))
+                    openMarkdownFiles([path]) {success in
+                        let documents=NSDocumentController.shared.documents
+                        let windows=documents.flatMap(\.windowControllers).compactMap(\.window)
+                        guard success,documents.count==2,windows.count==2,
+                              windows.allSatisfy({$0.tabbingMode == .disallowed}) else {
+                            print("SECOND OPEN FAILED: documents=\(documents.count), windows=\(windows.count)")
+                            exit(2)
+                        }
+                        print("SECOND OPEN: documents=2, windows=2, tabbing=disallowed")
+                        exit(EXIT_SUCCESS)
+                    }
+                    return
+                }
+                exit(EXIT_SUCCESS)
+            }
+        }
+        if !checking && !checkingStartup {NSApp.activate(ignoringOtherApps:true)}
+        #else
         if !checking {NSApp.activate(ignoringOtherApps:true)}
+        #endif
     }
-    func applicationShouldOpenUntitledFile(_ sender:NSApplication) -> Bool { false }
+    func applicationWillFinishLaunching(_ notification:Notification) {NSWindow.allowsAutomaticWindowTabbing=false}
+    func applicationShouldOpenUntitledFile(_ sender:NSApplication) -> Bool {false}
+    func applicationShouldHandleReopen(_ sender:NSApplication,hasVisibleWindows flag:Bool)->Bool {
+        if !flag && NSDocumentController.shared.documents.isEmpty {openUntitledDocument()}
+        return true
+    }
+    func application(_ sender:NSApplication,openFiles filenames:[String]) {
+        receivedDocumentOpenRequest=true
+        openMarkdownFiles(filenames) {success in sender.reply(toOpenOrPrint:success ? .success:.failure)}
+    }
+    private func scheduleStartupDocumentFallback() {
+        DispatchQueue.main.asyncAfter(deadline:.now()+0.1) { [weak self] in
+            guard let self,!receivedDocumentOpenRequest,NSDocumentController.shared.documents.isEmpty else{return}
+            openedStartupFallback=true
+            openUntitledDocument()
+        }
+    }
+    private func openUntitledDocument() {
+        let document=MarkdownDocument()
+        NSDocumentController.shared.addDocument(document);document.makeWindowControllers();document.showWindows()
+    }
+    private func openMarkdownFiles(_ filenames:[String],completion:@escaping (Bool)->Void) {
+        guard filenames.count==1 else {
+            present(DocumentRequestError.tooManyFiles(filenames.count));completion(false);return
+        }
+        do {
+            let url=try validatedMarkdownURL(filenames[0])
+            NSDocumentController.shared.openDocument(withContentsOf:url,display:true) { _,_,error in
+                if let error {self.present(error);completion(false)}
+                else {completion(true)}
+            }
+        } catch {
+            present(error);completion(false)
+        }
+    }
+    private func present(_ error:Error) {NSAlert(error:error).runModal()}
     func applicationShouldTerminateAfterLastWindowClosed(_ sender:NSApplication) -> Bool { false }
     private func buildMenus() {
         let main = NSMenu(); NSApp.mainMenu = main
@@ -196,11 +333,17 @@ func exportProfileRecording(_ path:UnsafePointer<CChar>) {
     """#
 }
 
+private let launchConfiguration:LaunchConfiguration
+do {launchConfiguration=try LaunchConfiguration.parse(CommandLine.arguments)}
+catch {
+    FileHandle.standardError.write(Data("Markato: \(error.localizedDescription)\n".utf8))
+    exit(2)
+}
 let application = NSApplication.shared
-let delegate = MainActor.assumeIsolated {AppDelegate()}
+let delegate = MainActor.assumeIsolated {AppDelegate(launchConfiguration:launchConfiguration)}
 application.delegate = delegate
 #if DEBUG
-application.setActivationPolicy(CommandLine.arguments.contains("--integration-test") || CommandLine.arguments.contains("--smoke-test") ? .accessory:.regular)
+application.setActivationPolicy(CommandLine.arguments.contains("--integration-test") || CommandLine.arguments.contains("--smoke-test") || CommandLine.arguments.contains("--integration-startup") || ProcessInfo.processInfo.environment["MARKATO_INTEGRATION_DEFAULT_STARTUP"] == "1" ? .accessory:.regular)
 #else
 application.setActivationPolicy(.regular)
 #endif
