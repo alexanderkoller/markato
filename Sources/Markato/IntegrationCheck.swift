@@ -182,6 +182,12 @@ import MarkdownCore
             guard let rect=web.debugRect("pre",containing:"NATIVE_HIGHLIGHT_STRING"),
                   let rep=web.bitmapImageRepForCachingDisplay(in:rect) else{fail("Missing highlighted code geometry")}
             web.cacheDisplay(in:rect,to:rep)
+            let backgroundX=max(0,rep.pixelsWide-20),backgroundY=rep.pixelsHigh/2
+            guard let background=rep.colorAt(x:backgroundX,y:backgroundY)?.usingColorSpace(.deviceRGB) else {
+                fail("Missing highlighted code background pixel")
+            }
+            check(max(background.redComponent,background.greenComponent,background.blueComponent)<0.99,
+                "Highlighted code block must paint its muted background")
             var colored=0
             for y in stride(from:0,to:rep.pixelsHigh,by:2) {
                 for x in stride(from:0,to:rep.pixelsWide,by:2) {

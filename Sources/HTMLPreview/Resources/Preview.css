@@ -10,6 +10,7 @@
   --fg-accent: #0969da;
   --bg-default: #ffffff;
   --bg-muted: #f6f8fa;
+  --bg-neutral-muted: #818b981f;
   --border-default: #d1d9e0;
   --border-muted: #d1d9e0b3;
   --danger: #d1242f;
@@ -22,6 +23,7 @@
     --fg-accent: #4493f8;
     --bg-default: #0d1117;
     --bg-muted: #151b23;
+    --bg-neutral-muted: #656c7633;
     --border-default: #3d444d;
     --border-muted: #3d444db3;
     --danger: #f85149;
@@ -104,7 +106,7 @@ code, samp {
   margin: 0;
   padding: .2em .4em;
   border-radius: 6px;
-  background-color: var(--bg-muted);
+  background-color: var(--bg-neutral-muted);
   font-size: 85%;
   white-space: break-spaces;
 }
@@ -129,7 +131,17 @@ pre code, pre samp {
   white-space: pre;
   word-break: normal;
 }
-pre .syntax-code { background-color: transparent; }
+/* The highlighter marks both <pre> and <code>. Its generated theme also
+   assigns those classes a page-colored background, so pin the container to
+   GitHub's muted canvas and let only the nested code remain transparent. */
+pre.syntax-code {
+  color: var(--fg-default);
+  background-color: var(--bg-muted);
+}
+pre > code.syntax-code {
+  color: inherit;
+  background-color: transparent;
+}
 kbd {
   display: inline-block;
   padding: 3px 5px;
