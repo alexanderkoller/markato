@@ -40,6 +40,9 @@ private final class RenderedDocumentBuilder {
 }
 
 @MainActor final class DocumentOutputCoordinator:NSObject {
+    private static let a4PaperSize=NSSize(width:595.275590551,height:841.88976378)
+    private static let pdfMargin:CGFloat=42.5196850394 // 15 mm
+
     private enum Job {
         case print(NSPrintInfo)
         case pdf(URL)
@@ -131,7 +134,12 @@ private final class RenderedDocumentBuilder {
             let info: NSPrintInfo
             switch job {
             case .print(let selected): info=selected
-            case .pdf: info=document.printInfo.copy() as! NSPrintInfo
+            case .pdf:
+                info=document.printInfo.copy() as! NSPrintInfo
+                info.orientation = .portrait
+                info.paperSize=Self.a4PaperSize
+                info.leftMargin=Self.pdfMargin;info.rightMargin=Self.pdfMargin
+                info.topMargin=Self.pdfMargin;info.bottomMargin=Self.pdfMargin
             }
             let process=Process(),errors=Pipe()
             process.executableURL=helper

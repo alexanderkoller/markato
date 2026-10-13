@@ -45,11 +45,14 @@ public enum HTMLDocument {
         --border-muted: #d1d9e0b3;
         --danger: #d1242f;
       }
-      html, body { background: white; }
+      @page { size: A4 portrait; margin: 15mm; }
+      html, body { background: white; font-size: 11pt; }
       #preview { padding: 0; }
-      pre, blockquote, table, img, .katex-display, .mermaid-diagram {
+      pre, blockquote, table, tr, img, .katex-display, .mermaid-diagram {
         break-inside: avoid;
       }
+      img { max-width: 100%; max-height: 267mm; object-fit: contain; }
+      table { max-width: 100%; overflow-wrap: anywhere; }
       thead { display: table-header-group; }
       a { color: inherit; text-decoration: underline; }
     }

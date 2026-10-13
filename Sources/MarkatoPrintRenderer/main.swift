@@ -62,18 +62,50 @@ private func fail(_ message:String,_ status:Int32=1)->Never {
             --fg-accent:#0969da; --bg-default:#fff; --bg-muted:#f6f8fa;
             --bg-neutral-muted:#818b981f; --border-default:#d1d9e0;
             --border-muted:#d1d9e0b3; --danger:#d1242f; }
-          html, body { background:white; } #preview { padding:0; }
+          /* WKWebView.createPDF maps one CSS pixel to one PDF point. Use px here
+             so the resulting text is physically 11 pt rather than 11 CSS pt
+             (which is 14.67 px). */
+          html, body { background:white; font-size:11px; } #preview { padding:0; }
+          #preview > section:has(> table) { overflow-x:visible; }
+          table { max-width:100%; overflow-wrap:anywhere; }
+          tr { break-inside:avoid; }
+          tr.markato-page-spacer, tr.markato-page-spacer > td {
+            padding:0 !important; border:0 !important; background:white !important;
+            font-size:0 !important; line-height:0 !important;
+          }
+          img { display:block; max-width:100%; height:auto; object-fit:contain; }
           a { color:inherit; text-decoration:underline; }
         `;
         document.head.appendChild(style);
         const pageHeight = pageHeightValue;
-        for (const section of document.querySelectorAll('#preview > section')) {
-          const rect = section.getBoundingClientRect();
+        document.documentElement.style.setProperty('--markato-page-height', `${pageHeight}px`);
+        for (const image of document.images) image.style.maxHeight = `${pageHeight}px`;
+        const protectedBlocks = document.querySelectorAll(
+          '#preview > section, #preview table, #preview table tr, #preview img, #preview pre, ' +
+          '#preview blockquote, #preview .katex-display, #preview .mermaid-diagram'
+        );
+        for (const block of protectedBlocks) {
+          const rect = block.getBoundingClientRect();
           const top = rect.top + window.scrollY;
           const offset = ((top % pageHeight) + pageHeight) % pageHeight;
-          if (rect.height <= pageHeight && offset + rect.height > pageHeight) {
-            const current = parseFloat(getComputedStyle(section).marginTop) || 0;
-            section.style.marginTop = `${current + pageHeight - offset}px`;
+          if (rect.height <= pageHeight && offset > 0.5 && offset + rect.height > pageHeight + 0.5) {
+            const gap = pageHeight - offset + 0.5;
+            if (block.tagName === 'TR') {
+              const spacer = document.createElement('tr');
+              spacer.className = 'markato-page-spacer';
+              spacer.setAttribute('aria-hidden', 'true');
+              const cell = document.createElement('td');
+              cell.colSpan = Math.max(1, Array.from(block.cells).reduce(
+                (total, item) => total + Math.max(1, item.colSpan), 0
+              ));
+              spacer.style.height = `${gap}px`;
+              cell.style.height = `${gap}px`;
+              spacer.appendChild(cell);
+              block.parentNode.insertBefore(spacer, block);
+            } else {
+              const current = parseFloat(getComputedStyle(block).marginTop) || 0;
+              block.style.marginTop = `${current + gap}px`;
+            }
           }
         }
         return Math.max(document.documentElement.scrollHeight, document.body.scrollHeight);
