@@ -52,6 +52,15 @@ private func applying(_ change:PreparedBlockChange,to blocks:[PreparedBlock])->[
     #expect(parsed.revision==3)
 }
 
+@Test func parserPublishesPlainHeadingTitlesForNavigation() async throws {
+    let worker=ComrakWorker()
+    let text="# 😀 *Heading* with [`code`](https://example.com) and $x^2$\n\nSetext **title**\n---\n"
+    let parsed=try await parse(worker,TextRope(text),1)
+    let headings=try #require(parsed.blocks?.filter{$0.kind.isHeading})
+    #expect(headings.map(\.kind.headingLevel)==[1,2])
+    #expect(headings.map(\.headingTitle)==["😀 Heading with code and x^2","Setext title"])
+}
+
 
 @Test func parserResetCannotReuseOldBlockIdentities() async throws {
     let worker=ComrakWorker()

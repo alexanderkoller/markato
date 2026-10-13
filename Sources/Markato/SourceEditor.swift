@@ -678,8 +678,9 @@ final class SourceEditor:NSView,NSTextViewDelegate,NSTextStorageDelegate,ScrollS
         changingLayout=true
         if position==0 {scroll.contentView.scroll(to:.zero)}
         else if position==document.source.count {scroll.contentView.scroll(to:NSPoint(x:0,y:max(0,canvas.bounds.height-scroll.contentSize.height)))}
-        else if let target=rect(for:position) {
-            if alignTop {scroll.contentView.scroll(to:NSPoint(x:0,y:target.minY))}
+        else if let y=renderedVerticalPosition(for:position) {
+            let target=NSRect(x:textView.textContainerInset.width,y:y,width:1,height:1)
+            if alignTop {scroll.contentView.scroll(to:NSPoint(x:0,y:y))}
             else {canvas.scrollToVisible(target.insetBy(dx:0,dy:-30))}
         }
         scroll.reflectScrolledClipView(scroll.contentView);changingLayout=false

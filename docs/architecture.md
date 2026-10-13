@@ -4,13 +4,15 @@ Markato uses AppKit and TextKit for editing, Comrak for Markdown structure and H
 
 ## Editing and preview
 
-Use the standard File and Edit menus to open and save Markdown documents, undo, redo, cut, copy, and paste. Command-F searches the whole document. Command-G and Shift-Command-G navigate results. Option-Command-P toggles the preview; Command-Plus and Command-Minus adjust font sizes.
+Use the standard File and Edit menus to open and save Markdown documents, undo, redo, cut, copy, and paste. Command-F searches the whole document. Command-G and Shift-Command-G navigate results. The persistent title-bar button or Control-Command-S toggles the outline sidebar, Option-Command-P toggles the preview, and Command-Plus and Command-Minus adjust font sizes.
 
 The source owns document navigation. Vertical wheel and trackpad gestures over the preview navigate the source; tables and code scroll horizontally within the preview. Drag the divider to change pane widths. Source syntax remains literal, with colors, font traits, and heading sizes applied to it. Preview context menus offer copying and independent item inspection.
 
+The collapsible leading sidebar is a renderer-independent navigation shell. Its outline is built from heading level, plain inline title, stable block ID, and source range published by the Comrak-backed `PreparedDocument`; it never scrapes the preview HTML. Ordinary edits do not rebuild the outline: the retained block tree lazily shifts the unchanged suffix, and the sidebar keeps its existing rows. Current source positions are resolved from stable block IDs only when selecting or activating a heading. A semantic heading change advances a separate outline generation and refreshes the hierarchy. Selecting a row reveals that source range through the same navigation path used by Find, so the bounded preview follows normally. `SidebarPane` owns only hierarchy, selection, and disclosure behavior. This separation leaves room for search-result and comment providers to publish their own labels and source targets without coupling those features to Markdown rendering or the preview DOM.
+
 Tables and code blocks are rendered as complete semantic blocks. Table column widths do not depend on which source rows are visible. Comrak recognizes inline/display dollar delimiters, backslash parentheses/brackets and math fences; KaTeX typesets the recognized equations, including aligned expressions and matrices. Code spans and ordinary fences remain code. Local images are resolved by the HTML preview module and embedded into its bounded document; HTTP/HTTPS image URLs are passed to Ultralight. Fonts and styles are bundled for offline use.
 
-Files use UTF-8 or UTF-16. Existing UTF-8 BOMs and CRLF conventions are preserved; new documents use UTF-8. NSDocument supplies normal save state, safe saving, and autosave behavior. No application-drawn modified-state label is used.
+Files use UTF-8 or UTF-16. Existing UTF-8 BOMs and CRLF conventions are preserved; new documents use UTF-8. Saving is explicit: edits remain unsaved until the user invokes Save, and AppKit supplies the native edited indicator and close confirmation. No application-drawn modified-state label is used.
 
 ## Storage and parsing
 

@@ -28,6 +28,17 @@ public enum MarkdownKind:UInt8,Sendable,CaseIterable {
     }
     public init(name:String) {self=Self.allCases.first{$0.name==name} ?? .paragraph}
     public var isHeading:Bool {rawValue>=Self.atxHeading1.rawValue && rawValue<=Self.setextHeading6.rawValue}
+    public var headingLevel:Int? {
+        switch self {
+        case .atxHeading1,.setextHeading1:1
+        case .atxHeading2,.setextHeading2:2
+        case .atxHeading3,.setextHeading3:3
+        case .atxHeading4,.setextHeading4:4
+        case .atxHeading5,.setextHeading5:5
+        case .atxHeading6,.setextHeading6:6
+        default:nil
+        }
+    }
     public var isMark:Bool {
         switch self {case .headerMark,.emphasisMark,.linkMark,.codeMark,.listMark,.quoteMark:true;default:false}
     }
@@ -123,11 +134,25 @@ public struct PreparedBlock:Sendable {
     public let from:Int,to:Int
     public let html:HTMLPayload?
     public let syntax:SyntaxPayload?
-    public init(id:BlockID,kind:MarkdownKind,from:Int,to:Int,html:HTMLPayload?=nil,syntax:SyntaxPayload?=nil) {
+    public let headingTitle:String?
+    public init(id:BlockID,kind:MarkdownKind,from:Int,to:Int,html:HTMLPayload?=nil,
+                syntax:SyntaxPayload?=nil,headingTitle:String?=nil) {
         self.id=id;self.kind=kind;self.from=from;self.to=to;self.html=html;self.syntax=syntax
+        self.headingTitle=headingTitle
     }
-    public init(id:String,kind:String,from:Int,to:Int,html:String?=nil) {
-        self.init(id:BlockID(id),kind:MarkdownKind(name:kind),from:from,to:to,html:html.map(HTMLPayload.init))
+    public init(id:String,kind:String,from:Int,to:Int,html:String?=nil,headingTitle:String?=nil) {
+        self.init(id:BlockID(id),kind:MarkdownKind(name:kind),from:from,to:to,
+            html:html.map(HTMLPayload.init),headingTitle:headingTitle)
+    }
+}
+
+public struct DocumentHeading:Equatable,Sendable {
+    public let id:BlockID
+    public let title:String
+    public let level:Int
+    public let range:NSRange
+    public init(id:BlockID,title:String,level:Int,range:NSRange) {
+        self.id=id;self.title=title;self.level=level;self.range=range
     }
 }
 public struct PreparedBlockChange:Sendable {

@@ -1,145 +1,147 @@
 #import "@tola/address:0.0.0": url-of-asset
 
 #let asset(name) = url-of-asset("/assets/images/" + name)
+#let download-url = "https://github.com/alexanderkoller/markato/releases/latest"
 
 #html.a(class: "skip-link", href: "./\u{23}main")[Skip to content]
 
 #html.elem("header", attrs: (class: "site-header"))[
   #html.a(class: "wordmark", href: "./\u{23}top")[
-    #html.img(src: asset("markato-icon.png"), alt: "", width: 44, height: 44)
+    #html.img(src: asset("markato-icon.png"), alt: "", width: 42, height: 42)
     #html.span[Markato]
   ]
   #html.elem("nav")[
-    #html.a(href: "./\u{23}editor")[Editor]
+    #html.a(href: "./\u{23}advances")[What’s new]
     #html.a(href: "./\u{23}performance")[Performance]
-    #html.a(href: "./\u{23}why")[Why Markato]
-    #html.a(href: "https://github.com/alexanderkoller/markato")[GitHub]
+    #html.a(href: "./\u{23}lineage")[MacDown]
+    #html.a(class: "nav-download", href: download-url)[Download]
   ]
 ]
 
 #html.elem("main", attrs: (id: "main"))[
   #html.elem("section", attrs: (class: "hero", id: "top"))[
     #html.div(class: "hero-copy")[
-      #html.p(class: "eyebrow")[Markdown for Apple Silicon]
-      #html.elem("h1")[Clean on the page.#html.br()Fast under pressure.]
-      #html.p(class: "lede")[Markato is a native Markdown editor for Mac. Write source on the left, read the live preview on the right, and keep moving when the document gets huge.]
+      #html.p(class: "eyebrow")[A native Markdown editor for Apple Silicon]
+      #html.elem("h1")[Fast editing for long Markdown documents.]
+      #html.p(class: "lede")[Markato follows MacDown’s source-on-the-left, preview-on-the-right design. It is built for current Macs and remains usable as a document grows.]
       #html.div(class: "hero-actions")[
-        #html.a(class: "button button-primary", href: "https://github.com/alexanderkoller/markato\u{23}build-from-source")[Build Markato]
-        #html.a(class: "button button-text", href: "./\u{23}editor")[See the editor #html.span[↓]]
+        #html.a(class: "button button-primary", href: download-url)[Download for Mac]
+        #html.a(class: "button button-secondary", href: "https://github.com/alexanderkoller/markato")[View source #html.span[↗]]
       ]
-      #html.p(class: "requirements")[Development prototype · macOS 15 or later · Apple Silicon]
+      #html.p(class: "requirements")[macOS 15 or later · Apple Silicon]
     ]
-    #html.div(class: "hero-mark")[
-      #html.img(src: asset("markato-icon.png"), alt: "", width: 1024, height: 1024)
+    #html.div(class: "hero-art")[
+      #html.div(class: "hero-swatch")[]
+      #html.img(src: asset("markato-icon.png"), alt: "Markato app icon", width: 1024, height: 1024)
     ]
   ]
 
-  #html.elem("section", attrs: (class: "editor-section", id: "editor"))[
-    #html.div(class: "section-intro")[
-      #html.p(class: "section-number")[01 / The editor]
-      #html.div[
-        #html.elem("h2", attrs: (id: "editor-title"))[Write here. Read there.]
-        #html.p[The split view that made MacDown useful, with a preview built to remain quick as your file grows. The source stays plain text. The preview follows the passage you are working on.]
-      ]
+  #html.elem("section", attrs: (class: "product", id: "editor"))[
+    #html.div(class: "section-heading")[
+      #html.p(class: "section-label")[Editor]
+      #html.elem("h2")[Source, preview, and document outline]
+      #html.p[The source editor and preview remain side by side, as in MacDown. The outline provides direct navigation through headings in longer files.]
     ]
-
     #html.elem("figure", attrs: (class: "app-shot"))[
-      #html.div(class: "window-bar")[
-        #html.span[]
-        #html.span[]
-        #html.span[]
-        #html.elem("b")[Example.md]
-      ]
       #html.img(
-        src: asset("markato-editor.png"),
-        alt: "Markato showing Markdown source beside a live formatted preview with headings, prose, equations, and an image.",
-        width: 2240,
-        height: 1520,
+        src: asset("markato-window.png"),
+        alt: "The complete Markato window showing its outline, Markdown source, and live preview.",
+        width: 2800,
+        height: 1960,
       )
-      #html.elem("figcaption")[Source and preview stay side by side. Drag the divider, hide the preview, or follow the document in sync.]
+      #html.elem("figcaption")[The complete Markato window: outline, source, and preview.]
     ]
   ]
 
-  #html.elem("section", attrs: (class: "feature-ledger"))[
-    #html.elem("article")[
-      #html.p(class: "feature-index")[A]
-      #html.elem("h3")[One file at a time]
-      #html.p[Open a Markdown file, edit it, save it. No workspace, account, library, or new file format.]
+  #html.elem("section", attrs: (class: "advances", id: "advances"))[
+    #html.div(class: "section-heading compact")[
+      #html.p(class: "section-label")[Long documents]
+      #html.elem("h2")[Performance on long documents]
+      #html.p[This is Markato’s principal difference from the editors that established its interface.]
     ]
-    #html.elem("article")[
-      #html.p(class: "feature-index")[B]
-      #html.elem("h3")[The useful parts]
-      #html.p[Tables, code fences, images, equations, and Mermaid diagrams render in the preview.]
-    ]
-    #html.elem("article")[
-      #html.p(class: "feature-index")[C]
-      #html.elem("h3")[Works offline]
-      #html.p[Fonts, styles, syntax highlighting, math, and diagram rendering are bundled with the app.]
+    #html.div(class: "feature-grid")[
+      #html.elem("article")[
+        #html.div(class: "feature-icon coral")[#html.img(src: asset("icon-speed.svg"), alt: "", width: 48, height: 48)]
+        #html.elem("h3")[Fast opening]
+        #html.p[The editor reaches a usable preview without waiting for every part of a long document to finish rendering.]
+      ]
+      #html.elem("article")[
+        #html.div(class: "feature-icon violet")[#html.img(src: asset("icon-window.svg"), alt: "", width: 48, height: 48)]
+        #html.elem("h3")[Focused preview]
+        #html.p[The preview becomes usable before every part of the document has been rendered.]
+      ]
+      #html.elem("article")[
+        #html.div(class: "feature-icon blue")[#html.img(src: asset("icon-outline.svg"), alt: "", width: 48, height: 48)]
+        #html.elem("h3")[Document outline]
+        #html.p[Headings form a navigable outline for moving directly between sections.]
+      ]
     ]
   ]
 
   #html.elem("section", attrs: (class: "performance", id: "performance"))[
     #html.div(class: "performance-copy")[
-      #html.p(class: "section-number light")[02 / Performance]
-      #html.elem("h2", attrs: (id: "performance-title"))[An 8 MB document.#html.br()#html.elem("strong")[Open in 0.26 seconds.]]
-      #html.p[On an Apple M4 Pro, Markato reached a visible preview 9.7 times faster than MacDown 2.0 and 46 times faster than MacDown 0.7.3 in the same test.]
-      #html.p(class: "fine-print")[Controlled same-machine benchmark. Median of three fresh-process opens. Results describe the tested hardware and documents, not every Mac or Markdown file.]
-      #html.a(class: "text-link", href: "https://github.com/alexanderkoller/markato/blob/main/docs/performance.md")[Read the benchmark and method #html.span[↗]]
+      #html.p(class: "section-label")[Benchmark]
+      #html.elem("p", attrs: (class: "big-number"))[0.26 #html.elem("span")[seconds]]
+      #html.elem("h2")[Time to first visible preview for an 8 MB document]
+      #html.p[In the same Apple M4 Pro test, that was 9.7× faster than MacDown 2.0 and 46× faster than MacDown 0.7.3.]
+      #html.p(class: "fine-print")[Median of three fresh-process opens on the tested machine and document. Results are measurements, not a promise about every file or Mac.]
+      #html.a(class: "text-link", href: "https://github.com/alexanderkoller/markato/blob/main/docs/performance.md")[Benchmark and method #html.span[↗]]
     ]
-
     #html.elem("figure", attrs: (class: "performance-chart"))[
       #html.img(
         src: asset("markato-performance.png"),
-        alt: "Bar chart showing Markato opening an 8 MB Markdown file in 0.26 seconds, MacDown 2.0 in 2.48 seconds, MacDown 0.7.3 in 11.87 seconds, and MarkViewer and MacDown 3000 timing out after 60 seconds.",
+        alt: "Benchmark chart showing Markato opening an 8 MB Markdown file in 0.26 seconds.",
         width: 1600,
         height: 960,
       )
     ]
   ]
 
-  #html.elem("section", attrs: (class: "lineage", id: "why"))[
-    #html.div(class: "lineage-heading")[
-      #html.p(class: "section-number")[03 / Why Markato]
-      #html.elem("h2", attrs: (id: "lineage-title"))[MacDown showed the way.#html.br()Markato takes it forward.]
+  #html.elem("section", attrs: (class: "lineage", id: "lineage"))[
+    #html.div(class: "lineage-title")[
+      #html.p(class: "section-label")[MacDown heritage]
+      #html.elem("h2")[Markato follows MacDown’s split-pane design.]
     ]
     #html.div(class: "lineage-body")[
-      #html.p[MacDown got the shape right: Markdown source, a rendered preview, and very little in the way. Markato keeps that directness.]
-      #html.p[But the original MacDown 0.7.3 release is an Intel app. Markato is built for Apple Silicon and current macOS, with a preview architecture designed around documents that no longer fit the old assumptions.]
-      #html.p[MacDown 2.0 and MacDown 3000 are part of the same ongoing story. Markato is a separate answer: familiar where it helps, new where performance demands it.]
-    ]
-  ]
-
-  #html.elem("section", attrs: (class: "plain-list"))[
-    #html.div[
-      #html.p(class: "section-number")[04 / In the box]
-      #html.elem("h2", attrs: (id: "inside-title"))[Just the things you expect.]
-    ]
-    #html.elem("ul")[
-      #html.elem("li")[#html.span[01] Synchronized source and preview]
-      #html.elem("li")[#html.span[02] Search, undo, redo, and text sizing]
-      #html.elem("li")[#html.span[03] Syntax-highlighted code blocks]
-      #html.elem("li")[#html.span[04] Tables and local or web images]
-      #html.elem("li")[#html.span[05] Inline and display mathematics]
-      #html.elem("li")[#html.span[06] Mermaid diagrams rendered as SVG]
-    ]
-  ]
-
-  #html.elem("section", attrs: (class: "closing"))[
-    #html.img(src: asset("markato-icon.png"), alt: "Markato app icon", width: 160, height: 160)
-    #html.div[
-      #html.p(class: "eyebrow")[Early, open, and useful]
-      #html.elem("h2")[Markato is a development prototype.]
-      #html.p[It is ready to explore and build from source. It is not pretending to be finished.]
-      #html.div(class: "hero-actions")[
-        #html.a(class: "button button-primary", href: "https://github.com/alexanderkoller/markato\u{23}build-from-source")[Build from source]
-        #html.a(class: "button button-text", href: "https://github.com/alexanderkoller/markato")[View on GitHub #html.span[↗]]
+      #html.p(class: "lineage-lede")[MacDown established the interaction that Markato retains: Markdown source on the left, a rendered preview on the right, and ordinary Markdown files underneath.]
+      #html.p[The last original MacDown release, version 0.7.3, is an Intel application. Markato targets Apple Silicon and current macOS, and its preview is designed for substantially larger documents.]
+      #html.p[Markato is not the only continuation of this design. MacDown 2.0 and MacDown 3000 pursue related goals in their own implementations.]
+      #html.div(class: "lineage-links")[
+        #html.a(href: "https://github.com/MacDownApp/macdown")[Original MacDown #html.span[↗]]
+        #html.a(href: "https://github.com/xuanji86/MacDown2.0")[MacDown 2.0 #html.span[↗]]
+        #html.a(href: "https://macdown.app/")[MacDown 3000 #html.span[↗]]
       ]
     ]
+  ]
+
+  #html.elem("section", attrs: (class: "essentials"))[
+    #html.div(class: "section-heading compact")[
+      #html.p(class: "section-label")[Markdown support]
+      #html.elem("h2")[Features available in the preview]
+    ]
+    #html.elem("ul")[
+      #html.elem("li")[#html.span[Math] Inline, display, aligned equations, and matrices]
+      #html.elem("li")[#html.span[Code] Syntax highlighting for extended language grammars]
+      #html.elem("li")[#html.span[Diagrams] Mermaid rendered locally as SVG]
+      #html.elem("li")[#html.span[Files] Local and web images, tables, search, undo, and save]
+      #html.elem("li")[#html.span[Offline] Fonts, styles, math, and diagram rendering are bundled]
+      #html.elem("li")[#html.span[Focus] Adjustable panes and a preview you can hide]
+    ]
+  ]
+
+  #html.elem("section", attrs: (class: "download", id: "download"))[
+    #html.img(src: asset("markato-icon.png"), alt: "", width: 112, height: 112)
+    #html.div[
+      #html.p(class: "section-label")[Markato for Mac]
+      #html.elem("h2")[Download Markato]
+      #html.p[Markato requires macOS 15 or later on an Apple Silicon Mac. It uses ordinary Markdown files and requires no account.]
+    ]
+    #html.a(class: "button button-download", href: download-url)[Download for Mac]
   ]
 ]
 
 #html.elem("footer")[
-  #html.p[Markato]
-  #html.p[A fast Markdown editor for long documents.]
-  #html.p[#html.a(href: "https://github.com/alexanderkoller/markato")[Source on GitHub]]
+  #html.p[© 2026 Markato]
+  #html.p[A Markdown editor for long documents.]
+  #html.p[#html.a(href: "https://github.com/alexanderkoller/markato")[GitHub #html.span[↗]]]
 ]

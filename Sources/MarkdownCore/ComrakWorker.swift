@@ -177,9 +177,16 @@ public final class ComrakWorker: @unchecked Sendable {
         let syntaxArena=SyntaxArena(spans)
         if view.block_count>0,let records=view.blocks {
             for (index,record) in UnsafeBufferPointer(start:records,count:view.block_count).enumerated() {
+                let headingTitle:String?
+                if kind(record.kind).isHeading {
+                    headingTitle=record.heading_title.length>0 && record.heading_title.bytes != nil
+                        ? String(decoding:UnsafeBufferPointer(start:record.heading_title.bytes,count:record.heading_title.length),as:UTF8.self)
+                        : ""
+                } else {headingTitle=nil}
                 blocks.append(PreparedBlock(id:allocateBlockID(),kind:kind(record.kind),from:record.from,to:record.to,
                     html:HTMLPayload(arena:arena,index:index),
-                    syntax:SyntaxPayload(arena:syntaxArena,range:record.span_start..<(record.span_start+record.span_count))))
+                    syntax:SyntaxPayload(arena:syntaxArena,range:record.span_start..<(record.span_start+record.span_count)),
+                    headingTitle:headingTitle))
             }
         }
         return ParseResult(revision:Int(view.revision),spans:spans,blocks:blocks,
@@ -219,7 +226,8 @@ public final class ComrakWorker: @unchecked Sendable {
         }
         if let guardID=context.firstGuardID,!used.contains(guardID) {return nil}
         if let guardID=context.lastGuardID,!used.contains(guardID) {return nil}
-        let changed=blocks.map{PreparedBlock(id:mapped[$0.id]!,kind:$0.kind,from:$0.from,to:$0.to,html:$0.html,syntax:$0.syntax)}
+        let changed=blocks.map{PreparedBlock(id:mapped[$0.id]!,kind:$0.kind,from:$0.from,to:$0.to,
+            html:$0.html,syntax:$0.syntax,headingTitle:$0.headingTitle)}
         return ParseResult(revision:revision,spans:parsed.spans,
             blockChange:PreparedBlockChange(prefix:context.prefix,suffix:context.suffix,shift:context.shift,blocks:changed),
             from:parsed.from,to:parsed.to,hasReferences:false)

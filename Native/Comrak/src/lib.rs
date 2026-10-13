@@ -41,6 +41,7 @@ struct Block {
     from: usize,
     to: usize,
     html: String,
+    heading_title: String,
     spans: Vec<Span>,
 }
 struct CapturedBlock {
@@ -68,6 +69,7 @@ pub struct BlockRecord {
     span_start: usize,
     span_count: usize,
     html: StringView,
+    heading_title: StringView,
 }
 #[repr(C)]
 pub struct SpanRecord {
@@ -96,6 +98,7 @@ pub struct AstraComrakResult {
     // StringViews point into these output strings. Moving String headers does
     // not move their heap allocations; parser-only block/span state is dropped.
     _html: Vec<String>,
+    _heading_titles: Vec<String>,
 }
 
 fn string_view(text: &str) -> StringView {
@@ -146,6 +149,7 @@ fn parse_records(
     let mut block_records = Vec::with_capacity(document.blocks.len());
     let mut span_records = Vec::with_capacity(span_count);
     let mut html = Vec::with_capacity(document.blocks.len());
+    let mut heading_titles = Vec::with_capacity(document.blocks.len());
     for (index, block) in document.blocks.into_iter().enumerate() {
         let span_start = span_records.len();
         for span in block.spans {
@@ -156,7 +160,9 @@ fn parse_records(
             });
         }
         let html_view = string_view(&block.html);
+        let heading_title_view = string_view(&block.heading_title);
         html.push(block.html);
+        heading_titles.push(block.heading_title);
         block_records.push(BlockRecord {
             id: index + 1,
             kind: block.kind,
@@ -165,6 +171,7 @@ fn parse_records(
             span_start,
             span_count: span_records.len() - span_start,
             html: html_view,
+            heading_title: heading_title_view,
         });
     }
     Ok(AstraComrakResult {
@@ -175,6 +182,7 @@ fn parse_records(
         blocks: block_records,
         spans: span_records,
         _html: html,
+        _heading_titles: heading_titles,
     })
 }
 
@@ -310,6 +318,26 @@ fn block_kind(node: Node<'_>) -> u8 {
         NodeValue::HtmlBlock(_) => kind::HTML_BLOCK,
         _ => kind::PARAGRAPH,
     }
+}
+
+/// Produce a compact navigation label from the parser's inline tree. This is
+/// deliberately separate from rendered HTML so callers never have to strip
+/// tags or reparse Markdown to build an outline.
+fn heading_title(node: Node<'_>) -> String {
+    if !matches!(node.data().value, NodeValue::Heading(_)) {
+        return String::new();
+    }
+    let mut title = String::new();
+    for child in node.descendants().skip(1) {
+        match &child.data().value {
+            NodeValue::Text(text) => title.push_str(text),
+            NodeValue::Code(code) => title.push_str(&code.literal),
+            NodeValue::Math(math) => title.push_str(&math.literal),
+            NodeValue::SoftBreak | NodeValue::LineBreak => title.push(' '),
+            _ => (),
+        }
+    }
+    title.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 impl Render<'_> {
     fn span(&mut self, kind: u8, range: std::ops::Range<usize>) {
@@ -490,6 +518,7 @@ fn format_node(
                     from,
                     to,
                     html: String::new(),
+                    heading_title: heading_title(node),
                     spans: vec![],
                 },
             });
@@ -626,6 +655,7 @@ fn parse_source(
                     from: index.utf16(position),
                     to: index.utf16(captured.bytes.start),
                     html: String::new(),
+                    heading_title: String::new(),
                     spans: vec![],
                 });
             }
@@ -639,6 +669,7 @@ fn parse_source(
             from: index.utf16(position),
             to: length,
             html: String::new(),
+            heading_title: String::new(),
             spans: vec![],
         });
     }
@@ -648,6 +679,7 @@ fn parse_source(
             from: 0,
             to: length,
             html: String::new(),
+            heading_title: String::new(),
             spans: vec![],
         });
     }
@@ -757,10 +789,11 @@ mod tests {
     }
     #[test]
     fn native_html_styles_and_utf16_share_one_tree() {
-        let source = "# 😀 Heading\r\n\r\nA **bold** and *italic* [link](https://example.com).\r\n";
+        let source = "# 😀 *Heading* with [`code`](https://example.com) and $x^2$\r\n\r\nA **bold** and *italic* [link](https://example.com).\r\n";
         let d = doc(source);
         assert_eq!(d.length, source.encode_utf16().count());
-        assert!(d.blocks[0].html.contains("<h1>😀 Heading</h1>"));
+        assert!(d.blocks[0].html.contains("<h1>"));
+        assert_eq!(d.blocks[0].heading_title, "😀 Heading with code and x^2");
         let strong = d.blocks[1]
             .spans
             .iter()

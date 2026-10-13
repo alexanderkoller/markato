@@ -72,6 +72,7 @@ import MarkdownCore
     }
     static func run(_ document:MarkdownDocument) {
         guard let controller=document.windowControllers.first as? EditorWindowController else {fail("Missing editor window")}
+        check(!MarkdownDocument.autosavesInPlace,"Markdown documents must require an explicit save")
         if CommandLine.arguments.contains("--integration-highlighting") {
             verifyHighlighting(controller,document:document);return
         }
@@ -80,6 +81,9 @@ import MarkdownCore
         }
         if CommandLine.arguments.contains("--integration-layout-index") {
             verifyLayoutIndex();return
+        }
+        if CommandLine.arguments.contains("--integration-outline") {
+            verifyOutline(controller,document:document);return
         }
         if CommandLine.arguments.contains("--integration-preview-jump") {
             controller.source.reveal(0,alignTop:true)
@@ -98,6 +102,43 @@ import MarkdownCore
             wait(3000);return
         }
         verifyUltralightPreview(controller,document:document)
+    }
+    private static func verifyOutline(_ controller:EditorWindowController,document:MarkdownDocument) {
+        @MainActor func wait(_ remaining:Int,_ completion:@escaping()->Void) {
+            guard remaining>0 else{fail("Outline did not settle: headings=\(controller.sidebar.debugHeadingCount), \(controller.preview.debugGeometry())")}
+            if controller.sidebar.debugHeadingCount>80,controller.hasPreparedDocument,
+               controller.preview.lastRevision==document.revision {completion()}
+            else {DispatchQueue.main.asyncAfter(deadline:.now()+0.01){wait(remaining-1,completion)}}
+        }
+        wait(500) {
+            check(controller.isSidebarVisible,"Outline sidebar must be visible initially")
+            check(controller.window?.toolbar?.items.contains(where:{
+                $0.action == #selector(EditorWindowController.toggleSidebar(_:)) && $0.isEnabled
+            })==true,"The window must keep an enabled sidebar toggle in its toolbar")
+            check(controller.sidebar.debugHeadingTitles.first=="Markato — a long example",
+                "Outline must use parser-produced plain heading titles")
+            let selected=controller.sidebar.debugHeading(containing:"Section 56")
+            check(controller.sidebar.debugActivateHeading(containing:"Section 56"),"Missing deep outline heading")
+            let expected=(document.source.string as NSString).range(of:"## Section 56 —").location
+            check(selected?.range.location==expected,
+                "Outline heading range is wrong: expected=\(expected), heading=\(String(describing:selected))")
+            @MainActor func waitForJump(_ remaining:Int) {
+                guard remaining>0 else{fail("Outline jump did not settle: \(controller.preview.debugGeometry())")}
+                if controller.source.visibleSourceRange.location<=expected,
+                   NSMaxRange(controller.source.visibleSourceRange)>expected,
+                   controller.preview.coversSourceViewport {
+                    check(controller.preview.preparedFragmentCount<350,"Outline jump must keep the preview DOM bounded")
+                    controller.toggleSidebar(nil)
+                    check(!controller.isSidebarVisible,"Sidebar toggle must collapse the outline")
+                    controller.toggleSidebar(nil)
+                    check(controller.isSidebarVisible,"Sidebar toggle must restore the outline")
+                    print("OUTLINE INTEGRATION PASSED: semantic headings, deep jump, bounded preview, collapse and restore")
+                    exit(EXIT_SUCCESS)
+                }
+                DispatchQueue.main.asyncAfter(deadline:.now()+0.01){waitForJump(remaining-1)}
+            }
+            waitForJump(500)
+        }
     }
     private static func verifyMermaid(_ controller:EditorWindowController,document:MarkdownDocument) {
         let preview=controller.preview

@@ -18,6 +18,7 @@ typedef struct {
     size_t from, to;
     size_t span_start, span_count;
     AstraComrakStringView html;
+    AstraComrakStringView heading_title;
 } AstraComrakBlockRecord;
 typedef struct {
     uint8_t kind;

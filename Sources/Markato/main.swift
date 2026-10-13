@@ -75,12 +75,14 @@ func exportProfileRecording(_ path:UnsafePointer<CChar>) {
     @objc func showFind(_ sender:Any?) { currentEditor?.showFind(sender) }
     @objc func findNext(_ sender:Any?) { currentEditor?.findNext(sender) }
     @objc func findPrevious(_ sender:Any?) { currentEditor?.findPrevious(sender) }
+    @objc func toggleSidebar(_ sender:Any?) { currentEditor?.toggleSidebar(sender) }
     @objc func togglePreview(_ sender:Any?) { currentEditor?.togglePreview(sender) }
     @objc func increaseFont(_ sender:Any?) { currentEditor?.increaseFont(sender) }
     @objc func decreaseFont(_ sender:Any?) { currentEditor?.decreaseFont(sender) }
     @objc func saveDocument(_ sender:Any?) { (currentEditor?.document as? NSDocument)?.save(sender) }
     @objc func saveDocumentAs(_ sender:Any?) { (currentEditor?.document as? NSDocument)?.saveAs(sender) }
     @objc func revertDocumentToSaved(_ sender:Any?) { (currentEditor?.document as? NSDocument)?.revertToSaved(sender) }
+    @objc func newDocument(_ sender:Any?) {openUntitledDocument()}
     #if DEBUG
     @objc func toggleTimingDiagnostics(_ sender:Any?) {
         if TimingDiagnostics.shared.isRecording {TimingDiagnostics.shared.stop()}
@@ -118,6 +120,7 @@ func exportProfileRecording(_ path:UnsafePointer<CChar>) {
     }
     #endif
     func validateMenuItem(_ menuItem:NSMenuItem)->Bool {
+        if menuItem.action == #selector(newDocument(_:)) {return true}
         #if DEBUG
         if menuItem.action == #selector(toggleTimingDiagnostics(_:)) {
             menuItem.title=TimingDiagnostics.shared.isRecording ? "Stop Timing Diagnostics":"Start Timing Diagnostics"
@@ -150,11 +153,24 @@ func exportProfileRecording(_ path:UnsafePointer<CChar>) {
             document.showWindows()
             if CommandLine.arguments.contains("--integration-test") { DispatchQueue.main.asyncAfter(deadline:.now()+1) { IntegrationCheck.run(document) } }
             if CommandLine.arguments.contains("--smoke-test") {
+                let collapsed=CommandLine.arguments.contains("--smoke-sidebar-collapsed")
+                let wholeWindow=CommandLine.arguments.contains("--smoke-whole-window")
+                if collapsed {
+                    (document.windowControllers.first as? EditorWindowController)?.toggleSidebar(nil)
+                }
+                if wholeWindow {
+                    NSApp.activate(ignoringOtherApps:true)
+                    document.windowControllers.first?.window?.makeKeyAndOrderFront(nil)
+                }
                 DispatchQueue.main.asyncAfter(deadline:.now()+3) {
-                    guard let window = document.windowControllers.first?.window,let view = window.contentView,
+                    guard let window = document.windowControllers.first?.window,let contentView = window.contentView else { exit(2) }
+                    let view=wholeWindow ? contentView.superview ?? contentView:contentView
+                    guard
                           let bitmap = view.bitmapImageRepForCachingDisplay(in:view.bounds) else { exit(2) }
                     view.cacheDisplay(in:view.bounds,to:bitmap)
-                    try? bitmap.representation(using:.png,properties:[:])?.write(to:URL(fileURLWithPath:"/private/tmp/markato-smoke.png"))
+                    let path=wholeWindow ? "/private/tmp/markato-smoke-whole-window.png":
+                        collapsed ? "/private/tmp/markato-smoke-collapsed.png":"/private/tmp/markato-smoke.png"
+                    try? bitmap.representation(using:.png,properties:[:])?.write(to:URL(fileURLWithPath:path))
                     print("SMOKE: windows=\(NSApp.windows.count), nativeGlyphLayout=\((document.windowControllers.first as? EditorWindowController)?.source.textView.layoutManager != nil), previewRevision=\((document.windowControllers.first as? EditorWindowController)?.preview.lastRevision ?? -1)")
                     print((document.windowControllers.first as? EditorWindowController)?.preview.debugGeometry() ?? "No preview")
                     exit(EXIT_SUCCESS)
@@ -182,25 +198,51 @@ func exportProfileRecording(_ path:UnsafePointer<CChar>) {
                 let expectedURL=launchConfiguration.documentURL ?? finderURL
                 guard documents.count==1,let document=documents.first as? MarkdownDocument,
                       document.windowControllers.count==1,
-                      document.windowControllers.first?.window?.tabbingMode == .disallowed,
+                      let window=document.windowControllers.first?.window,
+                      window.tabbingMode == .disallowed,window.isVisible,
+                      NSScreen.screens.contains(where:{$0.visibleFrame.intersects(window.frame)}),
                       document.fileURL?.standardizedFileURL == expectedURL?.standardizedFileURL,
                       expectedURL != nil || document.source.count==0,
                       !checkingDefaultStartup || openedStartupFallback else {
-                    print("STARTUP FAILED: documents=\(documents.count)")
+                    let failedWindow=documents.first?.windowControllers.first?.window
+                    let failedDocument=documents.first as? MarkdownDocument
+                    let onScreen=failedWindow.map{window in NSScreen.screens.contains(where:{$0.visibleFrame.intersects(window.frame)})} ?? false
+                    print("STARTUP FAILED: documents=\(documents.count), controllers=\(documents.first?.windowControllers.count ?? -1), visible=\(failedWindow?.isVisible ?? false), onScreen=\(onScreen), tabbing=\(String(describing:failedWindow?.tabbingMode)), file=\(failedDocument?.fileURL?.path ?? "nil"), expected=\(expectedURL?.path ?? "nil"), characters=\(failedDocument?.source.count ?? -1), fallback=\(openedStartupFallback), frame=\(String(describing:failedWindow?.frame))")
                     exit(2)
                 }
-                print("STARTUP: empty=\(document.source.count==0), file=\(document.fileURL?.path ?? "untitled"), tabbing=disallowed, fallback=\(openedStartupFallback)")
+                print("STARTUP: empty=\(document.source.count==0), file=\(document.fileURL?.path ?? "untitled"), visible=true, tabbing=disallowed, fallback=\(openedStartupFallback)")
+                if CommandLine.arguments.contains("--integration-new-document") {
+                    NSApp.mainMenu?.update()
+                    guard let item=NSApp.mainMenu?.item(withTitle:"File")?.submenu?.item(withTitle:"New"),
+                          item.isEnabled,item.action == #selector(newDocument(_:)),
+                          NSApp.sendAction(item.action!,to:item.target,from:item) else {
+                        print("NEW DOCUMENT FAILED: menu action is not routed to Markato")
+                        exit(2)
+                    }
+                    DispatchQueue.main.asyncAfter(deadline:.now()+0.5) {
+                        let documents=NSDocumentController.shared.documents
+                        let windows=documents.flatMap(\.windowControllers).compactMap(\.window)
+                        guard documents.count==2,windows.count==2,
+                              windows.allSatisfy({$0.isVisible && $0.tabbingMode == .disallowed}) else {
+                            print("NEW DOCUMENT FAILED: documents=\(documents.count), windows=\(windows.count)")
+                            exit(2)
+                        }
+                        print("NEW DOCUMENT: documents=2, visibleWindows=2, tabbing=disallowed")
+                        exit(EXIT_SUCCESS)
+                    }
+                    return
+                }
                 if let option=CommandLine.arguments.first(where:{$0.hasPrefix("--integration-second-document=")}) {
                     let path=String(option.dropFirst("--integration-second-document=".count))
                     openMarkdownFiles([path]) {success in
                         let documents=NSDocumentController.shared.documents
                         let windows=documents.flatMap(\.windowControllers).compactMap(\.window)
                         guard success,documents.count==2,windows.count==2,
-                              windows.allSatisfy({$0.tabbingMode == .disallowed}) else {
+                              windows.allSatisfy({$0.isVisible && $0.tabbingMode == .disallowed}) else {
                             print("SECOND OPEN FAILED: documents=\(documents.count), windows=\(windows.count)")
                             exit(2)
                         }
-                        print("SECOND OPEN: documents=2, windows=2, tabbing=disallowed")
+                        print("SECOND OPEN: documents=2, visibleWindows=2, tabbing=disallowed")
                         exit(EXIT_SUCCESS)
                     }
                     return
@@ -233,6 +275,8 @@ func exportProfileRecording(_ path:UnsafePointer<CChar>) {
     private func openUntitledDocument() {
         let document=MarkdownDocument()
         NSDocumentController.shared.addDocument(document);document.makeWindowControllers();document.showWindows()
+        document.windowControllers.first?.window?.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps:true)
     }
     private func openMarkdownFiles(_ filenames:[String],completion:@escaping (Bool)->Void) {
         guard filenames.count==1 else {
@@ -240,9 +284,14 @@ func exportProfileRecording(_ path:UnsafePointer<CChar>) {
         }
         do {
             let url=try validatedMarkdownURL(filenames[0])
-            NSDocumentController.shared.openDocument(withContentsOf:url,display:true) { _,_,error in
+            NSDocumentController.shared.openDocument(withContentsOf:url,display:true) { document,_,error in
                 if let error {self.present(error);completion(false)}
-                else {completion(true)}
+                else {
+                    document?.showWindows()
+                    document?.windowControllers.first?.window?.makeKeyAndOrderFront(nil)
+                    NSApp.activate(ignoringOtherApps:true)
+                    completion(true)
+                }
             }
         } catch {
             present(error);completion(false)
@@ -255,9 +304,9 @@ func exportProfileRecording(_ path:UnsafePointer<CChar>) {
         func submenu(_ title:String)->NSMenu { let item=NSMenuItem(); item.title=title;let menu=NSMenu(title:title);item.submenu=menu;main.addItem(item);return menu }
         func add(_ menu:NSMenu,_ title:String,_ action:Selector,_ key:String="",_ modifiers:NSEvent.ModifierFlags = .command) {
             let item=NSMenuItem(title:title,action:action,keyEquivalent:key);item.keyEquivalentModifierMask=modifiers
-            let routed:Set<String> = ["undo:","redo:","showFind:","findNext:","findPrevious:","togglePreview:","increaseFont:","decreaseFont:","saveDocument:","saveDocumentAs:","revertDocumentToSaved:"]
+            let routed:Set<String> = ["undo:","redo:","showFind:","findNext:","findPrevious:","toggleSidebar:","togglePreview:","increaseFont:","decreaseFont:","saveDocument:","saveDocumentAs:","revertDocumentToSaved:","newDocument:"]
             if routed.contains(NSStringFromSelector(action)) { item.target = self }
-            if action == #selector(NSDocumentController.newDocument(_:)) || action == #selector(NSDocumentController.openDocument(_:)) { item.target = NSDocumentController.shared }
+            if action == #selector(NSDocumentController.openDocument(_:)) { item.target = NSDocumentController.shared }
             menu.addItem(item)
         }
         let app=submenu("Markato")
@@ -266,7 +315,7 @@ func exportProfileRecording(_ path:UnsafePointer<CChar>) {
         app.addItem(.separator());add(app,"Hide Markato",#selector(NSApplication.hide(_:)),"h");add(app,"Hide Others",#selector(NSApplication.hideOtherApplications(_:)),"h",[.command,.option]);add(app,"Show All",#selector(NSApplication.unhideAllApplications(_:)))
         app.addItem(.separator());add(app,"Quit Markato",#selector(NSApplication.terminate(_:)),"q")
         let file=submenu("File")
-        add(file,"New",#selector(NSDocumentController.newDocument(_:)),"n");add(file,"Open…",#selector(NSDocumentController.openDocument(_:)),"o")
+        add(file,"New",#selector(newDocument(_:)),"n");add(file,"Open…",#selector(NSDocumentController.openDocument(_:)),"o")
         file.addItem(.separator());add(file,"Close",#selector(NSWindow.performClose(_:)),"w");add(file,"Save",#selector(NSDocument.save(_:)),"s");add(file,"Save As…",#selector(NSDocument.saveAs(_:)),"s",[.command,.shift])
         add(file,"Revert to Saved…",#selector(NSDocument.revertToSaved(_:)))
         let edit=submenu("Edit")
@@ -274,6 +323,7 @@ func exportProfileRecording(_ path:UnsafePointer<CChar>) {
         add(edit,"Cut",#selector(NSText.cut(_:)),"x");add(edit,"Copy",#selector(NSText.copy(_:)),"c");add(edit,"Paste",#selector(NSText.paste(_:)),"v");add(edit,"Select All",#selector(NSText.selectAll(_:)),"a")
         edit.addItem(.separator());add(edit,"Find…",#selector(EditorWindowController.showFind(_:)),"f");add(edit,"Find Next",#selector(EditorWindowController.findNext(_:)),"g");add(edit,"Find Previous",#selector(EditorWindowController.findPrevious(_:)),"g",[.command,.shift])
         let view=submenu("View")
+        add(view,"Show Sidebar",#selector(EditorWindowController.toggleSidebar(_:)),"s",[.command,.control])
         add(view,"Show Preview",#selector(EditorWindowController.togglePreview(_:)),"p",[.command,.option]);add(view,"Increase Font Size",#selector(EditorWindowController.increaseFont(_:)),"+");add(view,"Decrease Font Size",#selector(EditorWindowController.decreaseFont(_:)),"-")
         add(view,"Enter Full Screen",#selector(NSWindow.toggleFullScreen(_:)),"f",[.command,.control])
         let window=submenu("Window");NSApp.windowsMenu=window
@@ -343,7 +393,9 @@ let application = NSApplication.shared
 let delegate = MainActor.assumeIsolated {AppDelegate(launchConfiguration:launchConfiguration)}
 application.delegate = delegate
 #if DEBUG
-application.setActivationPolicy(CommandLine.arguments.contains("--integration-test") || CommandLine.arguments.contains("--smoke-test") || CommandLine.arguments.contains("--integration-startup") || ProcessInfo.processInfo.environment["MARKATO_INTEGRATION_DEFAULT_STARTUP"] == "1" ? .accessory:.regular)
+let backgroundCheck=(CommandLine.arguments.contains("--integration-test") || CommandLine.arguments.contains("--smoke-test") || CommandLine.arguments.contains("--integration-startup") || ProcessInfo.processInfo.environment["MARKATO_INTEGRATION_DEFAULT_STARTUP"] == "1")
+    && !CommandLine.arguments.contains("--smoke-active-window")
+application.setActivationPolicy(backgroundCheck ? .accessory:.regular)
 #else
 application.setActivationPolicy(.regular)
 #endif

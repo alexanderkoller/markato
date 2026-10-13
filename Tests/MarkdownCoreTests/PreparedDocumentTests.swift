@@ -39,6 +39,37 @@ private func prepared(_ id:String,_ from:Int,_ to:Int,_ text:String)->PreviewFra
     #expect(doc.heights(for:"c")?.preview==31)
     #expect(doc.styles(in:NSRange(location:17,length:5))?.first?.range==NSRange(location:17,length:5))
 }
+
+@Test func outlineProjectionSplicesHeadingsAndShiftsUnaffectedRanges() {
+    let doc=PreparedDocument()
+    doc.adopt([
+        .init(id:"title",kind:"ATXHeading1",from:0,to:7,headingTitle:"Title"),
+        .init(id:"body",kind:"Paragraph",from:9,to:20),
+        .init(id:"later",kind:"ATXHeading2",from:22,to:30,headingTitle:"Later")
+    ],revision:1,length:31)
+    #expect(doc.headings.map(\.title)==["Title","Later"])
+    doc.apply(.init(prefix:1,suffix:1,shift:5,blocks:[
+        .init(id:"inserted",kind:"ATXHeading3",from:9,to:25,headingTitle:"Inserted")
+    ]),revision:2,length:36)
+    #expect(doc.headings.map(\.title)==["Title","Inserted","Later"])
+    #expect(doc.headings.map(\.level)==[1,3,2])
+    #expect(doc.headings.map(\.range.location)==[0,9,27])
+}
+@Test func bodyEditDoesNotRebuildOutlineAndResolvesShiftedHeadingLazily() throws {
+    let doc=PreparedDocument()
+    doc.adopt([
+        .init(id:"title",kind:"ATXHeading1",from:0,to:7,headingTitle:"Title"),
+        .init(id:"body",kind:"Paragraph",from:9,to:20),
+        .init(id:"later",kind:"ATXHeading2",from:22,to:30,headingTitle:"Later")
+    ],revision:1,length:31)
+    let generation=doc.outlineGeneration
+    doc.apply(.init(prefix:1,suffix:1,shift:100,blocks:[
+        .init(id:"replacement",kind:"Paragraph",from:9,to:120)
+    ]),revision:2,length:131)
+    #expect(doc.outlineGeneration==generation)
+    #expect(try #require(doc.heading(id:BlockID("later"))).range.location==122)
+    #expect(doc.heading(at:125)?.id==BlockID("later"))
+}
 @Test func retainedStyleRecordsUseRelativeOffsetsAfterMultipleEdits() {
     let doc=PreparedDocument()
     doc.adopt([.init(id:"a",kind:"Paragraph",from:0,to:20),.init(id:"b",kind:"Paragraph",from:22,to:42)],revision:1,length:44)

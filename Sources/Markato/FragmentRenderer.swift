@@ -883,7 +883,14 @@ private struct CommittedPresentation {
               let expected=map.previewY(for:Double(source.viewportOrigin)) else{return nil}
         return CGFloat(expected)-committed.surface.logicalOrigin
     }
-    func debugGeometry()->String {"mounted=\(preparedFragmentCount), height=\(committed?.geometry.height ?? 0), desired=\(String(describing:desired?.id)), rendering=\(String(describing:rendering?.id)), measuredSource=\(source?.hasMeasuredLayout == true), mapCurrent=\(hasCurrentMap), clip=\(clipOrigin), patches=\(patchCount), displayed=\(String(describing:displayedSourceRange)), visible=\(String(describing:source?.visibleSourceRange))"}
+    func debugGeometry()->String {
+        let visible=source?.visibleSourceRange
+        let pendingVisible=committed?.request.content.entries.contains { entry in
+            guard entry.fragment.kind == .pending,let visible else{return false}
+            return NSIntersectionRange(entry.fragment.range,visible).length>0
+        } ?? false
+        return "mounted=\(preparedFragmentCount), height=\(committed?.geometry.height ?? 0), desired=\(String(describing:desired?.id)), rendering=\(String(describing:rendering?.id)), measuredSource=\(source?.hasMeasuredLayout == true), sourceRevision=\(source?.contentRevision ?? -1), displayedRevision=\(displayedDocumentRevision), pendingVisible=\(pendingVisible), mapCurrent=\(hasCurrentMap), clip=\(clipOrigin), patches=\(patchCount), displayed=\(String(describing:displayedSourceRange)), visible=\(String(describing:visible))"
+    }
     #endif
     override func menu(for event:NSEvent)->NSMenu? {
         let menu=NSMenu();menu.addItem(withTitle:"Inspect Item",action:#selector(inspect(_:)),keyEquivalent:"").target=self;return menu

@@ -8,7 +8,8 @@ final class EditorSplitView:NSSplitView {
     override var preservesContentDuringLiveResize:Bool {false}
 }
 
-final class EditorWindowController: NSWindowController, NSSplitViewDelegate, NSSearchFieldDelegate, NSMenuItemValidation, NSWindowDelegate {
+final class EditorWindowController: NSWindowController, NSSplitViewDelegate, NSSearchFieldDelegate, NSMenuItemValidation, NSWindowDelegate, NSToolbarDelegate {
+    private static let sidebarToolbarItem=NSToolbarItem.Identifier("MarkatoSidebar")
     private struct ParseRequest:Equatable {
         let revision:Int
         let range:NSRange
@@ -16,6 +17,8 @@ final class EditorWindowController: NSWindowController, NSSplitViewDelegate, NSS
     }
     let source: SourceEditor
     let preview = PreviewPane(frame:.zero)
+    let sidebar = SidebarPane(frame:.zero)
+    private let workspaceSplit = EditorSplitView()
     let split = EditorSplitView()
     private let content = FlippedView()
     private let findBar = NSView()
@@ -34,6 +37,8 @@ final class EditorWindowController: NSWindowController, NSSplitViewDelegate, NSS
     private var applyingHighlights = false
     private var sourceFontSize: CGFloat = 13
     private var savedDivider: CGFloat = 0.5
+    private var savedSidebarWidth:CGFloat = 240
+    private(set) var isSidebarVisible=true
     // Prepared document content is retained. Viewport movement never evicts it.
     private let preparedDocument=PreparedDocument()
     private var backgroundRevision = -1
@@ -41,6 +46,7 @@ final class EditorWindowController: NSWindowController, NSSplitViewDelegate, NSS
     private var completePresentationPendingRevision:Int?
     private var completeEditRevision:Int?
     private var pendingRegional:(revision:Int,context:RegionalParseContext)?
+    private var publishedOutlineGeneration = -1
     private var isClosed=false
     private var openingRequested=false
     private var hasShownWindow=false
@@ -64,7 +70,7 @@ final class EditorWindowController: NSWindowController, NSSplitViewDelegate, NSS
     private var markdownDocument: MarkdownDocument { document as! MarkdownDocument }
     init(document:MarkdownDocument) {
         source = SourceEditor(document:document,prepared:preparedDocument,deferInitialLayout:true)
-        var initialSize=NSSize(width:1120,height:760)
+        var initialSize=NSSize(width:1360,height:760)
         #if DEBUG
         if let option=CommandLine.arguments.first(where:{$0.hasPrefix("--integration-window=")}) {
             let dimensions=option.dropFirst("--integration-window=".count).split(separator:"x").compactMap{Double($0)}
@@ -75,8 +81,11 @@ final class EditorWindowController: NSWindowController, NSSplitViewDelegate, NSS
         let window = NSWindow(contentRect:NSRect(origin:.zero,size:initialSize),styleMask:[.titled,.closable,.miniaturizable,.resizable],backing:.buffered,defer:false)
         super.init(window:window)
         window.delegate = self
-        window.minSize = NSSize(width:640,height:380); window.center()
+        window.minSize = NSSize(width:760,height:380); window.center()
         window.tabbingMode = .disallowed
+        let toolbar=NSToolbar(identifier:"MarkatoDocumentToolbar")
+        toolbar.delegate=self;toolbar.displayMode = .iconOnly
+        window.toolbarStyle = .unified;window.toolbar=toolbar
         // Native checks use a reproducible fixture and must not read or overwrite
         // the user's saved document-window dimensions.
         #if DEBUG
@@ -86,7 +95,13 @@ final class EditorWindowController: NSWindowController, NSSplitViewDelegate, NSS
         #else
         window.setFrameAutosaveName("MarkdownDocument")
         #endif
-        window.contentView = content
+        if let screen=window.screen ?? NSScreen.main {
+            window.setFrame(window.constrainFrameRect(window.frame,to:screen),display:false)
+        }
+        window.contentView = workspaceSplit
+        workspaceSplit.isVertical=true;workspaceSplit.dividerStyle = .thin;workspaceSplit.delegate=self
+        workspaceSplit.addArrangedSubview(sidebar);workspaceSplit.addArrangedSubview(content)
+        workspaceSplit.setHoldingPriority(.defaultHigh,forSubviewAt:0)
         split.isVertical = true; split.dividerStyle = .thin; split.delegate = self
         split.addArrangedSubview(source); split.addArrangedSubview(preview); content.addSubview(split)
         findBar.isHidden = true; content.addSubview(findBar)
@@ -102,6 +117,15 @@ final class EditorWindowController: NSWindowController, NSSplitViewDelegate, NSS
         parseErrorBar.addSubview(parseErrorLabel);parseErrorBar.addSubview(parseRetryButton);content.addSubview(parseErrorBar)
         content.postsFrameChangedNotifications = true
         NotificationCenter.default.addObserver(self,selector:#selector(contentResized(_:)),name:NSView.frameDidChangeNotification,object:content)
+        sidebar.closeRequested = { [weak self] in
+            guard let self,self.isSidebarVisible else{return}
+            self.toggleSidebar(nil)
+        }
+        sidebar.activateHeading = { [weak self] id,focusSource in
+            guard let self,let heading=self.preparedDocument.heading(id:id) else{return}
+            self.source.reveal(heading.range.location,alignTop:true)
+            if focusSource {self.window?.makeFirstResponder(self.source.textView)}
+        }
         source.viewportChanged = { [weak self] range in self?.viewportChanged(range) }
         source.scrollGestureChanged = { [weak self] active in
             if active {self?.preview.beginScrollGesture()}else{
@@ -174,7 +198,9 @@ final class EditorWindowController: NSWindowController, NSSplitViewDelegate, NSS
             if self.completeEditRevision != document.revision {self.preview.invalidate()}
             self.source.documentEdited(selection:selection,edit:edit)
         }
-        layoutContent(); split.setPosition(window.frame.width*0.5,ofDividerAt:0)
+        workspaceSplit.adjustSubviews()
+        workspaceSplit.setPosition(savedSidebarWidth,ofDividerAt:0)
+        layoutContent();split.setPosition(content.bounds.width*0.5,ofDividerAt:0)
         // Materialize TextKit only after the pane and its scroll view have
         // their actual sizes. A zero-width initial layout wraps every character.
         content.layoutSubtreeIfNeeded()
@@ -225,6 +251,7 @@ final class EditorWindowController: NSWindowController, NSSplitViewDelegate, NSS
         source.scrollGestureChanged=nil;source.navigationRequested=nil
         source.scrollOverflow=nil
         preview.presentationSettled=nil
+        sidebar.activateHeading=nil;sidebar.closeRequested=nil
     }
     @objc private func contentResized(_ notification:Notification) { layoutContent() }
     private func layoutContent() {
@@ -243,6 +270,7 @@ final class EditorWindowController: NSWindowController, NSSplitViewDelegate, NSS
     }
     private func viewportChanged(_ range:NSRange) {
         guard !isClosed else{return}
+        sidebar.selectHeading(id:preparedDocument.heading(at:source.alignmentAnchor)?.id)
         preview.moveViewport()
         guard !applyingHighlights else { return }
         pendingViewport = range
@@ -309,6 +337,11 @@ final class EditorWindowController: NSWindowController, NSSplitViewDelegate, NSS
                 let parsedRange=NSRange(location:parsed.from ?? range.location,
                     length:max(0,(parsed.to ?? NSMaxRange(range))-(parsed.from ?? range.location)))
                 self.preparedDocument.store(parsed,range:parsedRange)
+                if self.publishedOutlineGeneration != self.preparedDocument.outlineGeneration {
+                    self.publishedOutlineGeneration=self.preparedDocument.outlineGeneration
+                    let active=self.preparedDocument.heading(at:self.source.alignmentAnchor)?.id
+                    self.sidebar.setHeadings(self.preparedDocument.headings,activeID:active)
+                }
                 self.applyingHighlights=true
                 // The retained blocks point into the native span arena, so
                 // initial paint clips only the selected blocks instead of
@@ -472,6 +505,50 @@ final class EditorWindowController: NSWindowController, NSSplitViewDelegate, NSS
     }
     @objc func undo(_ sender:Any?) { markdownDocument.undoManager?.undo() }
     @objc func redo(_ sender:Any?) { markdownDocument.undoManager?.redo() }
+    func toolbarAllowedItemIdentifiers(_ toolbar:NSToolbar)->[NSToolbarItem.Identifier] {
+        [Self.sidebarToolbarItem]
+    }
+    func toolbarDefaultItemIdentifiers(_ toolbar:NSToolbar)->[NSToolbarItem.Identifier] {
+        [Self.sidebarToolbarItem]
+    }
+    func toolbar(_ toolbar:NSToolbar,itemForItemIdentifier identifier:NSToolbarItem.Identifier,
+                 willBeInsertedIntoToolbar flag:Bool)->NSToolbarItem? {
+        guard identifier==Self.sidebarToolbarItem else{return nil}
+        let item=NSToolbarItem(itemIdentifier:identifier)
+        item.isNavigational=true;item.autovalidates=false;item.isEnabled=true
+        let button=NSButton(image:NSImage(systemSymbolName:"sidebar.left",accessibilityDescription:"Toggle Sidebar")!,
+            target:self,action:#selector(toggleSidebar(_:)))
+        button.imagePosition = .imageOnly;button.imageScaling = .scaleProportionallyDown
+        button.contentTintColor = .labelColor;button.isBordered=false
+        button.frame=NSRect(x:0,y:0,width:32,height:28)
+        button.setAccessibilityLabel("Toggle Outline Sidebar")
+        item.view=button
+        configureSidebarToolbarItem(item)
+        return item
+    }
+    private func configureSidebarToolbarItem(_ item:NSToolbarItem) {
+        let title=isSidebarVisible ? "Hide Sidebar":"Show Sidebar"
+        item.label="Outline";item.paletteLabel="Outline";item.toolTip=title
+        item.view?.toolTip=title
+    }
+    private func updateSidebarToolbarItem() {
+        window?.toolbar?.items.first(where:{$0.itemIdentifier==Self.sidebarToolbarItem}).map(configureSidebarToolbarItem)
+    }
+    @objc func toggleSidebar(_ sender:Any?) {
+        if !isSidebarVisible {
+            sidebar.isHidden=false
+            let maximum=max(180,workspaceSplit.bounds.width-480)
+            workspaceSplit.setPosition(min(savedSidebarWidth,maximum),ofDividerAt:0)
+            isSidebarVisible=true
+        } else {
+            savedSidebarWidth=max(180,sidebar.frame.width)
+            workspaceSplit.setPosition(0,ofDividerAt:0)
+            workspaceSplit.adjustSubviews()
+            sidebar.isHidden=true
+            isSidebarVisible=false
+        }
+        workspaceSplit.adjustSubviews();layoutContent();updateSidebarToolbarItem()
+    }
     @objc func togglePreview(_ sender:Any?) {
         preview.isHidden.toggle()
         if preview.isHidden { savedDivider = source.frame.width/max(1,split.bounds.width); split.setPosition(split.bounds.width,ofDividerAt:0) }
@@ -509,6 +586,7 @@ final class EditorWindowController: NSWindowController, NSSplitViewDelegate, NSS
         switch menuItem.action {
         case #selector(undo(_:)): menuItem.title = markdownDocument.undoManager?.undoMenuItemTitle ?? "Undo"; return markdownDocument.undoManager?.canUndo == true
         case #selector(redo(_:)): menuItem.title = markdownDocument.undoManager?.redoMenuItemTitle ?? "Redo"; return markdownDocument.undoManager?.canRedo == true
+        case #selector(toggleSidebar(_:)): menuItem.state = isSidebarVisible ? .on:.off; return true
         case #selector(togglePreview(_:)): menuItem.state = preview.isHidden ? .off : .on; return true
         default:return true
         }

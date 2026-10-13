@@ -12,7 +12,6 @@ final class MarkdownDocument: NSDocument {
     private(set) var newline = "\n"
     let parser = ComrakWorker()
     var edited: ((NSRange, String, SourceEdit) -> Void)?
-    override class var autosavesInPlace: Bool { true }
     override init() { super.init(); hasUndoManager = true; fileType = "Markdown" }
     override func makeWindowControllers() {
         // Parse on the worker while AppKit and Ultralight create the window. Comrak

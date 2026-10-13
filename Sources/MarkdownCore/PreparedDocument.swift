@@ -26,7 +26,7 @@ public final class PreparedDocument {
         var left: BlockNode?, right: BlockNode?
         weak var parent: BlockNode?
         var firstGap:Int?,firstStyleGap:Int?
-        var depth=1,count=1,preparedCount=0,lazyShift=0
+        var depth=1,count=1,preparedCount=0,headingCount=0,lazyShift=0
         var previewSum:Double=0
         init(_ block:PreparedBlock,start:Int,end:Int) {
             self.block=block;self.start=start;self.end=end
@@ -38,7 +38,7 @@ public final class PreparedDocument {
         func shift(_ delta:Int) {
             guard delta != 0 else{return}
             block=PreparedBlock(id:block.id,kind:block.kind,from:block.from+delta,to:block.to+delta,
-                html:block.html,syntax:block.syntax)
+                html:block.html,syntax:block.syntax,headingTitle:block.headingTitle)
             start += delta;end += delta;firstGap=firstGap.map{$0+delta};firstStyleGap=firstStyleGap.map{$0+delta}
             syntaxShift += delta;lazyShift += delta
             if let f=fragment {fragment=PreviewFragment(kind:f.kind,from:f.from+delta,to:f.to+delta,html:f.html,id:f.id)}
@@ -52,6 +52,7 @@ public final class PreparedDocument {
             depth=1+max(left?.depth ?? 0,right?.depth ?? 0)
             count=1+(left?.count ?? 0)+(right?.count ?? 0)
             preparedCount=(left?.preparedCount ?? 0)+(hasContent ? 1:0)+(right?.preparedCount ?? 0)
+            headingCount=(left?.headingCount ?? 0)+(block.kind.isHeading ? 1:0)+(right?.headingCount ?? 0)
             firstGap=left?.firstGap ?? (hasContent ? nil:start) ?? right?.firstGap
             firstStyleGap=left?.firstStyleGap ?? (block.syntax == nil ? start:nil) ?? right?.firstStyleGap
             previewSum=(left?.previewSum ?? 0)+effectivePreviewHeight+(right?.previewSum ?? 0)
@@ -111,11 +112,62 @@ public final class PreparedDocument {
     public private(set) var revision = -1
     public private(set) var length=0
     public private(set) var hasReferences=false
+    /// Changes only when the outline's identities, titles, levels, or order
+    /// change. Coordinate-only edits are resolved lazily from the block tree.
+    public private(set) var outlineGeneration=0
+    public var headings:[DocumentHeading] {
+        var result=[DocumentHeading]()
+        result.reserveCapacity(root?.headingCount ?? 0)
+        func collect(_ node:BlockNode?) {
+            guard let node,node.headingCount>0 else{return}
+            node.push();collect(node.left)
+            if let heading=documentHeading(node.block) {result.append(heading)}
+            collect(node.right)
+        }
+        collect(root);return result
+    }
     public var count:Int {root?.count ?? 0}
     public var hasCompleteFragments:Bool {(root?.preparedCount ?? 0)==count}
     public var styleCoverage:[NSRange] {syntax.map(\.range)}
     public var byteCost:Int {nodes.values.reduce(0){$0+($1.block.html?.byteCount ?? $1.fragment?.html?.utf8.count ?? 0)}}
     public init() {}
+
+    private func documentHeading(_ block:PreparedBlock)->DocumentHeading? {
+        guard let level=block.kind.headingLevel else{return nil}
+        let title=block.headingTitle?.isEmpty == false ? block.headingTitle! : "Untitled heading"
+        return DocumentHeading(id:block.id,title:title,level:level,
+            range:NSRange(location:block.from,length:max(0,block.to-block.from)))
+    }
+
+    /// Resolves the current coordinate only when a row is activated. This
+    /// avoids rewriting every later outline row after an edit near the top.
+    public func heading(id:BlockID)->DocumentHeading? {
+        guard let node=nodes[id] else{return nil}
+        materialize(node);return documentHeading(node.block)
+    }
+
+    /// Finds the last heading at or before an offset through the retained
+    /// order-statistics tree rather than scanning the outline.
+    public func heading(at offset:Int)->DocumentHeading? {
+        func lastHeading(in node:BlockNode?)->BlockNode? {
+            guard let node,node.headingCount>0 else{return nil}
+            node.push()
+            if let result=lastHeading(in:node.right) {return result}
+            if node.block.kind.isHeading {return node}
+            return lastHeading(in:node.left)
+        }
+        var current=root,candidate:BlockNode?
+        while let node=current {
+            node.push()
+            if node.block.from<=offset {
+                if let left=lastHeading(in:node.left) {candidate=left}
+                if node.block.kind.isHeading {candidate=node}
+                current=node.right
+            } else {current=node.left}
+        }
+        guard let candidate else{return nil}
+        materialize(candidate);return documentHeading(candidate.block)
+    }
 
     private func build(_ items:[BlockNode],_ from:Int,_ to:Int)->BlockNode? {
         guard from<to else{return nil}
@@ -266,7 +318,8 @@ public final class PreparedDocument {
             if let old=previous[block.id] {
                 if block.html == nil || block.syntax == nil {
                     n.block=PreparedBlock(id:block.id,kind:block.kind,from:block.from,to:block.to,
-                        html:block.html ?? old.block.html,syntax:block.syntax ?? old.block.syntax)
+                        html:block.html ?? old.block.html,syntax:block.syntax ?? old.block.syntax,
+                        headingTitle:block.headingTitle ?? old.block.headingTitle)
                 }
                 if block.html == nil,let f=old.fragment {
                     n.fragment=PreviewFragment(kind:block.kind,from:block.from,to:block.to,html:f.html,id:block.id)
@@ -286,6 +339,7 @@ public final class PreparedDocument {
             nodes[block.id]=n;items.append(n);start=block.to
         }
         root=build(items,0,items.count)
+        outlineGeneration &+= 1
         setSyntax(syntax)
     }
 
@@ -318,7 +372,8 @@ public final class PreparedDocument {
                 materialize(old)
                 if block.html == nil || block.syntax == nil {
                     node.block=PreparedBlock(id:block.id,kind:block.kind,from:block.from,to:block.to,
-                        html:block.html ?? old.block.html,syntax:block.syntax ?? old.block.syntax)
+                        html:block.html ?? old.block.html,syntax:block.syntax ?? old.block.syntax,
+                        headingTitle:block.headingTitle ?? old.block.headingTitle)
                 }
                 if block.html == nil,let f=old.fragment {node.fragment=PreviewFragment(kind:block.kind,from:block.from,to:block.to,html:f.html,id:block.id)}
                 if block.syntax == nil {node.syntaxShift=old.syntaxShift+block.from-old.block.from}
@@ -331,6 +386,12 @@ public final class PreparedDocument {
         let middle=build(inserted,0,inserted.count)
         root=append(append(prefix,middle),suffix);root?.parent=nil
         self.revision=revision;self.length=length
+        let oldOutline=removedItems.compactMap{documentHeading($0.block)}
+        let newOutline=inserted.compactMap{documentHeading($0.block)}
+        let outlineChanged=oldOutline.count != newOutline.count || zip(oldOutline,newOutline).contains {
+            $0.id != $1.id || $0.title != $1.title || $0.level != $1.level
+        }
+        if outlineChanged {outlineGeneration &+= 1}
         var retained=[SyntaxPage]()
         for page in syntax {
             if NSMaxRange(page.range)<=oldStart {retained.append(page)}
@@ -357,7 +418,7 @@ public final class PreparedDocument {
             guard let id=fragment.id,let n=nodes[id],fragment.html != nil else{continue}
             materialize(n)
             n.block=PreparedBlock(id:n.block.id,kind:n.block.kind,from:n.block.from,to:n.block.to,
-                html:fragment.html.map(HTMLPayload.init),syntax:n.block.syntax)
+                html:fragment.html.map(HTMLPayload.init),syntax:n.block.syntax,headingTitle:n.block.headingTitle)
             n.fragment=fragment
             var ancestor:BlockNode?=n
             while let current=ancestor {current.update();ancestor=current.parent}
