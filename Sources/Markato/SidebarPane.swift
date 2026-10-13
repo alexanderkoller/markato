@@ -15,11 +15,7 @@ import MarkdownCore
 
     override var isFlipped:Bool {true}
     var activateHeading:((BlockID,Bool)->Void)?
-    var closeRequested:(()->Void)?
 
-    private let header=NSView()
-    private let title=NSTextField(labelWithString:"Outline")
-    private let closeButton=NSButton()
     private let scroll=NSScrollView()
     private let outline=NSOutlineView()
     private let column=NSTableColumn(identifier:NSUserInterfaceItemIdentifier("Outline"))
@@ -34,18 +30,6 @@ import MarkdownCore
         super.init(frame:frame)
         wantsLayer=true
         layer?.backgroundColor=NSColor.controlBackgroundColor.cgColor
-
-        title.font=NSFont.systemFont(ofSize:NSFont.systemFontSize,weight:.regular)
-        title.textColor = .secondaryLabelColor
-        header.addSubview(title)
-
-        closeButton.image=NSImage(systemSymbolName:"sidebar.left",accessibilityDescription:"Hide Sidebar")
-        closeButton.imagePosition = .imageOnly
-        closeButton.isBordered=false
-        closeButton.target=self
-        closeButton.action=#selector(closeSidebar(_:))
-        closeButton.toolTip="Hide Sidebar"
-        header.addSubview(closeButton)
 
         outline.addTableColumn(column)
         outline.outlineTableColumn=column
@@ -62,7 +46,7 @@ import MarkdownCore
         scroll.hasVerticalScroller=true
         scroll.drawsBackground=false
         scroll.autohidesScrollers=true
-        addSubview(header);addSubview(scroll)
+        addSubview(scroll)
 
         emptyLabel.alignment = .center
         emptyLabel.textColor = .secondaryLabelColor
@@ -79,12 +63,8 @@ import MarkdownCore
 
     override func layout() {
         super.layout()
-        let headerHeight:CGFloat=39
-        header.frame=NSRect(x:0,y:0,width:bounds.width,height:headerHeight)
-        title.frame=NSRect(x:12,y:11,width:max(0,bounds.width-52),height:18)
-        closeButton.frame=NSRect(x:max(0,bounds.width-34),y:7,width:27,height:26)
-        scroll.frame=NSRect(x:0,y:headerHeight,width:bounds.width,height:max(0,bounds.height-headerHeight))
-        emptyLabel.frame=NSRect(x:16,y:headerHeight+28,width:max(0,bounds.width-32),height:20)
+        scroll.frame=bounds
+        emptyLabel.frame=NSRect(x:16,y:28,width:max(0,bounds.width-32),height:20)
         column.width=max(1,bounds.width)
     }
 
@@ -132,7 +112,6 @@ import MarkdownCore
         changingSelection=false
     }
 
-    @objc private func closeSidebar(_ sender:Any?) {closeRequested?()}
     @objc private func openSelectedHeading(_ sender:Any?) {
         guard let node=outline.item(atRow:outline.selectedRow) as? Node else{return}
         activateHeading?(node.heading.id,true)

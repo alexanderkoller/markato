@@ -38,7 +38,7 @@ final class EditorWindowController: NSWindowController, NSSplitViewDelegate, NSS
     private var sourceFontSize: CGFloat = 13
     private var savedDivider: CGFloat = 0.5
     private var savedSidebarWidth:CGFloat = 240
-    private(set) var isSidebarVisible=true
+    private(set) var isSidebarVisible=false
     // Prepared document content is retained. Viewport movement never evicts it.
     private let preparedDocument=PreparedDocument()
     private var backgroundRevision = -1
@@ -101,6 +101,7 @@ final class EditorWindowController: NSWindowController, NSSplitViewDelegate, NSS
         window.contentView = workspaceSplit
         workspaceSplit.isVertical=true;workspaceSplit.dividerStyle = .thin;workspaceSplit.delegate=self
         workspaceSplit.addArrangedSubview(sidebar);workspaceSplit.addArrangedSubview(content)
+        sidebar.isHidden=true
         workspaceSplit.setHoldingPriority(.defaultHigh,forSubviewAt:0)
         split.isVertical = true; split.dividerStyle = .thin; split.delegate = self
         split.addArrangedSubview(source); split.addArrangedSubview(preview); content.addSubview(split)
@@ -117,10 +118,6 @@ final class EditorWindowController: NSWindowController, NSSplitViewDelegate, NSS
         parseErrorBar.addSubview(parseErrorLabel);parseErrorBar.addSubview(parseRetryButton);content.addSubview(parseErrorBar)
         content.postsFrameChangedNotifications = true
         NotificationCenter.default.addObserver(self,selector:#selector(contentResized(_:)),name:NSView.frameDidChangeNotification,object:content)
-        sidebar.closeRequested = { [weak self] in
-            guard let self,self.isSidebarVisible else{return}
-            self.toggleSidebar(nil)
-        }
         sidebar.activateHeading = { [weak self] id,focusSource in
             guard let self,let heading=self.preparedDocument.heading(id:id) else{return}
             self.source.reveal(heading.range.location,alignTop:true)
@@ -199,7 +196,7 @@ final class EditorWindowController: NSWindowController, NSSplitViewDelegate, NSS
             self.source.documentEdited(selection:selection,edit:edit)
         }
         workspaceSplit.adjustSubviews()
-        workspaceSplit.setPosition(savedSidebarWidth,ofDividerAt:0)
+        workspaceSplit.setPosition(0,ofDividerAt:0)
         layoutContent();split.setPosition(content.bounds.width*0.5,ofDividerAt:0)
         // Materialize TextKit only after the pane and its scroll view have
         // their actual sizes. A zero-width initial layout wraps every character.
@@ -251,7 +248,7 @@ final class EditorWindowController: NSWindowController, NSSplitViewDelegate, NSS
         source.scrollGestureChanged=nil;source.navigationRequested=nil
         source.scrollOverflow=nil
         preview.presentationSettled=nil
-        sidebar.activateHeading=nil;sidebar.closeRequested=nil
+        sidebar.activateHeading=nil
     }
     @objc private func contentResized(_ notification:Notification) { layoutContent() }
     private func layoutContent() {

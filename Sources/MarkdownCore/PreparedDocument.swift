@@ -513,6 +513,10 @@ public final class PreparedDocument {
     /// global preview extent; no document-sized placeholder enters the HTML engine.
     public func window(covering range:NSRange,before:Double,after:Double)->RenderedWindow? {
         var blocks=selected(range)
+        if blocks.isEmpty,length==0 {
+            return RenderedWindow(range:NSRange(location:0,length:0),entries:[],
+                previewTop:0,previewHeight:0)
+        }
         guard let visibleFirst=blocks.first,let visibleLast=blocks.last,
               blocks.allSatisfy({$0.hasContent}) else{return nil}
         func predecessor(_ node:BlockNode)->BlockNode? {

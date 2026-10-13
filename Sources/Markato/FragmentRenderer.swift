@@ -668,7 +668,6 @@ private struct CommittedPresentation {
             guard entry.fragment.from != 0,entry.fragment.kind != .pending else{return nil}
             return (item.landmark ?? item.y,entry)
         }
-        guard !landmarks.isEmpty else{return nil}
         // A map must use one coordinate system throughout. Mixing locally exact
         // TextKit positions with retained estimates lets the monotonic map
         // reorder/clamp points after reflow, producing large visual offsets.
@@ -681,6 +680,9 @@ private struct CommittedPresentation {
             points.append(ScrollLandmark(offset:offset,sourceY:Double(y),previewY:Double(windowTop+landmark.previewY)))
         }
         guard revision==source.geometryRevision else{return nil}
+        // The first block starts at source offset zero and is represented by
+        // the boundary that viewportMap adds. A one-block or empty document
+        // therefore legitimately has no interior landmarks.
         return ScrollLandmarks(points).viewportMap(sourceHeight:Double(source.contentHeight),viewportHeight:Double(bounds.height),previewHeight:Double(totalHeight))
     }
     private func presentationPosition(_ request:PreviewRequest,geometry:HTMLPreviewGeometry)->PresentationPosition? {

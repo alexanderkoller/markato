@@ -73,6 +73,9 @@ import MarkdownCore
     static func run(_ document:MarkdownDocument) {
         guard let controller=document.windowControllers.first as? EditorWindowController else {fail("Missing editor window")}
         check(!MarkdownDocument.autosavesInPlace,"Markdown documents must require an explicit save")
+        if CommandLine.arguments.contains("--integration-empty-edits") {
+            verifyEmptyDocumentEdits(controller,document:document);return
+        }
         if CommandLine.arguments.contains("--integration-highlighting") {
             verifyHighlighting(controller,document:document);return
         }
@@ -103,6 +106,79 @@ import MarkdownCore
         }
         verifyUltralightPreview(controller,document:document)
     }
+    private static func verifyEmptyDocumentEdits(_ controller:EditorWindowController,document:MarkdownDocument) {
+        let preview=controller.preview
+        func wait(_ remaining:Int,_ ready:@escaping()->Bool,_ failure:String,_ completion:@escaping()->Void) {
+            guard remaining>0 else{fail("\(failure): \(preview.debugGeometry())")}
+            if ready() {completion()}
+            else {DispatchQueue.main.asyncAfter(deadline:.now()+0.01){wait(remaining-1,ready,failure,completion)}}
+        }
+        func waitForText(_ text:String,_ completion:@escaping()->Void) {
+            wait(500,{preview.lastRevision==document.revision && !preview.isShowingLoadingState &&
+                preview.previewView.debugText.contains(text)},"Single-block preview did not settle",completion)
+        }
+        wait(500,{preview.lastRevision==document.revision && !preview.isShowingLoadingState &&
+            preview.preparedFragmentCount==0},"Fresh empty preview did not settle") {
+            document.replace(NSRange(location:0,length:0),with:"# Heading")
+            waitForText("Heading") {
+                check(preview.preparedFragmentCount==1,"A heading-only document must mount one fragment")
+                document.replace(NSRange(location:0,length:document.source.count),with:"Plain text")
+                waitForText("Plain text") {
+                    check(preview.preparedFragmentCount==1,"A paragraph-only document must mount one fragment")
+                    let fixture="# Section\n\nBody\n\n## Subsection\n\nMore text\n\n### Tail\n\nExisting paragraph"
+                    document.replace(NSRange(location:0,length:document.source.count),with:fixture)
+                    waitForText("Existing paragraph") {
+                        @MainActor func typeNewParagraph(_ characters:[Character],_ index:Int=0) {
+                            guard index<characters.count else {
+                                document.replace(NSRange(location:0,length:document.source.count),with:"")
+                                wait(500,{preview.lastRevision==document.revision && !preview.isShowingLoadingState &&
+                                    preview.preparedFragmentCount==0 && preview.previewView.debugText.isEmpty},
+                                    "Deleting all source did not clear the preview") {
+                                    print("EMPTY EDITS INTEGRATION PASSED: empty startup, single blocks, character-by-character new paragraph, and delete-all")
+                                    exit(EXIT_SUCCESS)
+                                }
+                                return
+                            }
+                            let prefix=index==0 ? "\n\n":""
+                            let insertion="\(prefix)\(characters[index])"
+                            controller.source.textView.setSelectedRange(NSRange(location:document.source.count,length:0))
+                            controller.source.textView.insertText(insertion,
+                                replacementRange:controller.source.textView.selectedRange())
+                            let expected=String(characters[0...index])
+                            let retained=index>0 ? String(characters[0..<index]):""
+                            @MainActor func awaitCharacter(_ remaining:Int) {
+                                guard remaining>0 else {
+                                    fail("New paragraph character \(index+1) did not commit: \(preview.debugGeometry())")
+                                }
+                                let text=preview.previewView.debugText
+                                check(!preview.isShowingLoadingState,
+                                    "Typing character \(index+1) flashed the loading preview")
+                                if !retained.isEmpty {
+                                    check(text.contains(retained),
+                                        "New paragraph disappeared while character \(index+1) rendered: retained \(retained.debugDescription), got \(text.debugDescription)")
+                                }
+                                if preview.lastRevision==document.revision {
+                                    check(text.contains(expected),
+                                        "New paragraph disappeared after character \(index+1): expected \(expected.debugDescription), got \(text.debugDescription)")
+                                    guard let rect=preview.previewView.debugRect("p",containing:expected) else {
+                                        fail("New paragraph has no geometry after character \(index+1)")
+                                    }
+                                    let pixels=capture(preview.previewView,rect:rect)
+                                    check(pixels.inkRows.reduce(0,+)>2,
+                                        "New paragraph has geometry but no painted pixels after character \(index+1)")
+                                    typeNewParagraph(characters,index+1)
+                                } else {
+                                    DispatchQueue.main.asyncAfter(deadline:.now()+0.001){awaitCharacter(remaining-1)}
+                                }
+                            }
+                            awaitCharacter(5000)
+                        }
+                        typeNewParagraph(Array("zyx"))
+                    }
+                }
+            }
+        }
+    }
     private static func verifyOutline(_ controller:EditorWindowController,document:MarkdownDocument) {
         @MainActor func wait(_ remaining:Int,_ completion:@escaping()->Void) {
             guard remaining>0 else{fail("Outline did not settle: headings=\(controller.sidebar.debugHeadingCount), \(controller.preview.debugGeometry())")}
@@ -111,10 +187,12 @@ import MarkdownCore
             else {DispatchQueue.main.asyncAfter(deadline:.now()+0.01){wait(remaining-1,completion)}}
         }
         wait(500) {
-            check(controller.isSidebarVisible,"Outline sidebar must be visible initially")
+            check(!controller.isSidebarVisible,"Outline sidebar must be hidden initially")
             check(controller.window?.toolbar?.items.contains(where:{
                 $0.action == #selector(EditorWindowController.toggleSidebar(_:)) && $0.isEnabled
             })==true,"The window must keep an enabled sidebar toggle in its toolbar")
+            controller.toggleSidebar(nil)
+            check(controller.isSidebarVisible,"Sidebar toggle must reveal the outline")
             check(controller.sidebar.debugHeadingTitles.first=="Markato — a long example",
                 "Outline must use parser-produced plain heading titles")
             let selected=controller.sidebar.debugHeading(containing:"Section 56")

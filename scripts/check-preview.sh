@@ -11,4 +11,5 @@ bash scripts/build-app.sh release
 bash scripts/build-app.sh debug
 dist/debug/Markato.app/Contents/MacOS/Markato --integration-test --integration-mermaid
 dist/debug/Markato.app/Contents/MacOS/Markato --integration-test --integration-highlighting
+dist/debug/Markato.app/Contents/MacOS/Markato --integration-test --integration-empty-edits
 exec dist/debug/Markato.app/Contents/MacOS/Markato --integration-test --diagnostics

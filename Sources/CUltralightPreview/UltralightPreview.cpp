@@ -150,6 +150,9 @@ struct AstraULSurface {
     pending.clear();
     auto html = document.documentElement();
     html.setAttribute("style", "font-size:" + std::to_string(pending_font_size) + "px");
+    // Hidden alternating surfaces are not driven by a display loop. Force
+    // this DOM revision to paint before its bitmap can be published.
+    view->set_needs_paint(true);
     render();
     return true;
   }

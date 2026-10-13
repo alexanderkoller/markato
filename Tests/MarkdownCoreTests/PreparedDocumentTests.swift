@@ -5,6 +5,15 @@ import Testing
 private func prepared(_ id:String,_ from:Int,_ to:Int,_ text:String)->PreviewFragment {
     PreviewFragment(kind:"Paragraph",from:from,to:to,html:"<p>\(text)</p>",id:id)
 }
+@Test func emptyDocumentProducesAnEmptyRenderableWindow() throws {
+    let doc=PreparedDocument()
+    doc.adopt([],revision:1,length:0)
+    let window=try #require(doc.window(covering:NSRange(location:0,length:0),before:100,after:100))
+    #expect(window.range==NSRange(location:0,length:0))
+    #expect(window.entries.isEmpty)
+    #expect(window.previewTop==0)
+    #expect(window.previewHeight==0)
+}
 @Test func sharedBlocksRetainHTMLAndMeasuredHeightsAcrossOffsetChanges() {
     let doc=PreparedDocument()
     doc.adopt([.init(id:"a",kind:"Paragraph",from:0,to:5),.init(id:"b",kind:"Paragraph",from:7,to:12)],revision:1,length:13)

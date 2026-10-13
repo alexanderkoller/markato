@@ -134,6 +134,7 @@ func exportProfileRecording(_ path:UnsafePointer<CChar>) {
         #if DEBUG
         if CommandLine.arguments.contains("--diagnostics") {TimingDiagnostics.shared.start()}
         let checking=CommandLine.arguments.contains("--integration-test") || CommandLine.arguments.contains("--smoke-test")
+        let checkingEmptyEdits=CommandLine.arguments.contains("--integration-empty-edits")
         let checkingDefaultStartup=ProcessInfo.processInfo.environment["MARKATO_INTEGRATION_DEFAULT_STARTUP"] == "1"
         let checkingFinderPath=CommandLine.arguments.first(where:{$0.hasPrefix("--integration-finder-document=")})
             .map{String($0.dropFirst("--integration-finder-document=".count))}
@@ -146,7 +147,12 @@ func exportProfileRecording(_ path:UnsafePointer<CChar>) {
         #endif
         buildMenus()
         if launchConfiguration.opensSample || (checking && !checkingStartup) {
-            let document=MarkdownDocument();document.setInitialText(Self.sample)
+            let document=MarkdownDocument()
+            #if DEBUG
+            document.setInitialText(checkingEmptyEdits ? "" : Self.sample)
+            #else
+            document.setInitialText(Self.sample)
+            #endif
             NSDocumentController.shared.addDocument(document); document.makeWindowControllers()
             #if DEBUG
             if checking {document.windowControllers.first?.window?.setFrameOrigin(NSPoint(x:-10000,y:0))}
@@ -154,8 +160,12 @@ func exportProfileRecording(_ path:UnsafePointer<CChar>) {
             if CommandLine.arguments.contains("--integration-test") { DispatchQueue.main.asyncAfter(deadline:.now()+1) { IntegrationCheck.run(document) } }
             if CommandLine.arguments.contains("--smoke-test") {
                 let collapsed=CommandLine.arguments.contains("--smoke-sidebar-collapsed")
+                let expanded=CommandLine.arguments.contains("--smoke-sidebar-expanded")
                 let wholeWindow=CommandLine.arguments.contains("--smoke-whole-window")
-                if collapsed {
+                if collapsed,(document.windowControllers.first as? EditorWindowController)?.isSidebarVisible == true {
+                    (document.windowControllers.first as? EditorWindowController)?.toggleSidebar(nil)
+                }
+                if expanded,(document.windowControllers.first as? EditorWindowController)?.isSidebarVisible == false {
                     (document.windowControllers.first as? EditorWindowController)?.toggleSidebar(nil)
                 }
                 if wholeWindow {
