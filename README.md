@@ -1,4 +1,4 @@
-to # Markato
+# Markato
 
 <img src="docs/assets/markato-icon.png" alt="Markato app icon" width="128" height="128">
 
@@ -34,7 +34,7 @@ See the [complete performance comparison](docs/performance.md) for opening and e
 
 Markato requires **macOS 15 or later on an Apple Silicon Mac**. It is currently a development prototype; build it from source using the instructions below.
 
-The app opens a bundled example when launched without a document, so you can explore text, equations, images, and tables. Choose **File → New** to start a blank document, or **File → Open** to open your own Markdown file.
+The app opens an empty document when launched without a file. Choose **File → Open** to open a Markdown file, or **File → Open Recent** to return to a previously opened file. The bundled example remains available through the development launcher described below.
 
 Use **⌘F** to search, **⌘G** and **⇧⌘G** to move between matches, and **⌥⌘P** to show or hide the preview.
 

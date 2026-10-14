@@ -184,6 +184,7 @@ final class EditorWindowController: NSWindowController, NSSplitViewDelegate, NSS
         super.init(window:window)
         window.delegate = self
         window.minSize = NSSize(width:760,height:380); window.center()
+        window.isRestorable=false
         window.tabbingMode = .disallowed
         let toolbar=NSToolbar(identifier:"MarkatoDocumentToolbar")
         toolbar.delegate=self;toolbar.displayMode = .iconOnly

@@ -60,9 +60,10 @@ Export as PDF…
 Print…                           Command-P
 ```
 
-`Open Recent` is included because `NSDocumentController` already owns recent
-document tracking and users will expect it once the File menu grows. It can be
-omitted from the first implementation without affecting export or Close All.
+`Open Recent` uses `NSDocumentController`'s recent-document tracking, while
+Markato owns presentation so opening from the submenu has no document-window
+animation. Finder and Open With requests retain AppKit's native scale-up
+animation. Recent documents are never reopened automatically at startup.
 
 Do not add **Export as Plain Text**: Markdown is already an ordinary text file,
 so Save As provides the useful behavior without inventing a lossy duplicate.
@@ -217,5 +218,6 @@ command-line tests and purpose-built harnesses:
 2. Extract shared full-document HTML assembly and ship Export as HTML.
 3. Add the offscreen paginated renderer, then ship Print and Export as PDF
    together.
-4. Add Open Recent and later formats only when their behavior is justified.
+4. Add Open Recent as the explicit way to return to prior documents; do not
+   restore document windows automatically at startup.
 

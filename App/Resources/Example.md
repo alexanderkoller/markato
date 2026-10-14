@@ -2,7 +2,7 @@
 
 This document is here to explore the editor. Scroll through both panes, resize the window, drag the divider, and edit a paragraph. **Bold**, *italic*, headings, tables, code, and mathematics appear throughout. The source pane controls navigation; the preview follows the visible passage.
 
-There are 80 numbered sections, followed by an 800-row table and a long paragraph. Use **Command-F** to find `Section 40` or `Large table`. Use **Command-Z** to undo edits. **File → New** still creates a blank document; this example opens when the app starts without another document.
+There are 80 numbered sections, followed by an 800-row table and a long paragraph. Use **Command-F** to find `Section 40` or `Large table`. Use **Command-Z** to undo edits. **File → New** creates a blank document; this example opens only through the explicit sample launcher.
 
 ## A few expressions
 

@@ -88,6 +88,13 @@ import PDFKit
     static func run(_ document:MarkdownDocument) {
         guard let controller=document.windowControllers.first as? EditorWindowController else {fail("Missing editor window")}
         check(!MarkdownDocument.autosavesInPlace,"Markdown documents must require an explicit save")
+        check(controller.window?.isRestorable == false,"Document windows must not be restored across launches")
+        guard let sampleURL=Bundle.main.url(forResource:"Example",withExtension:"md") else{fail("Missing example document")}
+        var restorationRefused=false
+        NSDocumentController.shared.reopenDocument(for:sampleURL,withContentsOf:sampleURL,display:false) {restored,_,error in
+            restorationRefused = restored == nil && (error as? NSError)?.code == NSUserCancelledError
+        }
+        check(restorationRefused,"The document controller must refuse saved-state document restoration")
         check(DocumentOpenOrigin.inApplication.animationBehavior == .none
                 && !DocumentOpenOrigin.inApplication.displaysWhileOpening,
             "File Open must suppress animation before presenting its document window")
@@ -97,6 +104,13 @@ import PDFKit
         let openItem=NSApp.mainMenu?.item(withTitle:"File")?.submenu?.item(withTitle:"Open…")
         check(openItem?.action == #selector(AppDelegate.openDocument(_:)) && openItem?.target === NSApp.delegate,
             "File Open must route through the in-application presentation path")
+        let recentItem=NSApp.mainMenu?.item(withTitle:"File")?.submenu?.item(withTitle:"Open Recent")
+        let recentMenu=recentItem?.submenu
+        check(recentMenu?.delegate === NSApp.delegate,
+            "Open Recent must be maintained by Markato's controlled presentation path")
+        check(recentMenu?.items.last?.action == #selector(NSDocumentController.clearRecentDocuments(_:))
+                && recentMenu?.items.last?.target === NSDocumentController.shared,
+            "Open Recent must provide the standard Clear Menu action")
         if CommandLine.arguments.contains("--integration-empty-edits") {
             verifyEmptyDocumentEdits(controller,document:document);return
         }

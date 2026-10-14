@@ -10,6 +10,18 @@ enum DocumentOpenOrigin {
     var displaysWhileOpening:Bool {self == .external}
 }
 
+/// Markato keeps prior files discoverable through Open Recent, but never
+/// reopens document windows merely because they were open when the app quit.
+@MainActor private final class MarkatoDocumentController:NSDocumentController {
+    override func reopenDocument(for urlOrNil:URL?,withContentsOf contentsURL:URL,display displayDocument:Bool,
+                                 completionHandler:@escaping (NSDocument?,Bool,Error?)->Void) {
+        // AppKit expects a failed restoration to carry an error. Treating the
+        // deliberate refusal as cancellation avoids both an alert and a
+        // partially restored document.
+        completionHandler(nil,false,NSError(domain:NSCocoaErrorDomain,code:NSUserCancelledError))
+    }
+}
+
 private enum DocumentRequestError: LocalizedError {
     case tooManyFiles(Int)
     case missingFile(String)
@@ -62,11 +74,11 @@ func exportProfileRecording(_ path:UnsafePointer<CChar>) {
 }
 #endif
 
-@MainActor final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
+@MainActor final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, NSMenuDelegate {
     private let launchConfiguration:LaunchConfiguration
-    private var receivedDocumentOpenRequest=false
     private var openedStartupFallback=false
     private var isClosingAllDocuments=false
+    private var recentDocumentsMenu:NSMenu?
     fileprivate init(launchConfiguration:LaunchConfiguration) {self.launchConfiguration=launchConfiguration}
     private var currentEditor:EditorWindowController? {
         for window in [NSApp.keyWindow,NSApp.mainWindow].compactMap({$0}) {
@@ -92,7 +104,7 @@ func exportProfileRecording(_ path:UnsafePointer<CChar>) {
     @objc func saveDocument(_ sender:Any?) { (currentEditor?.document as? NSDocument)?.save(sender) }
     @objc func saveDocumentAs(_ sender:Any?) { (currentEditor?.document as? NSDocument)?.saveAs(sender) }
     @objc func revertDocumentToSaved(_ sender:Any?) { (currentEditor?.document as? NSDocument)?.revertToSaved(sender) }
-    @objc func newDocument(_ sender:Any?) {openUntitledDocument()}
+    @objc func newDocument(_ sender:Any?) {openUntitledDocument(animationBehavior:.none)}
     @objc func openDocument(_ sender:Any?) {
         let panel=NSOpenPanel()
         panel.allowedContentTypes=markdownFilenameExtensions.sorted().compactMap{UTType(filenameExtension:$0)}
@@ -103,6 +115,10 @@ func exportProfileRecording(_ path:UnsafePointer<CChar>) {
         }
         if let window=currentEditor?.window {panel.beginSheetModal(for:window,completionHandler:completion)}
         else {panel.begin(completionHandler:completion)}
+    }
+    @objc func openRecentDocument(_ sender:Any?) {
+        guard let item=sender as? NSMenuItem,let url=item.representedObject as? URL else{return}
+        openMarkdownURL(url,origin:.inApplication) {_ in}
     }
     @objc func exportHTML(_ sender:Any?) {currentDocument?.exportHTML(sender)}
     @objc func exportPDF(_ sender:Any?) {currentDocument?.saveToPDF(sender)}
@@ -154,7 +170,8 @@ func exportProfileRecording(_ path:UnsafePointer<CChar>) {
     }
     #endif
     func validateMenuItem(_ menuItem:NSMenuItem)->Bool {
-        if menuItem.action == #selector(newDocument(_:)) || menuItem.action == #selector(openDocument(_:)) {return true}
+        if menuItem.action == #selector(newDocument(_:)) || menuItem.action == #selector(openDocument(_:))
+            || menuItem.action == #selector(openRecentDocument(_:)) {return true}
         if menuItem.action == #selector(closeAllDocuments(_:)) {
             menuItem.keyEquivalent="W";menuItem.keyEquivalentModifierMask = .command
             return !isClosingAllDocuments && !NSDocumentController.shared.documents.isEmpty
@@ -232,11 +249,9 @@ func exportProfileRecording(_ path:UnsafePointer<CChar>) {
             document.showWindows()
             #endif
         } else if launchConfiguration.documentURL == nil {
-            scheduleStartupDocumentFallback()
             #if DEBUG
             if let path=checkingFinderPath {
                 DispatchQueue.main.async { [self] in
-                    receivedDocumentOpenRequest=true
                     openMarkdownFiles([path]) {_ in}
                 }
             }
@@ -251,7 +266,7 @@ func exportProfileRecording(_ path:UnsafePointer<CChar>) {
                 guard documents.count==1,let document=documents.first as? MarkdownDocument,
                       document.windowControllers.count==1,
                       let window=document.windowControllers.first?.window,
-                      window.tabbingMode == .disallowed,window.isVisible,
+                      window.tabbingMode == .disallowed,!window.isRestorable,window.isVisible,
                       checkingFinderPath == nil || window.animationBehavior != .none,
                       NSScreen.screens.contains(where:{$0.visibleFrame.intersects(window.frame)}),
                       document.fileURL?.standardizedFileURL == expectedURL?.standardizedFileURL,
@@ -275,12 +290,14 @@ func exportProfileRecording(_ path:UnsafePointer<CChar>) {
                     DispatchQueue.main.asyncAfter(deadline:.now()+0.5) {
                         let documents=NSDocumentController.shared.documents
                         let windows=documents.flatMap(\.windowControllers).compactMap(\.window)
+                        let newWindow=documents.last?.windowControllers.first?.window
                         guard documents.count==2,windows.count==2,
-                              windows.allSatisfy({$0.isVisible && $0.tabbingMode == .disallowed}) else {
+                              windows.allSatisfy({$0.isVisible && !$0.isRestorable && $0.tabbingMode == .disallowed}),
+                              newWindow?.animationBehavior == NSWindow.AnimationBehavior.none else {
                             print("NEW DOCUMENT FAILED: documents=\(documents.count), windows=\(windows.count)")
                             exit(2)
                         }
-                        print("NEW DOCUMENT: documents=2, visibleWindows=2, tabbing=disallowed")
+                        print("NEW DOCUMENT: documents=2, visibleWindows=2, tabbing=disallowed, animation=none, restorable=false")
                         exit(EXIT_SUCCESS)
                     }
                     return
@@ -340,25 +357,31 @@ func exportProfileRecording(_ path:UnsafePointer<CChar>) {
         #endif
     }
     func applicationWillFinishLaunching(_ notification:Notification) {NSWindow.allowsAutomaticWindowTabbing=false}
-    func applicationShouldOpenUntitledFile(_ sender:NSApplication) -> Bool {false}
+    func applicationShouldOpenUntitledFile(_ sender:NSApplication) -> Bool {
+        if launchConfiguration.opensSample || launchConfiguration.documentURL != nil {return false}
+        #if DEBUG
+        if CommandLine.arguments.contains("--integration-test") || CommandLine.arguments.contains("--smoke-test")
+            || CommandLine.arguments.contains(where:{$0.hasPrefix("--integration-finder-document=")}) {return false}
+        #endif
+        return true
+    }
+    func applicationOpenUntitledFile(_ sender:NSApplication) -> Bool {
+        openedStartupFallback=true
+        openUntitledDocument(animationBehavior:.default)
+        return true
+    }
     func applicationShouldHandleReopen(_ sender:NSApplication,hasVisibleWindows flag:Bool)->Bool {
-        if !flag && NSDocumentController.shared.documents.isEmpty {openUntitledDocument()}
+        if !flag && NSDocumentController.shared.documents.isEmpty {openUntitledDocument(animationBehavior:.none)}
         return true
     }
     func application(_ sender:NSApplication,openFiles filenames:[String]) {
-        receivedDocumentOpenRequest=true
         openMarkdownFiles(filenames) {success in sender.reply(toOpenOrPrint:success ? .success:.failure)}
     }
-    private func scheduleStartupDocumentFallback() {
-        DispatchQueue.main.asyncAfter(deadline:.now()+0.1) { [weak self] in
-            guard let self,!receivedDocumentOpenRequest,NSDocumentController.shared.documents.isEmpty else{return}
-            openedStartupFallback=true
-            openUntitledDocument()
-        }
-    }
-    private func openUntitledDocument() {
+    private func openUntitledDocument(animationBehavior:NSWindow.AnimationBehavior = .none) {
         let document=MarkdownDocument()
-        NSDocumentController.shared.addDocument(document);document.makeWindowControllers();document.showWindows()
+        NSDocumentController.shared.addDocument(document);document.makeWindowControllers()
+        for controller in document.windowControllers {controller.window?.animationBehavior=animationBehavior}
+        document.showWindows()
         document.windowControllers.first?.window?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps:true)
     }
@@ -395,6 +418,32 @@ func exportProfileRecording(_ path:UnsafePointer<CChar>) {
     }
     private func present(_ error:Error) {NSAlert(error:error).runModal()}
     func applicationShouldTerminateAfterLastWindowClosed(_ sender:NSApplication) -> Bool { false }
+    func menuNeedsUpdate(_ menu:NSMenu) {
+        guard menu === recentDocumentsMenu else{return}
+        rebuildRecentDocumentsMenu()
+    }
+    private func rebuildRecentDocumentsMenu() {
+        guard let menu=recentDocumentsMenu else{return}
+        menu.removeAllItems()
+        let urls=NSDocumentController.shared.recentDocumentURLs.filter {
+            markdownFilenameExtensions.contains($0.pathExtension.lowercased())
+        }
+        if urls.isEmpty {
+            let empty=NSMenuItem(title:"No Recent Documents",action:nil,keyEquivalent:"")
+            empty.isEnabled=false;menu.addItem(empty)
+        } else {
+            for url in urls {
+                let item=NSMenuItem(title:FileManager.default.displayName(atPath:url.path),
+                                    action:#selector(openRecentDocument(_:)),keyEquivalent:"")
+                item.target=self;item.representedObject=url;item.toolTip=url.path
+                menu.addItem(item)
+            }
+        }
+        menu.addItem(.separator())
+        let clear=NSMenuItem(title:"Clear Menu",action:#selector(NSDocumentController.clearRecentDocuments(_:)),keyEquivalent:"")
+        clear.target=NSDocumentController.shared;clear.isEnabled = !urls.isEmpty
+        menu.addItem(clear)
+    }
     private func buildMenus() {
         let main = NSMenu(); NSApp.mainMenu = main
         func submenu(_ title:String)->NSMenu { let item=NSMenuItem(); item.title=title;let menu=NSMenu(title:title);item.submenu=menu;main.addItem(item);return menu }
@@ -413,6 +462,9 @@ func exportProfileRecording(_ path:UnsafePointer<CChar>) {
         app.addItem(.separator());add(app,"Quit Markato",#selector(NSApplication.terminate(_:)),"q")
         let file=submenu("File")
         add(file,"New",#selector(newDocument(_:)),"n");add(file,"Open…",#selector(openDocument(_:)),"o")
+        let recentItem=NSMenuItem(title:"Open Recent",action:nil,keyEquivalent:"")
+        let recentMenu=NSMenu(title:"Open Recent");recentItem.submenu=recentMenu;file.addItem(recentItem)
+        recentDocumentsMenu=recentMenu;recentMenu.delegate=self;rebuildRecentDocumentsMenu()
         file.addItem(.separator());add(file,"Close",#selector(NSWindow.performClose(_:)),"w")
         add(file,"Close All Windows",#selector(closeAllDocuments(_:)),"W",.command)
         file.addItem(.separator());add(file,"Save",#selector(NSDocument.save(_:)),"s");add(file,"Save As…",#selector(NSDocument.saveAs(_:)),"s",[.command,.shift])
@@ -516,6 +568,7 @@ catch {
     exit(2)
 }
 let application = NSApplication.shared
+private let documentController=MainActor.assumeIsolated {MarkatoDocumentController()}
 let delegate = MainActor.assumeIsolated {AppDelegate(launchConfiguration:launchConfiguration)}
 application.delegate = delegate
 #if DEBUG
