@@ -233,9 +233,9 @@ not presently justify maintaining an engine fork.
 
 ## Implementation status
 
-Implemented: the isolated Swift module and C++ bridge; two prewarmed stock CPU
-surfaces; bounded `RenderedWindow` mounting; stable-ID overlap retention;
-measurement; local scrolling; pixel publication; the existing logical-height
+Implemented: the isolated Swift module and C++ bridge; one stock CPU surface
+with atomic pending-frame publication; bounded `RenderedWindow` mounting;
+stable-ID overlap retention; measurement; local scrolling; the existing logical-height
 and calibrated map contracts; edit patching; bundled CSS and KaTeX styles; local
 images; links; mouse selection and copying; horizontal overflow; resize; and a
 renderer-neutral integration path.

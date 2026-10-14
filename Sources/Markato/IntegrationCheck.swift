@@ -947,23 +947,22 @@ import PDFKit
                 "A cached deep jump did not publish") {
                 check(preview.preparedFragmentCount<350,"A deep jump must keep the mounted DOM bounded")
                 check(controller.hasPreparedDocument,"The deep jump should use the fully prepared retained tree")
-                let retainedSurface=preview.debugCommittedSurfaceIndex
+                let retainedFrame=preview.committedFrameID
                 let crossRevisionCommits=preview.crossRevisionCommitCount
-                let inPlaceCrossRevisionCommits=preview.inPlaceCrossRevisionCommitCount
                 let transientRevision=document.revision+1
                 document.parser.debugFailNextRequests()
                 document.replace(NSRange(location:document.source.count,length:0),with:"\n\n## TRANSIENT_PARSE_EDIT\n\nRecovered automatically.\n")
                 check(!preview.isShowingLoadingState,
                     "An edit must retain the committed preview without flashing the loading layer")
-                check(preview.debugCommittedSurfaceIndex==retainedSurface,
-                    "An edit must leave the committed surface visible while its replacement prepares")
+                check(preview.committedFrameID==retainedFrame,
+                    "An edit must leave the committed frame visible while its replacement prepares")
                 source.reveal(document.source.count,alignTop:false)
                 wait(800,{document.revision==transientRevision && preview.lastRevision==transientRevision &&
                     preview.previewView.debugText.contains("TRANSIENT_PARSE_EDIT")},"Transient parser failure did not recover") {
                     check(preview.crossRevisionCommitCount>crossRevisionCommits,
                         "The edit did not commit a cross-revision preview replacement")
-                    check(preview.inPlaceCrossRevisionCommitCount==inPlaceCrossRevisionCommits,
-                        "A cross-revision edit mutated the displayed preview surface")
+                    check(preview.committedFrameID>retainedFrame,
+                        "A cross-revision edit did not publish a new atomic preview frame")
                     check(!controller.isShowingParseError,"A successful automatic retry must clear the parse error")
                     let retainedRevision=preview.displayedDocumentRevision,repeatedRevision=document.revision+1
                     document.parser.debugFailNextRequests(2)
@@ -1029,19 +1028,18 @@ import PDFKit
                     window.contentView?.layoutSubtreeIfNeeded();window.displayIfNeeded()
                     let before=capture(source.scroll.contentView)
                     let previewBefore=capture(preview)
-                    let previewSurface=preview.debugCommittedSurfaceIndex
                     writeVisualCapture(before,suffix:"before-release")
                     writeVisualCapture(previewBefore,suffix:"preview-before-release")
                     controller.windowDidEndLiveResize(Notification(name:NSWindow.didEndLiveResizeNotification,object:window))
-                    check(preview.debugCommittedSurfaceIndex==previewSurface && !preview.isShowingLoadingState,
-                        "Resize release replaced or masked the already reflowed preview")
+                    check(!preview.isShowingLoadingState,
+                        "Resize release masked the already reflowed preview")
                     assertAnchors("at mouse-up")
                     DispatchQueue.main.asyncAfter(deadline:.now()+0.12) {
                         window.contentView?.layoutSubtreeIfNeeded();window.displayIfNeeded()
                         let after=capture(source.scroll.contentView)
                         let previewAfter=capture(preview)
-                        check(preview.debugCommittedSurfaceIndex==previewSurface && !preview.isShowingLoadingState,
-                            "Deferred resize release replaced or masked the preview")
+                        check(!preview.isShowingLoadingState,
+                            "Deferred resize release masked the preview")
                         writeVisualCapture(after,suffix:"after-release")
                         writeVisualCapture(previewAfter,suffix:"preview-after-release")
                         check(visualVerticalShift(before,after)==0,
@@ -1149,7 +1147,7 @@ import PDFKit
         source.reveal(location,alignTop:true)
         wait(800,{preview.coversSourceViewport && preview.debugParagraphViewportY(containing:following) != nil},
             "The following paragraph was not visible before insertion") {
-            let retainedSurface=preview.debugCommittedSurfaceIndex
+            let retainedFrame=preview.committedFrameID
             var committedPositions=[CGFloat]()
             preview.debugPresentationCommitted = {
                 if preview.displayedDocumentRevision==document.revision,
@@ -1159,7 +1157,7 @@ import PDFKit
             source.textView.insertText("Inserted paragraph.\n\n",replacementRange:source.textView.selectedRange())
             check(!preview.isShowingLoadingState,
                 "A paragraph insertion must retain the committed preview without a loading flash")
-            check(preview.debugCommittedSurfaceIndex==retainedSurface,
+            check(preview.committedFrameID==retainedFrame,
                 "A paragraph insertion must remain offscreen until its replacement is ready")
             wait(800,{preview.lastRevision==document.revision &&
                 preview.previewView.debugText.contains("Inserted paragraph.")},
@@ -1229,22 +1227,22 @@ import PDFKit
         func step(_ index:Int) {
             guard index<characters.count else {completion();return}
             let previousRevision=document.revision
-            let retainedSurface=preview.debugCommittedSurfaceIndex
+            let retainedFrame=preview.committedFrameID
             let crossRevisionCommits=preview.crossRevisionCommitCount
-            let inPlaceCrossRevisionCommits=preview.inPlaceCrossRevisionCommitCount
+            let pixelReuseCommits=preview.pixelReuseCommitCount
             expected.append(characters[index])
             source.textView.insertText(String(characters[index]),replacementRange:source.textView.selectedRange())
             check(document.revision==previousRevision+1,"A simulated keystroke must create one document revision")
             check(!preview.isShowingLoadingState,
                 "A keystroke must retain the committed preview without flashing the loading layer")
-            check(preview.debugCommittedSurfaceIndex==retainedSurface,
-                "A keystroke must not replace the visible surface before rendering finishes")
+            check(preview.committedFrameID==retainedFrame,
+                "A keystroke must not replace the visible frame before rendering finishes")
             wait(800,{preview.lastRevision==document.revision && preview.previewView.debugText.contains(expected)},
                 "A simulated keystroke did not reach the preview") {
                 check(preview.crossRevisionCommitCount>crossRevisionCommits,
                     "A simulated keystroke did not commit a preview replacement")
-                check(preview.inPlaceCrossRevisionCommitCount==inPlaceCrossRevisionCommits,
-                    "A simulated keystroke mutated the displayed preview surface")
+                check(preview.committedFrameID>retainedFrame || preview.pixelReuseCommitCount>pixelReuseCommits,
+                    "A simulated keystroke neither published a new frame nor reused identical pixels")
                 step(index+1)
             }
         }

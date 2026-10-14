@@ -44,6 +44,14 @@ public final class HTMLAssetResolver {
     }
 }
 
+private struct PendingBitmap {
+    let pixels:Data
+    let image:CGImage
+    let size:NSSize
+    let baseURL:URL?
+    let containsImages:Bool
+}
+
 public struct HTMLPreviewGeometry: Equatable, Sendable {
     public struct Item: Equatable, Sendable {
         public let id:String
@@ -79,8 +87,12 @@ public struct HTMLPreviewGeometry: Equatable, Sendable {
     private var pixelSize=(width:UInt32(0),height:UInt32(0),scale:CGFloat(0))
     private var scrollPoint:NSPoint?
     private var pixelData=Data()
+    private var pendingBitmap:PendingBitmap?
+    /// The renderer DOM may advance ahead of the native image, but input must
+    /// always describe the frame that is actually visible.
+    public private(set) var hasUncommittedPresentation=false
     public func elementRect(_ selector:String,containing text:String="")->NSRect? {
-        guard let engine else{return nil}
+        guard let engine,!hasUncommittedPresentation else{return nil}
         var x=0.0,y=0.0,width=0.0,height=0.0
         let found=selector.withCString {selector in text.withCString {text in
             astra_ul_surface_text_rect(engine,selector,text,&x,&y,&width,&height)
@@ -124,7 +136,10 @@ public struct HTMLPreviewGeometry: Equatable, Sendable {
         return vendor
     }
 
-    public func present(_ next:[RenderedEntry],fontSize:CGFloat,baseURL:URL?=nil)->HTMLPreviewGeometry? {
+    /// Update and measure the renderer without replacing the visible bitmap.
+    /// The owner publishes a matching bitmap only after it has validated the
+    /// source geometry and final scroll position.
+    public func prepare(_ next:[RenderedEntry],fontSize:CGFloat,baseURL:URL?=nil)->HTMLPreviewGeometry? {
         guard let engine else{return nil}
         #if DEBUG
         if debugFailsNextPresentation {debugFailsNextPresentation=false;return nil}
@@ -138,12 +153,52 @@ public struct HTMLPreviewGeometry: Equatable, Sendable {
             }}
         }
         guard astra_ul_surface_commit_update(engine) else{return nil}
-        entryIDs=next.map(\.id);self.baseURL=baseURL
+        entryIDs=next.map(\.id)
+        hasUncommittedPresentation=true
+        pendingBitmap=nil
         didRender()
-        guard refreshImage() else{return nil}
-        if next.contains(where:{$0.fragment.html?.contains("<img") == true}) {beginResourcePump()}
         return geometry()
     }
+
+    /// Set the renderer's final position without scheduling publication of its
+    /// pixels. Ordinary committed scrolling continues to use `scroll(to:)`.
+    public func stageScroll(to point:NSPoint) {
+        guard let engine else{return}
+        scrollPoint=point;astra_ul_surface_scroll(engine,point.x,point.y)
+        engineDirty=true
+    }
+
+    /// Capture a complete replacement while retaining the currently displayed
+    /// image. This is the pixel-level front/back buffer boundary.
+    public func capturePendingFrame(baseURL:URL?,containsImages:Bool)->Bool {
+        guard let engine else{return false}
+        pendingFlush?.cancel();pendingFlush=nil
+        if engineDirty {
+            engineDirty=false
+            // A no-op scroll can leave no dirty rectangle even though the DOM
+            // commit immediately before it produced a complete valid surface.
+            // Render to settle the engine, then capture regardless of whether
+            // Ultralight reports newly dirtied pixels.
+            _ = astra_ul_surface_render(engine)
+        }
+        guard let bitmap=makeBitmap() else{return false}
+        pendingBitmap=PendingBitmap(pixels:bitmap.pixels,image:bitmap.image,size:bitmap.size,
+            baseURL:baseURL,containsImages:containsImages)
+        return true
+    }
+
+    @discardableResult public func publishPendingFrame()->Bool {
+        guard let pending=pendingBitmap else{return false}
+        pendingBitmap=nil
+        pixelData=pending.pixels;image=pending.image;imageSize=pending.size;baseURL=pending.baseURL
+        hasUncommittedPresentation=false
+        needsDisplay=true
+        if pending.containsImages {beginResourcePump()}
+        else {resourcePump?.invalidate();resourcePump=nil}
+        return true
+    }
+
+    public func discardPendingFrame() {pendingBitmap=nil}
 
     public func geometry()->HTMLPreviewGeometry? {
         guard let engine else{return nil}
@@ -160,7 +215,7 @@ public struct HTMLPreviewGeometry: Equatable, Sendable {
     }
 
     public func scroll(to point:NSPoint) {
-        guard let engine else{return}
+        guard let engine,!hasUncommittedPresentation else{return}
         if let previous=scrollPoint,abs(previous.x-point.x)<0.01,abs(previous.y-point.y)<0.01 {return}
         scrollPoint=point;astra_ul_surface_scroll(engine,point.x,point.y)
         engineDirty=true;scheduleFlush()
@@ -209,14 +264,14 @@ public struct HTMLPreviewGeometry: Equatable, Sendable {
         pendingFlush?.cancel();pendingFlush=nil;engineDirty=false
     }
 
-    @discardableResult private func refreshImage()->Bool {
-        guard let engine else{return false}
+    private func makeBitmap()->(pixels:Data,image:CGImage,size:NSSize)? {
+        guard let engine else{return nil}
         #if DEBUG
         let work=TimingDiagnostics.shared.begin("html.bitmap.copy")
         defer {TimingDiagnostics.shared.end(work)}
         #endif
         let count=astra_ul_surface_pixel_bytes(engine)
-        guard count>0 else{return false}
+        guard count>0 else{return nil}
         // Build the replacement from separate storage. The currently drawn
         // CGImage keeps its provider alive until the complete next image is
         // ready, so a failed copy cannot turn the preview into an empty frame.
@@ -225,18 +280,20 @@ public struct HTMLPreviewGeometry: Equatable, Sendable {
         let copied=nextPixels.withUnsafeMutableBytes {bytes in
             astra_ul_surface_copy_pixels(engine,bytes.baseAddress,count,&width,&height,&stride)
         }
-        guard copied,let provider=CGDataProvider(data:nextPixels as CFData) else{return false}
+        guard copied,let provider=CGDataProvider(data:nextPixels as CFData) else{return nil}
         let scale=max(1,pixelSize.scale)
         let nextSize=NSSize(width:CGFloat(width)/scale,height:CGFloat(height)/scale)
         let info=CGBitmapInfo(rawValue:CGImageAlphaInfo.premultipliedFirst.rawValue)
             .union(.byteOrder32Little)
         guard let nextImage=CGImage(width:Int(width),height:Int(height),bitsPerComponent:8,bitsPerPixel:32,
             bytesPerRow:Int(stride),space:CGColorSpaceCreateDeviceRGB(),bitmapInfo:info,
-            provider:provider,decode:nil,shouldInterpolate:false,intent:.defaultIntent) else{return false}
-        pixelData=nextPixels
-        imageSize=nextSize
-        image=nextImage
-        needsDisplay=true
+            provider:provider,decode:nil,shouldInterpolate:false,intent:.defaultIntent) else{return nil}
+        return (nextPixels,nextImage,nextSize)
+    }
+
+    @discardableResult private func refreshImage()->Bool {
+        guard !hasUncommittedPresentation,let bitmap=makeBitmap() else{return false}
+        pixelData=bitmap.pixels;imageSize=bitmap.size;image=bitmap.image;needsDisplay=true
         return true
     }
 
@@ -245,7 +302,7 @@ public struct HTMLPreviewGeometry: Equatable, Sendable {
         resourcePump=Timer.scheduledTimer(withTimeInterval:1/60,repeats:true) { [weak self] timer in
             MainActor.assumeIsolated {
                 guard let self,let engine=self.engine else{timer.invalidate();return}
-                if astra_ul_surface_pump(engine) {_ = self.refreshImage()}
+                if !self.hasUncommittedPresentation,astra_ul_surface_pump(engine) {_ = self.refreshImage()}
                 self.resourcePumpTicks += 1
                 if self.resourcePumpTicks>=180 {timer.invalidate();self.resourcePump=nil}
             }
@@ -298,7 +355,7 @@ public struct HTMLPreviewGeometry: Equatable, Sendable {
             horizontalGesture=abs(event.scrollingDeltaX)>abs(event.scrollingDeltaY)
         }
         if horizontalGesture ?? (abs(event.scrollingDeltaX)>abs(event.scrollingDeltaY)) {
-            if let engine {
+            if let engine,!hasUncommittedPresentation {
                 let p=convert(event.locationInWindow,from:nil)
                 astra_ul_surface_horizontal_scroll(engine,Int32(event.scrollingDeltaX),Int32(p.x),Int32(p.y))
                 refreshImage()
@@ -313,7 +370,7 @@ public struct HTMLPreviewGeometry: Equatable, Sendable {
     }
 
     private func fireMouse(_ event:NSEvent,type:Int32,button:Int32) {
-        guard let engine else{return}
+        guard let engine,!hasUncommittedPresentation else{return}
         let point=convert(event.locationInWindow,from:nil)
         astra_ul_surface_mouse(engine,type,Int32(point.x),Int32(point.y),button)
         refreshImage()
@@ -323,7 +380,7 @@ public struct HTMLPreviewGeometry: Equatable, Sendable {
     public override func mouseDown(with event:NSEvent) {window?.makeFirstResponder(self);fireMouse(event,type:1,button:1)}
     public override func mouseUp(with event:NSEvent) {
         fireMouse(event,type:2,button:1)
-        guard let engine else{return}
+        guard let engine,!hasUncommittedPresentation else{return}
         let point=convert(event.locationInWindow,from:nil)
         if let raw=astra_ul_surface_link_at(engine,point.x,point.y) {
             let value=String(cString:raw);astra_ul_string_free(raw)
@@ -341,7 +398,7 @@ public struct HTMLPreviewGeometry: Equatable, Sendable {
         copy.target=self;menu.addItem(copy);return menu
     }
     @objc private func copySelection(_ sender:Any?) {
-        guard let engine,let raw=astra_ul_surface_selected_text(engine) else{return}
+        guard let engine,!hasUncommittedPresentation,let raw=astra_ul_surface_selected_text(engine) else{return}
         let value=String(cString:raw);astra_ul_string_free(raw)
         NSPasteboard.general.clearContents();NSPasteboard.general.setString(value,forType:.string)
     }
