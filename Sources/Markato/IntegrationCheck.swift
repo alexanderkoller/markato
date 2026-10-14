@@ -88,6 +88,15 @@ import PDFKit
     static func run(_ document:MarkdownDocument) {
         guard let controller=document.windowControllers.first as? EditorWindowController else {fail("Missing editor window")}
         check(!MarkdownDocument.autosavesInPlace,"Markdown documents must require an explicit save")
+        check(DocumentOpenOrigin.inApplication.animationBehavior == .none
+                && !DocumentOpenOrigin.inApplication.displaysWhileOpening,
+            "File Open must suppress animation before presenting its document window")
+        check(DocumentOpenOrigin.external.animationBehavior == .default
+                && DocumentOpenOrigin.external.displaysWhileOpening,
+            "Finder document requests must retain AppKit's default window animation")
+        let openItem=NSApp.mainMenu?.item(withTitle:"File")?.submenu?.item(withTitle:"Open…")
+        check(openItem?.action == #selector(AppDelegate.openDocument(_:)) && openItem?.target === NSApp.delegate,
+            "File Open must route through the in-application presentation path")
         if CommandLine.arguments.contains("--integration-empty-edits") {
             verifyEmptyDocumentEdits(controller,document:document);return
         }
@@ -345,10 +354,12 @@ import PDFKit
         }
         wait(500) {
             check(!controller.isSidebarVisible,"Outline sidebar must be hidden initially")
-            check(controller.window?.toolbar?.items.contains(where:{
-                $0.action == #selector(EditorWindowController.toggleSidebar(_:)) && $0.isEnabled
-            })==true,"The window must keep an enabled sidebar toggle in its toolbar")
-            controller.toggleSidebar(nil)
+            guard let sidebarButton=controller.window?.toolbar?.items.lazy.compactMap({$0.view as? NSButton}).first(where:{
+                $0.action == #selector(EditorWindowController.toggleSidebar(_:))
+                    && $0.bezelStyle == .toolbar && $0.isBordered
+                    && $0.showsBorderOnlyWhileMouseInside
+            }) else{fail("The window must keep an AppKit hover-revealed sidebar button in its toolbar")}
+            sidebarButton.performClick(nil)
             check(controller.isSidebarVisible,"Sidebar toggle must reveal the outline")
             check(controller.sidebar.debugHeadingTitles.first=="Markato — a long example",
                 "Outline must use parser-produced plain heading titles")

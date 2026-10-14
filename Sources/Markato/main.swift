@@ -4,6 +4,12 @@ import UniformTypeIdentifiers
 
 private let markdownFilenameExtensions:Set<String> = ["md","markdown","mdown","mkd"]
 
+enum DocumentOpenOrigin {
+    case inApplication,external
+    var animationBehavior:NSWindow.AnimationBehavior {self == .inApplication ? .none:.default}
+    var displaysWhileOpening:Bool {self == .external}
+}
+
 private enum DocumentRequestError: LocalizedError {
     case tooManyFiles(Int)
     case missingFile(String)
@@ -87,6 +93,17 @@ func exportProfileRecording(_ path:UnsafePointer<CChar>) {
     @objc func saveDocumentAs(_ sender:Any?) { (currentEditor?.document as? NSDocument)?.saveAs(sender) }
     @objc func revertDocumentToSaved(_ sender:Any?) { (currentEditor?.document as? NSDocument)?.revertToSaved(sender) }
     @objc func newDocument(_ sender:Any?) {openUntitledDocument()}
+    @objc func openDocument(_ sender:Any?) {
+        let panel=NSOpenPanel()
+        panel.allowedContentTypes=markdownFilenameExtensions.sorted().compactMap{UTType(filenameExtension:$0)}
+        panel.allowsMultipleSelection=false;panel.canChooseDirectories=false;panel.canChooseFiles=true
+        let completion:@MainActor (NSApplication.ModalResponse)->Void = { [weak self] response in
+            guard response == .OK,let self,let url=panel.url else{return}
+            self.openMarkdownURL(url,origin:.inApplication) {_ in}
+        }
+        if let window=currentEditor?.window {panel.beginSheetModal(for:window,completionHandler:completion)}
+        else {panel.begin(completionHandler:completion)}
+    }
     @objc func exportHTML(_ sender:Any?) {currentDocument?.exportHTML(sender)}
     @objc func exportPDF(_ sender:Any?) {currentDocument?.saveToPDF(sender)}
     @objc func printDocument(_ sender:Any?) {currentDocument?.printDocument(sender)}
@@ -137,7 +154,7 @@ func exportProfileRecording(_ path:UnsafePointer<CChar>) {
     }
     #endif
     func validateMenuItem(_ menuItem:NSMenuItem)->Bool {
-        if menuItem.action == #selector(newDocument(_:)) {return true}
+        if menuItem.action == #selector(newDocument(_:)) || menuItem.action == #selector(openDocument(_:)) {return true}
         if menuItem.action == #selector(closeAllDocuments(_:)) {
             menuItem.keyEquivalent="W";menuItem.keyEquivalentModifierMask = .command
             return !isClosingAllDocuments && !NSDocumentController.shared.documents.isEmpty
@@ -235,6 +252,7 @@ func exportProfileRecording(_ path:UnsafePointer<CChar>) {
                       document.windowControllers.count==1,
                       let window=document.windowControllers.first?.window,
                       window.tabbingMode == .disallowed,window.isVisible,
+                      checkingFinderPath == nil || window.animationBehavior != .none,
                       NSScreen.screens.contains(where:{$0.visibleFrame.intersects(window.frame)}),
                       document.fileURL?.standardizedFileURL == expectedURL?.standardizedFileURL,
                       expectedURL != nil || document.source.count==0,
@@ -350,17 +368,29 @@ func exportProfileRecording(_ path:UnsafePointer<CChar>) {
         }
         do {
             let url=try validatedMarkdownURL(filenames[0])
-            NSDocumentController.shared.openDocument(withContentsOf:url,display:true) { document,_,error in
-                if let error {self.present(error);completion(false)}
-                else {
-                    document?.showWindows()
-                    document?.windowControllers.first?.window?.makeKeyAndOrderFront(nil)
-                    NSApp.activate(ignoringOtherApps:true)
-                    completion(true)
-                }
-            }
+            openMarkdownURL(url,origin:.external,completion:completion)
         } catch {
             present(error);completion(false)
+        }
+    }
+    private func openMarkdownURL(_ url:URL,origin:DocumentOpenOrigin,
+                                 completion:@escaping (Bool)->Void) {
+        // External document requests retain AppKit's ordinary document-window
+        // animation. In-app Open uses display:false so the window can be
+        // configured before its first order-front operation.
+        NSDocumentController.shared.openDocument(withContentsOf:url,display:origin.displaysWhileOpening) { document,alreadyOpen,error in
+            if let error {self.present(error);completion(false);return}
+            guard let document else{completion(false);return}
+            if document.windowControllers.isEmpty {document.makeWindowControllers()}
+            if !alreadyOpen {
+                for controller in document.windowControllers {
+                    controller.window?.animationBehavior=origin.animationBehavior
+                }
+            }
+            document.showWindows()
+            document.windowControllers.first?.window?.makeKeyAndOrderFront(nil)
+            NSApp.activate(ignoringOtherApps:true)
+            completion(true)
         }
     }
     private func present(_ error:Error) {NSAlert(error:error).runModal()}
@@ -372,9 +402,8 @@ func exportProfileRecording(_ path:UnsafePointer<CChar>) {
                  tag:Int?=nil) {
             let item=NSMenuItem(title:title,action:action,keyEquivalent:key);item.keyEquivalentModifierMask=modifiers
             if let tag {item.tag=tag}
-            let routed:Set<String> = ["undo:","redo:","showFind:","findNext:","findPrevious:","addComment:","toggleSidebar:","togglePreview:","increaseFont:","decreaseFont:","performMarkdownCommand:","saveDocument:","saveDocumentAs:","revertDocumentToSaved:","newDocument:","exportHTML:","exportPDF:","printDocument:","closeAllDocuments:"]
+            let routed:Set<String> = ["undo:","redo:","showFind:","findNext:","findPrevious:","addComment:","toggleSidebar:","togglePreview:","increaseFont:","decreaseFont:","performMarkdownCommand:","saveDocument:","saveDocumentAs:","revertDocumentToSaved:","newDocument:","openDocument:","exportHTML:","exportPDF:","printDocument:","closeAllDocuments:"]
             if routed.contains(NSStringFromSelector(action)) { item.target = self }
-            if action == #selector(NSDocumentController.openDocument(_:)) { item.target = NSDocumentController.shared }
             menu.addItem(item)
         }
         let app=submenu("Markato")
@@ -383,7 +412,7 @@ func exportProfileRecording(_ path:UnsafePointer<CChar>) {
         app.addItem(.separator());add(app,"Hide Markato",#selector(NSApplication.hide(_:)),"h");add(app,"Hide Others",#selector(NSApplication.hideOtherApplications(_:)),"h",[.command,.option]);add(app,"Show All",#selector(NSApplication.unhideAllApplications(_:)))
         app.addItem(.separator());add(app,"Quit Markato",#selector(NSApplication.terminate(_:)),"q")
         let file=submenu("File")
-        add(file,"New",#selector(newDocument(_:)),"n");add(file,"Open…",#selector(NSDocumentController.openDocument(_:)),"o")
+        add(file,"New",#selector(newDocument(_:)),"n");add(file,"Open…",#selector(openDocument(_:)),"o")
         file.addItem(.separator());add(file,"Close",#selector(NSWindow.performClose(_:)),"w")
         add(file,"Close All Windows",#selector(closeAllDocuments(_:)),"W",.command)
         file.addItem(.separator());add(file,"Save",#selector(NSDocument.save(_:)),"s");add(file,"Save As…",#selector(NSDocument.saveAs(_:)),"s",[.command,.shift])

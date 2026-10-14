@@ -933,16 +933,17 @@ final class EditorWindowController: NSWindowController, NSSplitViewDelegate, NSS
         let button=NSButton(image:NSImage(systemSymbolName:"sidebar.left",accessibilityDescription:"Toggle Sidebar")!,
             target:self,action:#selector(toggleSidebar(_:)))
         button.imagePosition = .imageOnly;button.imageScaling = .scaleProportionallyDown
-        button.contentTintColor = .labelColor;button.isBordered=false
+        button.bezelStyle = .toolbar;button.isBordered=true
+        button.showsBorderOnlyWhileMouseInside=true
         button.frame=NSRect(x:0,y:0,width:32,height:28)
-        button.setAccessibilityLabel("Toggle Outline Sidebar")
-        item.view=button
+        button.setAccessibilityLabel("Toggle Sidebar")
+        item.view=button;item.target=self;item.action=#selector(toggleSidebar(_:))
         configureSidebarToolbarItem(item)
         return item
     }
     private func configureSidebarToolbarItem(_ item:NSToolbarItem) {
         let title=isSidebarVisible ? "Hide Sidebar":"Show Sidebar"
-        item.label="Outline";item.paletteLabel="Outline";item.toolTip=title
+        item.label=title;item.paletteLabel="Sidebar";item.toolTip=title
         item.view?.toolTip=title
     }
     private func updateSidebarToolbarItem() {
