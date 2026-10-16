@@ -50,10 +50,12 @@ body {
   display: flow-root;
   padding: 32px;
 }
-section {
+.astra-preview-block {
   position: relative;
   display: flow-root;
-  margin: 0 0 16px;
+  contain: layout paint;
+  margin: 0;
+  padding: 0 0 16px;
   overflow-wrap: anywhere;
 }
 .markato-comment-highlight {
@@ -126,13 +128,19 @@ section {
   background: var(--bg-muted);
   text-decoration: none;
 }
-section:has(> h1, > h2, > h3, > h4, > h5, > h6) { margin-top: 24px; }
-section:first-child { margin-top: 0; }
-section.last-block { margin-bottom: 0; }
-section > :first-child { margin-top: 0; }
-section > .markato-comment-bubble + :not(.markato-comment-bubble) { margin-top: 0; }
-section > :last-child { margin-bottom: 0; }
+.astra-preview-block:has(> h1, > h2, > h3, > h4, > h5, > h6) { padding-top: 24px; }
+.astra-preview-block.document-first:has(> h1, > h2, > h3, > h4, > h5, > h6) { padding-top: 0; }
+.astra-preview-block > :first-child { margin-top: 0; }
+.astra-preview-block > .markato-comment-bubble + :not(.markato-comment-bubble) { margin-top: 0; }
+.astra-preview-block > :last-child { margin-bottom: 0; }
 .paint-group { display: flow-root; contain: paint; }
+
+/* Retained geometry has no animation clock. Author content may change its own
+   static size, but every such change must enter through a discrete DOM event. */
+#preview *, #preview *::before, #preview *::after {
+  animation: none !important;
+  transition: none !important;
+}
 
 p, blockquote, ul, ol, dl, table, pre, details {
   margin-top: 0;
@@ -249,7 +257,7 @@ li.task-list-item { list-style-type: none; }
   vertical-align: middle;
 }
 
-section:has(> table) { overflow-x: auto; }
+.astra-preview-block:has(> table) { overflow-x: auto; }
 table {
   width: auto;
   max-width: 100%;

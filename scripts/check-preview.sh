@@ -15,4 +15,10 @@ dist/debug/Markato.app/Contents/MacOS/Markato --integration-test --integration-e
 dist/debug/Markato.app/Contents/MacOS/Markato --integration-test --integration-comments
 dist/debug/Markato.app/Contents/MacOS/Markato --integration-test --integration-comment-edit-stability
 dist/debug/Markato.app/Contents/MacOS/Markato --integration-test --integration-paragraph-edit-stability
+dist/debug/Markato.app/Contents/MacOS/Markato --integration-test --integration-height-stability
+dist/debug/Markato.app/Contents/MacOS/Markato --integration-test --integration-delayed-image-stability
+dist/debug/Markato.app/Contents/MacOS/Markato --integration-test --integration-delayed-image-bottom
+dist/debug/Markato.app/Contents/MacOS/Markato --integration-test --integration-delayed-image-bottom-untouched
+dist/debug/Markato.app/Contents/MacOS/Markato --integration-test --integration-scroll-throughput
+dist/debug/Markato.app/Contents/MacOS/Markato --integration-test --integration-preview-jump
 exec dist/debug/Markato.app/Contents/MacOS/Markato --integration-test --diagnostics

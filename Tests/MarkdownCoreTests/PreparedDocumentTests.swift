@@ -5,6 +5,13 @@ import Testing
 private func prepared(_ id:String,_ from:Int,_ to:Int,_ text:String)->PreviewFragment {
     PreviewFragment(kind:"Paragraph",from:from,to:to,html:"<p>\(text)</p>",id:id)
 }
+private let previewLayout=PreviewLayoutID(width:640,fontSize:15,stylesheetGeneration:2)
+@discardableResult private func measure(_ doc:PreparedDocument,_ heights:[BlockID:Double],revision:Int)->Double? {
+    doc.setPreviewLayoutID(previewLayout)
+    let measurements=heights.map{PreviewBlockMeasurement(blockID:$0.key,contentVersion:1,stride:$0.value)}
+    return doc.applyPreviewMeasurements(measurements,revision:revision,layoutID:previewLayout,
+        expectedContentVersions:Dictionary(uniqueKeysWithValues:heights.keys.map{($0,1)}))
+}
 @Test func emptyDocumentProducesAnEmptyRenderableWindow() throws {
     let doc=PreparedDocument()
     doc.adopt([],revision:1,length:0)
@@ -18,7 +25,7 @@ private func prepared(_ id:String,_ from:Int,_ to:Int,_ text:String)->PreviewFra
     let doc=PreparedDocument()
     doc.adopt([.init(id:"a",kind:"Paragraph",from:0,to:5),.init(id:"b",kind:"Paragraph",from:7,to:12)],revision:1,length:13)
     doc.store(ParseResult(revision:1,spans:[],fragments:[prepared("a",0,5,"first"),prepared("b",7,12,"last")]),range:NSRange(location:0,length:13))
-    doc.recordPreviewHeights(["b":30],revision:1)
+    measure(doc,["b":30],revision:1)
     doc.sourceLayout.replaceSuffix(at:0,with:[.init(length:7,advance:20,height:20),.init(length:6,advance:20,height:20)])
     #expect(doc.firstUnpreparedOffset(from:0)==13)
     #expect(doc.heights(for:"b")?.preview==30)
@@ -38,7 +45,7 @@ private func prepared(_ id:String,_ from:Int,_ to:Int,_ text:String)->PreviewFra
     doc.store(ParseResult(revision:1,spans:[.init(kind:"Emphasis",from:14,to:19)],
         fragments:[prepared("a",0,5,"a"),prepared("b",7,12,"b"),prepared("c",14,19,"c")]),
         range:NSRange(location:0,length:20))
-    doc.recordPreviewHeights(["c":31],revision:1)
+    measure(doc,["c":31],revision:1)
     doc.apply(.init(prefix:1,suffix:1,shift:3,
         blocks:[.init(id:"new",kind:"Paragraph",from:7,to:15)]),revision:2,length:23)
     #expect(doc.entries(covering:NSRange(location:0,length:5))?.first?.fragment.html=="<p>a</p>")
@@ -129,6 +136,11 @@ private func prepared(_ id:String,_ from:Int,_ to:Int,_ text:String)->PreviewFra
     doc.store(ParseResult(revision:1,spans:[],fragments:[prepared("555",5550,5560,"filled")]),range:NSRange(location:5550,length:10))
     #expect(doc.firstUnpreparedOffset(from:0)==10000)
     #expect(doc.hasCompleteFragments)
+    let complete=doc.completeWindow()
+    #expect(complete?.range==NSRange(location:0,length:10000))
+    #expect(complete?.entries.count==1000)
+    #expect(complete?.entries.first?.blockID==BlockID("0"))
+    #expect(complete?.entries.last?.blockID==BlockID("999"))
 }
 
 @Test func renderedWindowsUseCachedHeightPrefixesAndStopAtCacheHoles() {
@@ -137,19 +149,19 @@ private func prepared(_ id:String,_ from:Int,_ to:Int,_ text:String)->PreviewFra
     doc.adopt(blocks,revision:1,length:60)
     let fragments=(0..<5).map{prepared("\($0)",$0*10,($0+1)*10,"\($0)")}
     doc.store(ParseResult(revision:1,spans:[],fragments:fragments),range:NSRange(location:0,length:50))
-    doc.recordPreviewHeights(["0":10,"1":20,"2":30,"3":40,"4":50],revision:1)
+    measure(doc,["0":10,"1":20,"2":30,"3":40,"4":50],revision:1)
 
     let single=doc.window(covering:NSRange(location:20,length:10),before:0,after:0)
     #expect(single?.entries.map(\.blockID)==[BlockID("2")])
-    #expect(single?.previewTop==46)
+    #expect(single?.previewTop==62)
     // The unrendered final node still contributes an estimated scrollbar
     // extent, but can never enter the rendered window.
-    #expect(single?.previewHeight==218)
+    #expect(single?.previewHeight==250)
 
     let expanded=doc.window(covering:NSRange(location:20,length:10),before:25,after:500)
     #expect(expanded?.entries.map(\.blockID)==["0","1","2","3","4"].map{BlockID($0)})
     #expect(expanded?.range==NSRange(location:0,length:50))
-    #expect(expanded?.previewTop==16)
+    #expect(expanded?.previewTop==32)
 }
 
 @Test func measuredHeightCorrectionMatchesTheNextRenderedExtent() throws {
@@ -161,8 +173,37 @@ private func prepared(_ id:String,_ from:Int,_ to:Int,_ text:String)->PreviewFra
         prepared("before",0,10,"before"),prepared("inserted",12,22,"inserted"),prepared("after",24,34,"after")
     ]),range:NSRange(location:0,length:35))
     let estimated=try #require(doc.window(covering:NSRange(location:12,length:10),before:100,after:100))
-    let correction=doc.recordPreviewHeights(["before":33,"inserted":33,"after":33],revision:1)
+    let correction=try #require(measure(doc,["before":33,"inserted":33,"after":33],revision:1))
     let measured=try #require(doc.window(covering:NSRange(location:12,length:10),before:100,after:100))
     #expect(estimated.previewHeight+correction==measured.previewHeight)
-    #expect(doc.recordPreviewHeights(["before":33,"inserted":33,"after":33],revision:1)==0)
+    #expect(measure(doc,["before":33,"inserted":33,"after":33],revision:1)==0)
+}
+
+@Test func stalePreviewMeasurementsAreRejectedWithoutChangingTheTree() throws {
+    let doc=PreparedDocument()
+    doc.adopt([.init(id:"a",kind:"Paragraph",from:0,to:10)],revision:4,length:10)
+    let current=PreviewLayoutID(width:600,fontSize:15,stylesheetGeneration:2)
+    let stale=PreviewLayoutID(width:500,fontSize:15,stylesheetGeneration:2)
+    doc.setPreviewLayoutID(current)
+    let original=try #require(doc.previewLayout(for:"a"))
+    let measurement=PreviewBlockMeasurement(blockID:"a",contentVersion:8,stride:91)
+    #expect(doc.applyPreviewMeasurements([measurement],revision:3,layoutID:current,
+        expectedContentVersions:["a":8])==nil)
+    #expect(doc.applyPreviewMeasurements([measurement],revision:4,layoutID:stale,
+        expectedContentVersions:["a":8])==nil)
+    #expect(doc.applyPreviewMeasurements([measurement],revision:4,layoutID:current,
+        expectedContentVersions:["a":9])==nil)
+    #expect(doc.previewLayout(for:"a")==original)
+}
+
+@Test func layoutIdentityChangesLazilyWithoutDiscardingNumericStride() throws {
+    let doc=PreparedDocument()
+    doc.adopt([.init(id:"a",kind:"Paragraph",from:0,to:10)],revision:1,length:10)
+    _ = try #require(measure(doc,["a":47],revision:1))
+    let measured=try #require(doc.previewLayout(for:"a"))
+    #expect(measured.stride==47)
+    #expect(measured.state == .measured(layoutID:previewLayout,contentVersion:1))
+    doc.setPreviewLayoutID(.init(width:720,fontSize:15,stylesheetGeneration:2))
+    #expect(doc.previewLayout(for:"a")?.stride==47)
+    #expect(doc.previewLayout(for:"a")?.state==measured.state)
 }

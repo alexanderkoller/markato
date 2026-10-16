@@ -8,8 +8,10 @@
 #include <cmath>
 #include <cstring>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 using namespace ultralight;
@@ -20,24 +22,46 @@ class SilentLogger final : public Logger {
  public:
   void LogMessage(LogLevel, const String&) override {}
 };
+SilentLogger logger;
+std::once_flag platform_once;
+std::string platform_resource_path;
+std::mutex& renderer_lifecycle_mutex() {
+  // The renderer worker is process-lifetime. Keep its lifecycle lock alive for
+  // the same duration instead of racing C++ static destruction at application exit.
+  static auto* value = new std::mutex;
+  return *value;
+}
 
 struct Engine {
-  SilentLogger logger;
   RefPtr<Renderer> renderer;
 
   explicit Engine(const char* root) {
-    Config config;
-    config.resource_path_prefix = "resources/";
-    config.bitmap_alignment = 16;
-    // The platform loader supplies macOS system font files, while this profile
-    // makes Ultralight composite their glyphs like Safari and other macOS apps.
-    // Ultralight's default profile is WindowsLike, even on macOS.
-    config.font_profile = FontProfile::MacOSLike;
-    Platform::instance().set_config(config);
-    Platform::instance().set_font_loader(GetPlatformFontLoader());
-    Platform::instance().set_file_system(GetPlatformFileSystem(root));
-    Platform::instance().set_logger(&logger);
+    std::string sdk_root = root ? root : "";
+    while (!sdk_root.empty() && sdk_root.front() == '/') sdk_root.erase(sdk_root.begin());
+    std::call_once(platform_once, [&] {
+      Config config;
+      platform_resource_path = sdk_root + "/resources/";
+      config.resource_path_prefix = platform_resource_path.c_str();
+      config.bitmap_alignment = 16;
+      // The platform loader supplies macOS system font files, while this profile
+      // makes Ultralight composite their glyphs like Safari and other macOS apps.
+      // Ultralight's default profile is WindowsLike, even on macOS.
+      config.font_profile = FontProfile::MacOSLike;
+      Platform::instance().set_config(config);
+      Platform::instance().set_font_loader(GetPlatformFontLoader());
+      // The stock platform file system maps file:/// paths relative to its base.
+      // Rooting it at / lets preview HTML use the document's actual absolute file
+      // URLs while the resource prefix above still locates the Ultralight SDK.
+      Platform::instance().set_file_system(GetPlatformFileSystem("/"));
+      Platform::instance().set_logger(&logger);
+    });
+    std::lock_guard<std::mutex> lock(renderer_lifecycle_mutex());
     renderer = Renderer::Create();
+  }
+
+  ~Engine() {
+    std::lock_guard<std::mutex> lock(renderer_lifecycle_mutex());
+    renderer = nullptr;
   }
 
   void render() {
@@ -47,12 +71,17 @@ struct Engine {
   }
 };
 
-std::unique_ptr<Engine> engine;
-
 struct Entry {
   std::string id;
   std::string html;
   dom::Element element;
+  bool document_first = false;
+};
+
+struct PendingEntry {
+  std::string id;
+  std::string html;
+  bool document_first = false;
 };
 
 static char* copy_string(const std::string& value) {
@@ -78,23 +107,98 @@ static std::string attribute_escape(const std::string& value) {
 }  // namespace
 
 struct AstraULSurface {
+  std::unique_ptr<Engine> engine;
   RefPtr<View> view;
   dom::Triggers triggers;
   dom::Document document;
   dom::Element root;
   bool ready = false;
   std::vector<Entry> entries;
-  std::vector<std::pair<std::string, std::string>> pending;
+  std::vector<PendingEntry> pending;
+  struct PendingImage {
+    std::string owner;
+    dom::Element element;
+  };
+  std::vector<PendingImage> pending_images;
+  std::vector<PendingImage> delayed_images;
+  std::unordered_set<std::string> dirty_entries;
   double pending_font_size = 14;
 
+  std::string owner_of(dom::Element element) const {
+    for (auto current = element; current; current = current.parentElement()) {
+      for (const auto& entry : entries)
+        if (current.IsSame(entry.element)) return entry.id;
+    }
+    return {};
+  }
+
+  void resource_finished(dom::Element image) {
+    const auto pending = std::find_if(
+        pending_images.begin(), pending_images.end(),
+        [&](const PendingImage& value) { return value.element.IsSame(image); });
+    if (pending == pending_images.end()) return;
+    const std::string owner = owner_of(image);
+    if (!owner.empty()) dirty_entries.insert(owner);
+    pending_images.erase(
+        std::remove_if(pending_images.begin(), pending_images.end(),
+                       [&](const PendingImage& value) { return value.element.IsSame(image); }),
+        pending_images.end());
+  }
+
+  void layout_event(dom::Element element) {
+    const std::string owner = owner_of(element);
+    if (!owner.empty()) dirty_entries.insert(owner);
+  }
+
+  void sanitize(Entry& entry) {
+    auto forbidden = entry.element.querySelectorAll("style,link[rel~='stylesheet'],base");
+    for (auto element : forbidden) element.remove();
+  }
+
+  void track_images(Entry& entry) {
+    pending_images.erase(
+        std::remove_if(pending_images.begin(), pending_images.end(),
+                       [&](const PendingImage& value) { return value.owner == entry.id; }),
+        pending_images.end());
+    delayed_images.erase(
+        std::remove_if(delayed_images.begin(), delayed_images.end(),
+                       [&](const PendingImage& value) { return value.owner == entry.id; }),
+        delayed_images.end());
+    for (auto image : entry.element.querySelectorAll("img")) {
+      if (image.hasAttribute("data-astra-delayed-src"))
+        delayed_images.push_back(PendingImage{entry.id, image});
+      else
+        pending_images.push_back(PendingImage{entry.id, image});
+    }
+  }
+
+  void activate_delayed_images() {
+    auto delayed = std::move(delayed_images);
+    delayed_images.clear();
+    for (const auto& image : delayed) {
+      auto source = image.element.getAttribute("data-astra-delayed-src");
+      if (!source) continue;
+      pending_images.push_back(image);
+      image.element.removeAttribute("data-astra-delayed-src");
+      image.element.setAttribute("src", *source);
+    }
+  }
+
   AstraULSurface(const char* css, uint32_t width, uint32_t height,
-                 double device_scale) {
+                 double device_scale, const char* sdk_root)
+      : engine(std::make_unique<Engine>(sdk_root)) {
     ViewConfig config;
     config.initial_device_scale = device_scale;
     config.is_accelerated = false;
     config.enable_javascript = false;
     view = engine->renderer->CreateView(std::max(1u, width), std::max(1u, height),
                                         config, nullptr);
+    triggers.On("img", "load", [this](dom::Element image) { resource_finished(image); },
+                dom::Capture);
+    triggers.On("img", "error", [this](dom::Element image) { resource_finished(image); },
+                dom::Capture);
+    triggers.On("details", "toggle", [this](dom::Element details) { layout_event(details); },
+                dom::Capture);
     triggers.OnDOMReady([this](dom::Document value) {
       document = value;
       root = document.getElementById("preview");
@@ -104,7 +208,10 @@ struct AstraULSurface {
     std::string shell = "<!doctype html><html><head><meta charset='utf-8'><style>";
     shell += css ? css : "";
     shell += "</style></head><body><main id='preview'></main></body></html>";
-    view->LoadHTML(shell.c_str());
+    // Give application-supplied HTML a local origin. An opaque LoadHTML origin
+    // cannot fetch file:/// images even when the stock file system can resolve
+    // their absolute paths.
+    view->LoadHTML(shell.c_str(), "file:///astra-preview.html");
     for (int attempt = 0; attempt < 10000 && !ready; ++attempt) engine->render();
   }
 
@@ -117,20 +224,28 @@ struct AstraULSurface {
     std::vector<Entry> next;
     next.reserve(pending.size());
     for (const auto& item : pending) {
-      auto found = old.find(item.first);
+      auto found = old.find(item.id);
       if (found != old.end()) {
         Entry retained = entries[found->second];
-        if (retained.html != item.second) {
-          retained.element.innerHTML = item.second;
-          retained.html = item.second;
+        if (retained.html != item.html) {
+          retained.element.innerHTML = item.html;
+          retained.html = item.html;
+          sanitize(retained);
+          track_images(retained);
         }
+        retained.document_first = item.document_first;
+        retained.element.setAttribute("class", item.document_first
+            ? "astra-preview-block document-first" : "astra-preview-block");
         next.push_back(std::move(retained));
       } else {
-        std::string section = "<section data-id='" + attribute_escape(item.first) + "'>" +
-                              item.second + "</section>";
+        std::string section = "<section class='astra-preview-block";
+        if (item.document_first) section += " document-first";
+        section += "' data-id='" + attribute_escape(item.id) + "'>" + item.html + "</section>";
         root.insertAdjacentHTML("beforeend", section);
         auto element = root.lastElementChild();
-        next.push_back(Entry{item.first, item.second, element});
+        next.push_back(Entry{item.id, item.html, element, item.document_first});
+        sanitize(next.back());
+        track_images(next.back());
       }
     }
     for (auto& previous : entries) {
@@ -138,14 +253,23 @@ struct AstraULSurface {
             return value.id == previous.id;
           })) previous.element.remove();
     }
+    pending_images.erase(
+        std::remove_if(pending_images.begin(), pending_images.end(), [&](const PendingImage& image) {
+          return std::none_of(next.begin(), next.end(),
+                              [&](const Entry& value) { return value.id == image.owner; });
+        }),
+        pending_images.end());
+    delayed_images.erase(
+        std::remove_if(delayed_images.begin(), delayed_images.end(), [&](const PendingImage& image) {
+          return std::none_of(next.begin(), next.end(),
+                              [&](const Entry& value) { return value.id == image.owner; });
+        }),
+        delayed_images.end());
     dom::Element cursor = root.firstElementChild();
     for (auto& entry : next) {
       if (!cursor || !cursor.IsSame(entry.element)) root.insertBefore(entry.element, cursor);
       cursor = entry.element.nextElementSibling();
     }
-    if (!next.empty()) next.back().element.setAttribute("class", "last-block");
-    if (!entries.empty() && (next.empty() || !entries.back().element.IsSame(next.back().element)))
-      entries.back().element.removeAttribute("class");
     entries = std::move(next);
     pending.clear();
     auto html = document.documentElement();
@@ -163,8 +287,7 @@ extern "C" {
 AstraULSurface* astra_ul_surface_create(const char* sdk_root, const char* css,
                                         uint32_t width, uint32_t height,
                                         double device_scale) {
-  if (!engine) engine = std::make_unique<Engine>(sdk_root);
-  auto* result = new AstraULSurface(css, width, height, device_scale);
+  auto* result = new AstraULSurface(css, width, height, device_scale, sdk_root);
   return result->ready ? result : (delete result, nullptr);
 }
 
@@ -191,8 +314,9 @@ void astra_ul_surface_begin_update(AstraULSurface* surface, size_t count,
 }
 
 void astra_ul_surface_add_entry(AstraULSurface* surface, const char* id,
-                                const char* html) {
-  if (surface) surface->pending.emplace_back(id ? id : "", html ? html : "");
+                                const char* html, bool document_first) {
+  if (surface) surface->pending.push_back(
+      PendingEntry{id ? id : "", html ? html : "", document_first});
 }
 
 bool astra_ul_surface_commit_update(AstraULSurface* surface) {
@@ -219,13 +343,63 @@ bool astra_ul_surface_geometry_item(AstraULSurface* surface, size_t index,
   auto landmark = surface->entries[index].element.querySelector("h1,h2,h3,h4,h5,h6,p > img:only-child");
   item->has_landmark = !!landmark;
   item->landmark_y = 0;
-  if (landmark) item->landmark_y = landmark.getBoundingClientRect().y - root_rect.y;
+  if (landmark) item->landmark_y = landmark.getBoundingClientRect().y - rect.y;
   return true;
 }
 
-void astra_ul_surface_scroll(AstraULSurface* surface, double x, double y) {
+size_t astra_ul_surface_dirty_count(AstraULSurface* surface) {
+  return surface ? surface->dirty_entries.size() : 0;
+}
+
+char* astra_ul_surface_take_dirty_id(AstraULSurface* surface) {
+  if (!surface || surface->dirty_entries.empty()) return nullptr;
+  auto item = surface->dirty_entries.begin();
+  std::string id = *item;
+  surface->dirty_entries.erase(item);
+  return copy_string(id);
+}
+
+size_t astra_ul_surface_pending_resource_count(AstraULSurface* surface) {
+  return surface ? surface->pending_images.size() + surface->delayed_images.size() : 0;
+}
+
+void astra_ul_surface_activate_delayed_images(AstraULSurface* surface) {
+  if (surface) surface->activate_delayed_images();
+}
+
+void astra_ul_surface_abandon_pending_resources(AstraULSurface* surface) {
   if (!surface) return;
-  surface->document.defaultView().scrollTo(x, y);
+  surface->pending_images.clear();
+  surface->delayed_images.clear();
+}
+
+bool astra_ul_surface_scroll(AstraULSurface* surface, double x, double y) {
+  if (!surface) return false;
+  auto window = surface->document.defaultView();
+  const double old_x = window.scrollX();
+  const double old_y = window.scrollY();
+  window.scrollTo(x, y);
+  if (std::abs(window.scrollX() - old_x) < 0.01 &&
+      std::abs(window.scrollY() - old_y) < 0.01) return false;
+  // Renderer::Render applies viewport scrolling through Surface::Scroll,
+  // shifting the existing pixels and painting only the exposed strip. Do not
+  // force a general repaint here: ordinary scrolling is not a layout change.
+  return true;
+}
+
+double astra_ul_surface_scroll_y(AstraULSurface* surface) {
+  if (!surface) return 0;
+  return surface->document.defaultView().scrollY();
+}
+
+void astra_ul_surface_invalidate(AstraULSurface* surface) {
+  if (surface) surface->view->set_needs_paint(true);
+}
+
+void astra_ul_surface_clear_dirty_pixels(AstraULSurface* surface) {
+  if (!surface) return;
+  auto* pixels = surface->view->surface();
+  if (pixels) pixels->ClearDirtyBounds();
 }
 
 size_t astra_ul_surface_pixel_bytes(AstraULSurface* surface) {
@@ -279,6 +453,17 @@ void astra_ul_surface_horizontal_scroll(AstraULSurface* surface, int delta_x,
   event.delta_x = delta_x; event.delta_y = 0; event.x = x; event.y = y;
   surface->view->FireScrollEvent(event);
   surface->render();
+}
+
+bool astra_ul_surface_toggle_first_details(AstraULSurface* surface) {
+  if (!surface) return false;
+  auto details = surface->root.querySelector("details");
+  if (!details) return false;
+  if (details.hasAttribute("open")) details.removeAttribute("open");
+  else details.setAttribute("open", "");
+  surface->layout_event(details);
+  surface->render();
+  return true;
 }
 
 char* astra_ul_surface_link_at(AstraULSurface* surface, double x, double y) {

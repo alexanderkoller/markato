@@ -4,7 +4,52 @@ public struct RenderedEntry: Equatable, Sendable {
     public let blockID:BlockID
     public var id:String {blockID.description}
     public let fragment:PreviewFragment
-    public init(id:BlockID,fragment:PreviewFragment) {blockID=id;self.fragment=fragment}
+    /// Identity of the exact HTML submitted to the preview renderer. This is
+    /// deliberately independent of parser block identity: comments and other
+    /// presentation decoration may change HTML without changing the source
+    /// block.
+    public let contentVersion:UInt64
+    public init(id:BlockID,fragment:PreviewFragment,contentVersion:UInt64?=nil) {
+        blockID=id;self.fragment=fragment
+        self.contentVersion=contentVersion ?? Self.version(of:fragment.html ?? "",documentFirst:fragment.from==0)
+    }
+    private static func version(of value:String,documentFirst:Bool)->UInt64 {
+        var hash:UInt64=1469598103934665603
+        for byte in value.utf8 {hash=(hash ^ UInt64(byte)) &* 1099511628211}
+        hash=(hash ^ UInt64(documentFirst ? 1:0)) &* 1099511628211
+        return hash
+    }
+}
+
+/// Complete identity of CSS geometry. Equality means a measured block stride
+/// can be reused without qualification.
+public struct PreviewLayoutID:Equatable,Hashable,Sendable {
+    public let width:Double
+    public let fontSize:Double
+    public let stylesheetGeneration:UInt64
+    public init(width:Double,fontSize:Double,stylesheetGeneration:UInt64=1) {
+        self.width=width;self.fontSize=fontSize;self.stylesheetGeneration=stylesheetGeneration
+    }
+}
+
+public struct PreviewBlockMeasurement:Equatable,Sendable {
+    public let blockID:BlockID
+    public let contentVersion:UInt64
+    public let stride:Double
+    public init(blockID:BlockID,contentVersion:UInt64,stride:Double) {
+        self.blockID=blockID;self.contentVersion=contentVersion;self.stride=stride
+    }
+}
+
+public enum PreviewStrideState:Equatable,Sendable {
+    case estimated
+    case measured(layoutID:PreviewLayoutID,contentVersion:UInt64)
+}
+
+public struct PreviewBlockLayout:Equatable,Sendable {
+    public let stride:Double
+    public let state:PreviewStrideState
+    public init(stride:Double,state:PreviewStrideState) {self.stride=stride;self.state=state}
 }
 public struct RenderedWindow: Sendable {
     public let range:NSRange
@@ -22,7 +67,7 @@ public final class PreparedDocument {
         var start: Int, end: Int
         var syntaxShift=0
         var fragment: PreviewFragment?
-        var previewHeight: Double?
+        var previewLayout:PreviewBlockLayout
         var left: BlockNode?, right: BlockNode?
         weak var parent: BlockNode?
         var firstGap:Int?,firstStyleGap:Int?
@@ -30,11 +75,13 @@ public final class PreparedDocument {
         var previewSum:Double=0
         init(_ block:PreparedBlock,start:Int,end:Int) {
             self.block=block;self.start=start;self.end=end
+            previewLayout=PreviewBlockLayout(stride:Self.estimate(start:start,end:end),state:.estimated)
+        }
+        private static func estimate(start:Int,end:Int)->Double {
+            max(24,ceil(Double(max(1,end-start))/80)*24+12)
         }
         var hasContent:Bool {block.html != nil || fragment != nil}
-        var effectivePreviewHeight:Double {
-            previewHeight ?? max(24,ceil(Double(max(1,end-start))/80)*24+12)
-        }
+        var effectivePreviewHeight:Double {previewLayout.stride}
         func shift(_ delta:Int) {
             guard delta != 0 else{return}
             block=PreparedBlock(id:block.id,kind:block.kind,from:block.from+delta,to:block.to+delta,
@@ -112,6 +159,7 @@ public final class PreparedDocument {
     public private(set) var revision = -1
     public private(set) var length=0
     public private(set) var hasReferences=false
+    public private(set) var previewLayoutID:PreviewLayoutID?
     /// Changes only when the outline's identities, titles, levels, or order
     /// change. Coordinate-only edits are resolved lazily from the block tree.
     public private(set) var outlineGeneration=0
@@ -325,7 +373,9 @@ public final class PreparedDocument {
                     n.fragment=PreviewFragment(kind:block.kind,from:block.from,to:block.to,html:f.html,id:block.id)
                 }
                 if block.syntax == nil {n.syntaxShift=old.syntaxShift+block.from-old.block.from}
-                n.previewHeight=old.previewHeight
+                if block.html == nil || block.html?.string()==old.block.html?.string() {
+                    n.previewLayout=old.previewLayout
+                }
                 var low=0,high=previousSyntax.count
                 while low<high {let mid=(low+high)/2;if NSMaxRange(previousSyntax[mid].range)<=old.start {low=mid+1}else{high=mid}}
                 let delta=block.from-old.block.from
@@ -377,7 +427,9 @@ public final class PreparedDocument {
                 }
                 if block.html == nil,let f=old.fragment {node.fragment=PreviewFragment(kind:block.kind,from:block.from,to:block.to,html:f.html,id:block.id)}
                 if block.syntax == nil {node.syntaxShift=old.syntaxShift+block.from-old.block.from}
-                node.previewHeight=old.previewHeight
+                if block.html == nil || block.html?.string()==old.block.html?.string() {
+                    node.previewLayout=old.previewLayout
+                }
             }
             node.update();inserted.append(node);previousTo=block.to
         }
@@ -509,6 +561,17 @@ public final class PreparedDocument {
         guard fragments.allSatisfy({$0 != nil}) else{return nil}
         return zip(blocks,fragments).map{RenderedEntry(id:$0.block.id,fragment:$1!)}
     }
+    /// The complete prepared presentation. This is requested once background
+    /// preparation has filled every block; subsequent viewport movement uses
+    /// the retained browser layout instead of replacing a bounded window.
+    public func completeWindow()->RenderedWindow? {
+        guard hasCompleteFragments else{return nil}
+        var blocks=[BlockNode]();blocks.reserveCapacity(count);collect(root,&blocks)
+        let entries=blocks.compactMap {node in preparedFragment(node).map{RenderedEntry(id:node.block.id,fragment:$0)} }
+        guard entries.count==blocks.count else{return nil}
+        return RenderedWindow(range:NSRange(location:0,length:length),entries:entries,
+            previewTop:0,previewHeight:64+(root?.previewSum ?? 0))
+    }
     /// Returns cached blocks around a source viewport. The tree supplies the
     /// global preview extent; no document-sized placeholder enters the HTML engine.
     public func window(covering range:NSRange,before:Double,after:Double)->RenderedWindow? {
@@ -551,7 +614,7 @@ public final class PreparedDocument {
         let entries=blocks.compactMap {node in preparedFragment(node).map{RenderedEntry(id:node.block.id,fragment:$0)}}
         guard entries.count==blocks.count else{return nil}
         return RenderedWindow(range:NSRange(location:first.start,length:last.end-first.start),entries:entries,
-            previewTop:16+top,previewHeight:32+(root?.previewSum ?? 0))
+            previewTop:32+top,previewHeight:64+(root?.previewSum ?? 0))
     }
     public func firstUnpreparedOffset(from position:Int)->Int {
         let htmlGap:Int
@@ -569,22 +632,34 @@ public final class PreparedDocument {
         }
         return min(htmlGap,firstSyntaxGap(from:position))
     }
-    /// Records measured block strides and returns their change to the global
-    /// preview extent. Callers can apply that correction to the frame they are
-    /// about to publish instead of committing once with estimates and again
-    /// with measurements.
-    @discardableResult public func recordPreviewHeights(_ heights:[BlockID:Double],revision:Int)->Double {
-        guard revision==self.revision else{return 0}
+    /// Changes the geometry identity without walking the retained tree. Old
+    /// numeric strides remain useful estimates; their measured state simply no
+    /// longer matches this identity.
+    public func setPreviewLayoutID(_ layoutID:PreviewLayoutID) {
+        previewLayoutID=layoutID
+    }
+
+    /// Atomically validates and records measurements for mounted blocks. The
+    /// returned delta lets a frame use the corrected global extent before its
+    /// pixels become visible.
+    @discardableResult public func applyPreviewMeasurements(_ measurements:[PreviewBlockMeasurement],
+        revision:Int,layoutID:PreviewLayoutID,expectedContentVersions:[BlockID:UInt64])->Double? {
+        guard revision==self.revision,layoutID==previewLayoutID else{return nil}
+        for measurement in measurements {
+            guard measurement.stride.isFinite,measurement.stride>0,
+                  nodes[measurement.blockID] != nil,
+                  expectedContentVersions[measurement.blockID]==measurement.contentVersion else{return nil}
+        }
         var extentChange=0.0
-        for (id,height) in heights where height.isFinite && height>0 {
-            if let node=nodes[id] {
-                materialize(node)
-                let previous=node.effectivePreviewHeight
-                node.previewHeight=height
-                extentChange += height-previous
-                var ancestor:BlockNode?=node
-                while let current=ancestor {current.update();ancestor=current.parent}
-            }
+        for measurement in measurements {
+            let node=nodes[measurement.blockID]!
+            materialize(node)
+            let previous=node.effectivePreviewHeight
+            node.previewLayout=PreviewBlockLayout(stride:measurement.stride,
+                state:.measured(layoutID:layoutID,contentVersion:measurement.contentVersion))
+            extentChange += measurement.stride-previous
+            var ancestor:BlockNode?=node
+            while let current=ancestor {current.update();ancestor=current.parent}
         }
         return extentChange
     }
@@ -593,6 +668,10 @@ public final class PreparedDocument {
         materialize(n)
         let from=sourceLayout.position(at:n.start)?.y
         let to=n.end==sourceLayout.length ? sourceLayout.height:sourceLayout.position(at:n.end)?.y
-        return (from.flatMap {a in to.map{$0-a}},n.previewHeight)
+        return (from.flatMap {a in to.map{$0-a}},n.previewLayout.stride)
+    }
+    public func previewLayout(for id:BlockID)->PreviewBlockLayout? {
+        guard let node=nodes[id] else{return nil}
+        materialize(node);return node.previewLayout
     }
 }

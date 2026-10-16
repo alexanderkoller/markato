@@ -39,13 +39,21 @@ bool astra_ul_surface_render(AstraULSurface* surface);
 void astra_ul_surface_begin_update(AstraULSurface* surface, size_t count,
                                    double font_size);
 void astra_ul_surface_add_entry(AstraULSurface* surface, const char* id,
-                                const char* html);
+                                const char* html, bool document_first);
 bool astra_ul_surface_commit_update(AstraULSurface* surface);
 bool astra_ul_surface_geometry(AstraULSurface* surface,
                                AstraULGeometry* geometry);
 bool astra_ul_surface_geometry_item(AstraULSurface* surface, size_t index,
                                     AstraULGeometryItem* item);
-void astra_ul_surface_scroll(AstraULSurface* surface, double x, double y);
+size_t astra_ul_surface_dirty_count(AstraULSurface* surface);
+char* astra_ul_surface_take_dirty_id(AstraULSurface* surface);
+size_t astra_ul_surface_pending_resource_count(AstraULSurface* surface);
+void astra_ul_surface_activate_delayed_images(AstraULSurface* surface);
+void astra_ul_surface_abandon_pending_resources(AstraULSurface* surface);
+bool astra_ul_surface_scroll(AstraULSurface* surface, double x, double y);
+double astra_ul_surface_scroll_y(AstraULSurface* surface);
+void astra_ul_surface_invalidate(AstraULSurface* surface);
+void astra_ul_surface_clear_dirty_pixels(AstraULSurface* surface);
 
 size_t astra_ul_surface_pixel_bytes(AstraULSurface* surface);
 bool astra_ul_surface_copy_pixels(AstraULSurface* surface, void* destination,
@@ -58,6 +66,7 @@ void astra_ul_surface_mouse(AstraULSurface* surface, int type, int x, int y,
                             int button);
 void astra_ul_surface_horizontal_scroll(AstraULSurface* surface, int delta_x,
                                         int x, int y);
+bool astra_ul_surface_toggle_first_details(AstraULSurface* surface);
 char* astra_ul_surface_link_at(AstraULSurface* surface, double x, double y);
 bool astra_ul_surface_link_rect_at(AstraULSurface* surface, double x, double y,
                                    double* rect_x, double* rect_y,

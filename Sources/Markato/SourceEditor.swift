@@ -597,6 +597,17 @@ final class SourceEditor:NSView,NSTextViewDelegate,NSTextStorageDelegate,ScrollS
         scroll.reflectScrolledClipView(scroll.contentView)
         changingLayout=false;notifyViewport()
     }
+    /// Models an AppKit clip correction caused by active-caret/layout
+    /// settlement. This changes the observed source origin without expressing
+    /// new user navigation intent.
+    func debugApplyPassiveViewportCorrection(by delta:CGFloat) {
+        changingLayout=true
+        let end=max(0,canvas.bounds.height-scroll.contentSize.height)
+        let origin=min(end,max(0,scroll.contentView.bounds.minY+delta))
+        scroll.contentView.scroll(to:NSPoint(x:0,y:origin))
+        scroll.reflectScrolledClipView(scroll.contentView)
+        changingLayout=false;notifyViewport()
+    }
     func debugClickInsertionPoint(at offset:Int) {
         let position=min(max(0,offset),document.source.count)
         prepareForUserInteraction()

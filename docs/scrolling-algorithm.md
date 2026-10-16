@@ -1,106 +1,104 @@
 # How synchronized scrolling works
 
-Markato keeps source editing, Markdown preparation, and preview painting separate. Scrolling reads already prepared state; it does not reparse Markdown or rebuild the source document merely because the viewport moved.
+Markato keeps source editing, Markdown preparation, Ultralight layout, and
+preview painting separate. Scrolling reads retained state; it does not parse
+Markdown or replace a completed preview document.
 
 ## State ownership
 
-The editor retains the complete source text. Its `LayoutIndex` uses one global source coordinate system and contains a mix of exact TextKit line measurements and estimated gaps. Estimates make distant navigation possible without eagerly laying out the whole document. When TextKit measures a region, those exact lines replace the estimate in place.
+The editor retains the complete source text. Its `LayoutIndex` combines exact
+TextKit line measurements with estimated gaps in one source coordinate system.
+Visible or navigated regions replace estimates without rebasing the rest of
+the document.
 
-`PreparedDocument` retains the ordered Markdown block manifest, cached HTML, syntax coverage, source layout, and preview-height estimates. Stable block IDs let edits preserve unaffected cached content and measured heights.
+`PreparedDocument` retains the ordered Markdown blocks, cached HTML, syntax,
+source layout, and preview block strides. Stable block IDs let edits keep
+unchanged content and geometry.
 
-The preview owns two viewport-sized Ultralight surfaces. One committed presentation contains the content revision, mounted source range, measured preview geometry, scroll map, and source geometry revision. A pending request cannot partially overwrite that committed state.
+One `PreviewPane` owns the committed Ultralight presentation: revision, source
+coverage, block geometry, source-to-preview map, scroll extent, and bitmap.
+A pending request cannot partially overwrite it.
 
-## Preparing content
+## Priority, then completion
 
-The foreground request covers the visible source range plus overscan. Background preparation then fills cache gaps from the beginning of the document. If navigation reaches an unprepared destination, the foreground request takes priority.
+For a new revision, the foreground request renders the source viewport with
+twelve preview viewports of runway on each side. This prioritized frame keeps
+startup and editing responsive.
 
-Comrak parses a complete document initially. For an eligible local edit, the native adapter reparses the affected top-level blocks with unchanged guards and splices the verified result into the retained manifest. Reference-dependent, coalesced, or propagating edits fall back to a complete parse.
+Background preparation continues until every block has HTML. The complete
+ordered block list is then laid out by Ultralight on its renderer thread and
+published atomically. The complete DOM stays mounted. From that point, a deep
+scroll is only a map lookup and viewport paint; it cannot expose “Loading
+preview” or trigger another presentation.
 
-Prepared cache coverage and displayed coverage are different. Reaching cached content can require a new bounded preview presentation, but it does not require another Markdown parse.
+An edit starts the same sequence again while keeping the last coherent frame
+visible: prioritized new-revision frame first, complete background frame next.
 
 ## Mapping source to preview
 
-Headings and standalone images are sparse landmarks. Each landmark pairs an exact source position with measured Ultralight geometry. Document boundaries provide the endpoints.
+Headings and standalone images are sparse landmarks. Each landmark pairs a
+source position with Ultralight geometry. Document boundaries supply the
+endpoints. The map interpolates monotonically between adjacent points, so
+forward source movement cannot move the preview backward.
 
-The map converts landmark positions into viewport origins and linearly interpolates between adjacent points:
-
-```text
-fraction = (sourceOrigin - source0) / (source1 - source0)
-previewOrigin = preview0 + fraction * (preview1 - preview0)
-```
-
-Points are ordered and preview coordinates are kept monotone, so forward source movement cannot move the preview backward. Near document boundaries, the reading reference transitions between the top, middle, and bottom of the viewport so both panes can reach their true endpoints.
-
-An estimate may position a distant source destination before TextKit has measured it. A new synchronized map is committed only from a coherent presentation; refinement updates the source geometry revision and triggers the normal map rebuild.
+Near document boundaries, the reading reference transitions between the top,
+middle, and bottom of the viewport so both panes reach their true endpoints.
+Source geometry refinements advance a revision counter; the preview accepts a
+map only when all of its positions came from one source geometry revision.
 
 ## Moving the viewport
 
-Vertical input over the source evaluates the committed map and moves the preview clip. Vertical input over the preview moves only the preview and records the source revision and viewport origin where the panes detached. Unrelated preview layout and painting retain that independent position. The next source viewport movement or source revision change clears the detachment and applies the current source-to-preview map, snapping the preview back into alignment. Horizontal preview gestures remain inside Ultralight.
+Vertical source input evaluates the committed map and changes the preview
+origin. Vertical input over the preview moves it independently until the next
+source movement or source revision change. Horizontal preview gestures remain
+inside Ultralight.
 
-During a covered live-scroll gesture, the committed map is frozen. Background preparation may continue privately, but an unrelated presentation cannot change the scrolling gain mid-gesture. Crossing the mounted window reserve requests another cached window. An unprepared destination shows loading until its content is ready.
+During a source gesture, the source position is authoritative. Resource-driven
+frames are deferred, but TextKit geometry refinements may refresh the mapping
+so the committed preview keeps following momentum. At gesture end, a deferred
+frame is positioned from the final source viewport. No gesture-start anchor is
+restored over the destination.
 
-When the source has no vertical scroll range but the preview does, preview scrolling remains independent. Inspectors also use independent scrolling.
+Before background completion, reaching the edge of the priority runway may
+request another cached window. After completion there is no window edge.
+
+## Height changes
+
+Ultralight reports the block IDs affected by delayed resources or native HTML
+state changes. After layout, only those wrappers are remeasured. New pixels,
+measurements, total height, mapping, and origin are committed together.
+
+The preview anchors a point in visible content before applying the change and
+restores that point afterward. Content outside the viewport may grow or shrink
+without moving what the reader sees. If the change races a gesture, publication
+waits for gesture end and uses the gesture's final source position.
 
 ## Resizing
 
-The window controller creates one `ViewportResizeSession` at the start of a
-gesture. It captures the source character at the visible top and its pixel
-displacement, plus the preview element at the visible top and its displacement.
-Each pane reflows at its new width and resolves its own saved anchor. Neither
-pane is synchronized to the other during resize.
+A resize session captures a source anchor and a preview block anchor. Each pane
+resolves its own anchor at the new width. Ultralight reflows off the main
+thread; the old coherent frame remains visible until the replacement is ready.
+The final width is committed as one geometry, map, scrollbar, and origin.
+Background completion restores the full retained presentation at that width.
 
-The last pending window frame goes through the ordinary layout path before
-the gesture ends. TextKit can finalize a distant line's geometry at release
-without changing the clip origin, so the source resolves its saved anchor once
-more after that layout. The invariant is the visible anchor, not a constant
-numeric scroll offset. Preview publication during resize does not build a
-source-to-preview scroll map; it uses its own saved element instead. The map is
-rebuilt when ordinary scrolling resumes. The session continues to protect both
-positions from queued layout work until source input, preview navigation, or
-an edit begins a new positioning event.
-Edits align their corresponding preview block directly; ordinary source
-scrolling continues to use the landmark map described above.
+## Failure behavior
 
-## Publishing a preview
-
-A request captures its revision, entries, font size, asset base, and width. Ultralight reconciles stable section IDs, lays out the bounded document, returns geometry, and paints a bitmap. The controller commits the request only if it is still current and covers the destination.
-
-The visible surface can be updated when the request is compatible with its current content. Otherwise, the spare surface is prepared and swapped in only after layout and painting succeed. Resource-driven repaints use the same surface without changing content identity.
-
-No page JavaScript participates in rendering or measurement.
-
-## Editing and failure behavior
-
-Edits invalidate the affected retained manifest interval and advance the document revision. Results from older revisions are ignored. Unchanged blocks retain their IDs, cached HTML, measured heights, and shifted source coordinates.
-
-A failed foreground parse clears its request token, allowing the same viewport to be requested again. A failed background batch clears its revision token so later successful foreground work can restart cache filling. The last coherent presentation remains visible while replacement work is pending.
+Old revisions and mismatched layout or content versions are rejected. A failed
+foreground parse can be retried; a failed background fill can restart after
+later successful foreground work. Failures leave the last coherent frame
+visible.
 
 ## Validation
 
-The main checks are:
+The regression gate is:
 
 ```sh
-bash scripts/build-native.sh
-cargo test --locked --manifest-path Native/Comrak/Cargo.toml --target-dir .build/comrak
-swift test --disable-sandbox --cache-path .build/cache --config-path .build/config --security-path .build/security
-bash scripts/build-app.sh debug
-dist/debug/Markato.app/Contents/MacOS/Markato --integration-test
-dist/debug/Markato.app/Contents/MacOS/Markato --integration-test --integration-layout-index
+bash scripts/check-preview.sh
 ```
 
-The default integration check covers the bounded first view, failed presentation recovery, automatic and manual parser recovery while retaining the committed view, cached deep navigation, EOF edits, resize, and return to the top. The layout-index check compares refined cached positions with independent native glyph coordinates after edits and width changes.
-
-These checks establish state ownership, geometry consistency, and parser behavior. They do not prove compositor timing on every physical display.
-
-For physical resize diagnostics, `defaults write org.astramarkdown.editor
-ResizeTraceEnabled -bool YES` enables a geometry-only trace at
-`/private/tmp/markato-resize.log` in the release app. Quit and relaunch the app
-after changing the preference. `defaults delete org.astramarkdown.editor
-ResizeTraceEnabled` disables it.
-
-End-to-end application timing and competitor results live in the
-[performance overview](performance.md). Keeping those measurements separate lets
-this document remain the architectural contract for synchronized scrolling.
+It covers the prioritized first frame, complete background publication,
+lookup-only deep navigation, parser and presentation failure recovery, edits,
+resize anchoring, and delayed height changes during idle and momentum.
 
 ## Code guide
 
@@ -110,5 +108,4 @@ this document remain the architectural contract for synchronized scrolling.
 - [Ultralight rendering boundary](../Sources/HTMLPreview/HTMLPreviewView.swift)
 - [Retained prepared document](../Sources/MarkdownCore/PreparedDocument.swift)
 - [Scroll interpolation](../Sources/MarkdownCore/ScrollLandmarks.swift)
-- [Native Comrak adapter](../Native/Comrak/src/lib.rs)
 - [Integration checks](../Sources/Markato/IntegrationCheck.swift)

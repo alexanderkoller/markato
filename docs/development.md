@@ -94,7 +94,7 @@ npm run build
 
 The application has no external Swift package dependencies. The Ultralight SDK is installed separately as described in `Vendor/Ultralight/README.md`. Node library versions are pinned in package-lock.json. Comrak, Rust dependency and KaTeX license notices are packaged in the application.
 
-The complete preview regression gate runs debug and release core tests, packages and audits the release app, builds the separate debug app, and exercises bounded native presentation, editing, resizing, and cached navigation. Run it from a macOS graphical session:
+The complete preview regression gate runs debug and release core tests, packages and audits the release app, builds the separate debug app, and exercises prioritized first presentation, complete background presentation, editing, resizing, height changes, sustained scroll throughput, and lookup-only deep navigation. Run it from a macOS graphical session:
 
 ```sh
 bash scripts/check-preview.sh

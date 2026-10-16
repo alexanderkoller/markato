@@ -2,11 +2,11 @@ import Foundation
 
 public enum HTMLDocument {
     public static func render(title:String,fragments:[String],baseURL:URL?=nil)->String {
-        let assets=HTMLAssetResolver()
+        let assets=HTMLAssetPreparer()
         let sections=fragments.enumerated().map { index,fragment in
-            let body=assets.resolve(in:fragment,baseURL:baseURL)
-            let last=index==fragments.count-1 ? " class=\"last-block\"":""
-            return "<section\(last)>\(body)</section>"
+            let body=assets.prepare(fragment,baseURL:baseURL)
+            let first=index==0 ? " document-first":""
+            return "<section class=\"astra-preview-block\(first)\">\(body)</section>"
         }.joined(separator:"\n")
         let safeTitle=escape(title)
         return #"""
@@ -15,7 +15,7 @@ public enum HTMLDocument {
         <head>
         <meta charset="utf-8">
         <meta name="viewport" content="width=device-width, initial-scale=1">
-        <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data: http: https:; style-src 'unsafe-inline'; font-src data:">
+        <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src file: data: http: https:; style-src 'unsafe-inline'; font-src data:">
         <title>\#(safeTitle)</title>
         <style>\#(HTMLPreviewResources.stylesheet)\n\#(printStylesheet)</style>
         </head>

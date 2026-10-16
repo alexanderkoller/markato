@@ -264,7 +264,6 @@ final class EditorWindowController: NSWindowController, NSSplitViewDelegate, NSS
             else if self.completePresentationPendingRevision==document.revision {
                 self.showCompletePreparedDocument(revision:document.revision)
             }
-            if self.preview.needsWindowTrimming {self.showPreparedDocument(revision:document.revision)}
             self.prepareDocument(rope:document.source,revision:document.revision)
         }
         source.geometryChanged = { [weak self] in self?.preview.sourceLayoutChanged() }
@@ -529,8 +528,7 @@ final class EditorWindowController: NSWindowController, NSSplitViewDelegate, NSS
     }
     private func showPreparedDocument(revision:Int) {
         guard !isClosed else{return}
-        if preview.displaysCompleteDocument,preview.displayedDocumentRevision==revision,
-           !preview.needsWindowTrimming {
+        if preview.displaysCompleteDocument,preview.displayedDocumentRevision==revision {
             presentationPending=false;completePresentationPendingRevision=nil
             preview.moveViewport();return
         }
@@ -617,10 +615,10 @@ final class EditorWindowController: NSWindowController, NSSplitViewDelegate, NSS
         }
         completePresentationPendingRevision=nil;presentationPending=false
         completeEditRevision=nil
-        // Completion means every semantic unit is cached in PreparedDocument.
-        // Keep the mounted HTML bounded; scrolling can now refill it entirely
-        // from the retained tree without parsing or rendering Markdown.
-        showPreparedDocument(revision:revision)
+        guard let document=preparedDocument.completeWindow() else{return}
+        presentationRange=(revision,document.range)
+        preview.show(document.entries,revision:revision,sourceRange:document.range,
+            previewTop:document.previewTop,previewHeight:document.previewHeight)
     }
     @objc func undo(_ sender:Any?) { markdownDocument.undoManager?.undo() }
     @objc func redo(_ sender:Any?) { markdownDocument.undoManager?.redo() }
@@ -844,6 +842,11 @@ final class EditorWindowController: NSWindowController, NSSplitViewDelegate, NSS
         editor.keyDown(with:event);return true
     }
     func debugClearCommentSelection() {clearCommentSelection()}
+    func debugOpenCommentPopover(_ id:String) {
+        revealComment(id,focusSource:false)
+        let anchor=preview.selectedCommentAnchor ?? NSRect(x:preview.bounds.maxX-32,y:16,width:20,height:20)
+        showCommentPopover(id:id,relativeTo:anchor)
+    }
     @discardableResult func debugDeleteCommentFromPopover()->Bool {
         guard debugCommentPopoverCanDelete else{return false}
         commentPopoverController?.deleteButton.performClick(nil);return true

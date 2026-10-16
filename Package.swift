@@ -10,7 +10,8 @@ let package = Package(
     platforms: [.macOS(.v15)],
     products: [
         .executable(name: "Markato", targets: ["Markato"]),
-        .executable(name: "MarkatoPrintRenderer", targets: ["MarkatoPrintRenderer"])
+        .executable(name: "MarkatoPrintRenderer", targets: ["MarkatoPrintRenderer"]),
+        .executable(name: "HTMLPreviewHarness", targets: ["HTMLPreviewHarness"])
     ],
     dependencies: [],
     targets: [
@@ -30,6 +31,7 @@ let package = Package(
         .executableTarget(name: "Markato", dependencies: [
             "MarkdownCore", "HTMLPreview"
         ]),
+        .executableTarget(name: "HTMLPreviewHarness", dependencies: ["HTMLPreview", "MarkdownCore"]),
         .executableTarget(name: "MarkatoPrintRenderer"),
         .testTarget(name: "MarkdownCoreTests", dependencies: ["MarkdownCore"]),
         .testTarget(name: "HTMLPreviewTests", dependencies: ["HTMLPreview"])

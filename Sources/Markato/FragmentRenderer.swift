@@ -23,6 +23,7 @@ private final class PreviewClipView:NSClipView {
     let canvas=FlippedView()
     let web:HTMLPreviewView
     private(set) var logicalOrigin:CGFloat=0
+    private var requestedLocalOrigin:CGFloat?
     private var localOrigin:CGFloat?
     private(set) var windowTop:CGFloat=0
     init(web:HTMLPreviewView) {
@@ -38,29 +39,37 @@ private final class PreviewClipView:NSClipView {
         // Keep the viewport-sized renderer's outer coordinate system fixed;
         // moving both the view and clip by `viewportHeight` caused AppKit to
         // visibly present that relocation during every live-resize frame.
-        let frame=NSRect(x:0,y:logicalOrigin,width:max(1,width),height:max(1,viewportHeight))
+        let paintedOrigin=windowTop+(localOrigin ?? max(0,logicalOrigin-windowTop))
+        let frame=NSRect(x:0,y:paintedOrigin,width:max(1,width),height:max(1,viewportHeight))
         if web.frame != frame {web.frame=frame}
         let size=NSSize(width:max(1,width),height:max(viewportHeight,max(contentHeight,frame.maxY)))
         if canvas.frame.size != size {canvas.frame.size=size}
         clip.move(to:logicalOrigin)
     }
-    func scroll(to origin:CGFloat,flush:Bool=false) {
-        logicalOrigin=origin
-        let local=max(0,origin-windowTop)
-        web.setFrameOrigin(NSPoint(x:0,y:origin))
-        clip.move(to:origin)
-        if localOrigin.map({abs($0-local)>=0.01}) ?? true {
-            localOrigin=local;web.scroll(to:NSPoint(x:0,y:local))
+    func scroll(to origin:CGFloat) {
+        if abs(origin-logicalOrigin)<0.01 {
+            clip.move(to:logicalOrigin)
+            return
         }
-        if flush {web.flush()}
-    }
-    func stageScroll(to origin:CGFloat) {
         logicalOrigin=origin
         let local=max(0,origin-windowTop)
-        web.setFrameOrigin(NSPoint(x:0,y:origin))
         clip.move(to:origin)
-        localOrigin=local
-        web.stageScroll(to:NSPoint(x:0,y:local))
+        if requestedLocalOrigin.map({abs($0-local)>=0.01}) ?? true {
+            requestedLocalOrigin=local;web.scroll(to:NSPoint(x:0,y:local))
+        }
+    }
+    func applyPaintedScroll(_ localOrigin:CGFloat) {
+        self.localOrigin=localOrigin
+        web.setFrameOrigin(NSPoint(x:0,y:windowTop+localOrigin))
+    }
+    var paintedViewportOffset:CGFloat {web.frame.minY-logicalOrigin}
+    func publish(at origin:CGFloat,paintedLocalOrigin:CGFloat) {
+        logicalOrigin=origin
+        requestedLocalOrigin=max(0,origin-windowTop)
+        let paintedOrigin=windowTop+paintedLocalOrigin
+        localOrigin=paintedLocalOrigin
+        web.setFrameOrigin(NSPoint(x:0,y:paintedOrigin))
+        clip.move(to:origin)
     }
 }
 
@@ -94,9 +103,18 @@ private struct PreviewRequest {
     let fontSize:CGFloat
     let baseURL:URL?
     let width:CGFloat
-    var hasRetried=false
+    let expectedContentVersions:[BlockID:UInt64]
+    init(id:Int,content:PreviewContent,fontSize:CGFloat,baseURL:URL?,width:CGFloat) {
+        self.id=id;self.content=content;self.fontSize=fontSize;self.baseURL=baseURL;self.width=width
+        expectedContentVersions=Dictionary(uniqueKeysWithValues:
+            content.entries.map{($0.blockID,$0.contentVersion)})
+    }
     var revision:Int {content.revision}
     var entries:[RenderedEntry] {content.entries}
+    var layoutID:PreviewLayoutID {
+        PreviewLayoutID(width:Double(width),fontSize:Double(fontSize),
+            stylesheetGeneration:HTMLPreviewResources.stylesheetGeneration)
+    }
 }
 private final class PreviewLoadingView:NSView {
     override func hitTest(_ point:NSPoint)->NSView? {nil}
@@ -117,11 +135,33 @@ private struct CommittedPresentation {
     }
 }
 
+private enum ViewportAnchor {
+    case top
+    case bottom
+    case absolute(origin:CGFloat)
+    case block(id:String,localY:CGFloat,viewportY:CGFloat,fallbackOrigin:CGFloat)
+}
+
+private enum PreviewActivity {
+    case idle
+    case scrolling
+    case resizing(ViewportAnchor?)
+}
+private struct PendingPreviewFrame {
+    let frame:HTMLPreviewFrame
+    let request:PreviewRequest
+}
+
 /// Prepared scrolling reads one committed presentation and moves its native clip.
 @MainActor final class PreviewPane:NSView {
     var preparedDocument:PreparedDocument?
     override var isFlipped:Bool {true}
-    var scrolling:PreviewScrolling = .independent {didSet {sourceLayoutChanged()}}
+    var scrolling:PreviewScrolling = .independent {didSet {
+        // Replacing the scroll source is an explicit synchronization boundary;
+        // an anchor captured for the previous source cannot survive it.
+        idleAnchorLock=nil
+        sourceLayoutChanged()
+    }}
     var openAnchor:((String)->Void)?
     var openComment:((String,NSView,NSRect)->Void)?
     var commentAnchorChanged:((NSRect?)->Void)?
@@ -170,18 +210,23 @@ private struct CommittedPresentation {
     private var version=0,measuredSize:NSSize = .zero
     var resizeSession:ViewportResizeSession?
     private var failedParseRevision:Int?
-    // A committed edit position remains stable until source movement begins.
-    // Scroll entry points clear this value before applying the shared center
-    // alignment function, preserving the established scrolling behavior.
-    private var metadataPinnedOrigin:CGFloat?
-    private var metadataPinnedSourceOrigin:CGFloat?
     private var inspector:NSWindowController?
-    private(set) var isScrollMappingFrozen=false
+    private var activity:PreviewActivity = .idle
+    private var renderAnchor:ViewportAnchor?
+    private var pendingFrame:PendingPreviewFrame?
+    private var idleAnchorLock:ViewportAnchor?
+    private var resourceSettlementGeneration=0
+    var isScrollMappingFrozen:Bool {
+        if case .scrolling=activity {return true};return false
+    }
     var presentationSettled:(()->Void)?
     private var source:ScrollSource? {
         switch scrolling {case .independent:return nil;case .synchronized(let source):return source}
     }
-    private func clearResizePin() {resizeSession?.protectsViewport=false;resizeSession=nil}
+    private func clearResizePin() {
+        resizeSession?.protectsViewport=false;resizeSession=nil
+        if case .resizing=activity {activity = .idle}
+    }
     var lastRevision:Int {
         guard let committed,web.isEngineReady,desired==nil,content?.revision==committed.request.revision else{return -1}
         return committed.request.revision
@@ -229,10 +274,6 @@ private struct CommittedPresentation {
             && visiblePreview.upperBound>committed.geometry.height-reserve
         return needsBefore || needsAfter
     }
-    var needsWindowTrimming:Bool {
-        guard let committed,committed.request.entries.count>1,bounds.height>1 else{return false}
-        return committed.geometry.height>bounds.height*30
-    }
     var isShowingLoadingState:Bool {!loadingView.isHidden}
     var clipOrigin:CGFloat {clip.bounds.minY}
     var previewView:HTMLPreviewView {web}
@@ -249,19 +290,26 @@ private struct CommittedPresentation {
     private(set) var presentationFailureCount=0
     private(set) var retainedPresentationAfterFailure=true
     private(set) var crossRevisionCommitCount=0
-    private(set) var pixelReuseCommitCount=0
     private(set) var committedFrameID=0
+    private var debugResizeAnchor:ViewportAnchor?
     var debugPresentationCommitted:(()->Void)?
-    var debugResizeAnchorViewportY:CGFloat? {
-        guard let committed,let id=resizeSession?.previewEntryID,
-              let item=committed.geometry.items.first(where:{$0.id==id}) else{return nil}
-        return committed.windowTop+item.y-surface.logicalOrigin
+    var debugCommittedHTML:String {
+        committed?.request.entries.compactMap(\.fragment.html).joined(separator:"\n") ?? ""
     }
-    var debugResizePinnedOrigin:CGFloat? {resizeSession?.protectsViewport == true ? resizeSession?.previewOrigin:nil}
+    var debugResizeAnchorViewportY:CGFloat? {
+        guard let committed,let anchor=debugResizeAnchor else{return nil}
+        switch anchor {
+        case .top:return -surface.logicalOrigin
+        case .bottom:return committed.totalHeight-surface.logicalOrigin
+        case .absolute(let origin):return origin-surface.logicalOrigin
+        case .block(let id,let localY,_,_):
+            guard let item=committed.geometry.items.first(where:{$0.id==id}) else{return nil}
+            return committed.windowTop+item.y+min(max(0,localY),item.height)-surface.logicalOrigin
+        }
+    }
     var debugResizeAnchorState:String {
-        guard let committed,let id=resizeSession?.previewEntryID,
-              let item=committed.geometry.items.first(where:{$0.id==id}) else{return "missing"}
-        return "item=\(item.y), window=\(committed.windowTop), origin=\(surface.logicalOrigin), width=\(committed.geometry.width), request=\(committed.request.width), frame=\(committedFrameID)"
+        guard let committed else{return "missing"}
+        return "anchor=\(String(describing:debugResizeAnchor)), window=\(committed.windowTop), origin=\(surface.logicalOrigin), width=\(committed.geometry.width), request=\(committed.request.width), frame=\(committedFrameID)"
     }
     private var debugFailsNextPresentation=false
     private var debugFailsNextPosition=false
@@ -277,7 +325,9 @@ private struct CommittedPresentation {
         loadingLabel.textColor = .secondaryLabelColor;loadingLabel.alignment = .center
         loadingView.addSubview(loadingLabel);addSubview(loadingView);loadingView.isHidden=true
         let view=surface.web
-        view.viewportResized={ [weak self] in self?.viewportDidResize() }
+        view.engineReady={ [weak self] in self?.preparePresentation() }
+        view.resourceFrame={ [weak self] frame in self?.receiveResourceFrame(frame) }
+        view.scrollApplied={ [weak self] point in self?.surface.applyPaintedScroll(point.y) }
         view.verticalWheel={ [weak self] event in self?.handleVerticalScroll(event) }
         view.openURL={ [weak self,weak view] url,anchor in
             if url.scheme?.lowercased()=="markato-comment" {
@@ -294,10 +344,6 @@ private struct CommittedPresentation {
     func moveViewport() {
         if resizeSession?.protectsViewport == true {updateLoadingState();return}
         resumeSourceAlignmentIfNeeded()
-        if let pinned=metadataPinnedSourceOrigin,let source,
-           abs(source.viewportOrigin-pinned)>=0.01 {
-            metadataPinnedOrigin=nil;metadataPinnedSourceOrigin=nil
-        }
         place()
         updateLoadingState()
     }
@@ -305,7 +351,7 @@ private struct CommittedPresentation {
         guard let committed else{return false}
         guard let source else{return true}
         return source.hasMeasuredLayout && source.contentRevision==committed.request.revision &&
-            (isScrollMappingFrozen || (source.geometryRevision==committed.sourceGeometryRevision && committed.viewportHeight==bounds.height))
+            source.geometryRevision==committed.sourceGeometryRevision && committed.viewportHeight==bounds.height
     }
     private func updateLoadingState() {
         // Edits retain the previous complete presentation while its replacement
@@ -331,7 +377,6 @@ private struct CommittedPresentation {
         loadingView.isHidden=hidden
     }
     private func handleVerticalScroll(_ event:NSEvent) {
-        metadataPinnedOrigin=nil;metadataPinnedSourceOrigin=nil
         switch scrolling {
         case .synchronized:
             scrollPreview(to:independentOrigin-event.scrollingDeltaY,detachFromSource:true)
@@ -342,6 +387,7 @@ private struct CommittedPresentation {
     private func scrollPreview(to proposedOrigin:CGFloat,detachFromSource:Bool) {
         guard let committed else{return}
         clearResizePin()
+        idleAnchorLock=nil
         let origin=min(max(0,committed.totalHeight-bounds.height),max(0,proposedOrigin))
         guard abs(origin-independentOrigin)>=0.01 else{return}
         if detachFromSource,let source {
@@ -363,33 +409,52 @@ private struct CommittedPresentation {
               let committed,committed.totalHeight>bounds.height,
               abs(event.scrollingDeltaY)>=abs(event.scrollingDeltaX) else{return false}
         clearResizePin()
-        metadataPinnedOrigin=nil;metadataPinnedSourceOrigin=nil
+        idleAnchorLock=nil
         independentOrigin=max(0,visibleWebRange.lowerBound-event.scrollingDeltaY);place();return true
     }
     func navigatePreview(toEnd:Bool) {
         guard let committed else{return}
         clearResizePin()
         resumeSourceAlignment()
-        metadataPinnedOrigin=nil;metadataPinnedSourceOrigin=nil
+        idleAnchorLock=nil
         independentOrigin=toEnd ? max(0,committed.totalHeight-bounds.height):0;place()
     }
     func beginScrollGesture() {
+        // A resource-settlement anchor survives passive TextKit/AppKit clip
+        // corrections. Only explicit navigation intent starts a new source to
+        // preview alignment; inferring intent from a changed source origin
+        // made an active insertion point able to release the anchor.
+        idleAnchorLock=nil
         guard !isScrollMappingFrozen else{return}
         refreshMap()
         guard hasCurrentMap else{updateLoadingState();return}
-        isScrollMappingFrozen=true
+        // Source scrolling owns the destination throughout momentum. Resource
+        // frames are deferred, but must eventually be positioned from the
+        // final source viewport rather than from where the gesture began.
+        activity = .scrolling
+        web.beginViewportGesture()
     }
     func endScrollGesture() {
-        isScrollMappingFrozen=false;moveViewport();preparePresentation()
+        guard isScrollMappingFrozen else{return}
+        web.endViewportGesture()
+        activity = .idle
+        if let pending=pendingFrame {
+            pendingFrame=nil;commitDeferredFrame(pending,anchor:nil)
+        }
+        moveViewport();preparePresentation()
     }
     func sourceLayoutChanged() {
-        if !isScrollMappingFrozen {moveViewport()}
+        if isScrollMappingFrozen {
+            // TextKit refines retained source estimates while momentum is in
+            // flight. Rebuild only the bounded mounted-window map so the
+            // frozen preview presentation continues to track the live source.
+            refreshMap();place()
+        } else {moveViewport()}
         preparePresentation()
     }
     func invalidate() {
         failedParseRevision=nil
         clearResizePin()
-        metadataPinnedOrigin=nil;metadataPinnedSourceOrigin=nil
         endScrollGesture();version += 1;content=nil;desired=nil;updateLoadingState()
     }
     func show(_ result:ParseResult) {
@@ -421,165 +486,274 @@ private struct CommittedPresentation {
             sourceLength:content.sourceLength,sourceRange:content.sourceRange,
             previewTop:content.previewTop,previewHeight:content.previewHeight)
         desired=PreviewRequest(id:version,content:presented,fontSize:fontSize,baseURL:baseURL,width:bounds.width)
+        if let desired {preparedDocument?.setPreviewLayoutID(desired.layoutID)}
         preparePresentation()
     }
-    private func rendersSamePixels(_ request:PreviewRequest,as previous:PreviewRequest)->Bool {
-        guard request.width==previous.width,request.fontSize==previous.fontSize,
-              request.baseURL?.absoluteString==previous.baseURL?.absoluteString,
-              request.entries.count==previous.entries.count else{return false}
-        // IDs are parser/cache identity, not paint input. A trailing blank-line
-        // edit can legitimately replace the adjacent block ID while producing
-        // the same ordered HTML. The engine receives only this HTML (plus the
-        // already-compared presentation settings), so the bitmap is unchanged.
-        return zip(request.entries,previous.entries).allSatisfy {
-            $0.fragment.html==$1.fragment.html
-        }
-    }
-    private func reusedPixelPosition(_ request:PreviewRequest,from previous:CommittedPresentation)->PresentationPosition? {
-        switch scrolling {
-        case .independent:
-            let origin=min(max(0,previous.totalHeight-bounds.height),max(0,surface.logicalOrigin))
-            return PresentationPosition(map:nil,sourceGeometryRevision:nil,origin:origin,
-                windowTop:previous.windowTop,totalHeight:previous.totalHeight)
-        case .synchronized(let source):
-            guard covers(request.content,visible:source.visibleSourceRange),
-                  let map=makeMap(request,geometry:previous.geometry,windowTop:previous.windowTop,
-                    totalHeight:previous.totalHeight) else{return nil}
-            // An edit that leaves the rendered pixels unchanged is still an
-            // edit. Keep the user's preview position instead of snapping it
-            // back to the newly calculated source alignment.
-            let origin=min(max(0,previous.totalHeight-bounds.height),
-                max(0,surface.logicalOrigin))
-            return PresentationPosition(map:map,sourceGeometryRevision:source.geometryRevision,origin:origin,
-                windowTop:previous.windowTop,totalHeight:previous.totalHeight)
-        }
-    }
-    private func measuredHeights(_ geometry:HTMLPreviewGeometry,for entries:[RenderedEntry])->[BlockID:Double] {
-        guard geometry.items.count==entries.count else{return [:]}
-        var heights=[BlockID:Double]();heights.reserveCapacity(entries.count)
-        for index in geometry.items.indices {
-            let item=geometry.items[index]
-            let stride=index+1<geometry.items.count ? geometry.items[index+1].y-item.y:item.height+12
-            heights[entries[index].blockID]=Double(max(item.height,stride))
-        }
-        return heights
-    }
     private func preparePresentation() {
-        // Source layout/viewport callbacks continue during a window drag and
-        // may enqueue newer prepared windows. Coalesce them, but never render
-        // a replacement while the committed bitmap and map are frozen.
-        guard resizeSession?.isDragging != true,rendering==nil,var request=desired,
+        guard resizeSession?.isDragging != true,!isScrollMappingFrozen,rendering==nil,let request=desired,web.isEngineReady,
               request.width>0.5,bounds.height>0.5 else{return}
         guard request.entries.allSatisfy({$0.fragment.html != nil}),Set(request.entries.map(\.id)).count==request.entries.count else {
             NSLog("Preview request contains incomplete or duplicate fragments")
             return
         }
-        if let previous=committed,web.isEngineReady,
-           previous.request.revision != request.revision,rendersSamePixels(request,as:previous.request),
-           let position=reusedPixelPosition(request,from:previous) {
-            // Source ranges and the scroll map changed, but the mounted IDs and
-            // HTML did not. Publishing the new metadata over the existing
-            // bitmap avoids an unnecessary engine update and pixel copy.
-            rendering=request
-            // The parser may replace the adjacent block ID when its trailing
-            // whitespace changes. Carry the already measured stride onto that
-            // new identity so later window calculations do not regress to an
-            // estimate and introduce a delayed correction.
-            preparedDocument?.recordPreviewHeights(measuredHeights(previous.geometry,for:request.entries),
-                revision:request.revision)
-            metadataPinnedOrigin=position.origin
-            metadataPinnedSourceOrigin=source?.viewportOrigin
-            commit(request,geometry:previous.geometry,position:position,reusesPixels:true)
-            finishPreparation(request)
-            return
-        }
-        if committed?.request.revision != request.revision {
-            metadataPinnedOrigin=nil;metadataPinnedSourceOrigin=nil
-        }
         rendering=request
-        surface.size(contentHeight:max(1,committed?.totalHeight ?? 0),windowTop:committed?.windowTop ?? 0,
-            width:request.width,viewportHeight:bounds.height)
+        let preservesExistingContent=committed.map{$0.request.revision != request.revision} ?? false
+        renderAnchor=currentActivityAnchor() ?? idleAnchorLock ??
+            (preservesExistingContent ? captureViewportAnchor():nil)
         #if DEBUG
-        let roundtrip=TimingDiagnostics.shared.begin("html.presentation")
         patchCount += 1
-        #endif
-        guard isCurrent(request) else {
-            finishPreparation(request);return
-        }
-        #if DEBUG
         if debugFailsNextPresentation {
             debugFailsNextPresentation=false
             surface.web.debugFailNextPresentation()
         }
         #endif
-        guard let measured=web.prepare(request.entries,fontSize:request.fontSize,baseURL:request.baseURL) else {
-            #if DEBUG
-            presentationFailureCount += 1
-            retainedPresentationAfterFailure = retainedPresentationAfterFailure &&
-                (committed == nil || (committedFrameID>0 && loadingView.isHidden))
-            #endif
-            if !request.hasRetried,desired?.id==request.id {
-                desired?.hasRetried=true
-                finishPreparation(request,retry:true)
-            } else {
-                needsLayout=true
-                finishPreparation(request)
+        let scale=max(1,window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 1)
+        let renderRequest=HTMLPreviewRenderRequest(token:request.id,revision:request.revision,
+            layoutID:request.layoutID,entries:request.entries,fontSize:request.fontSize,baseURL:request.baseURL,
+            viewportSize:NSSize(width:request.width,height:bounds.height),scale:scale,scrollPoint:.zero)
+        web.requestLayout(renderRequest) { [weak self] layout in self?.receiveLayout(layout,for:request) }
+    }
+    private func receiveLayout(_ layout:HTMLPreviewLayout?,for original:PreviewRequest) {
+        guard var request=rendering,request.id==original.id else{return}
+        guard isCurrent(request) else {web.discard(nil);finishPreparation(original);return}
+        guard let layout else {failPreparation(original);return}
+        guard layout.token==request.id,layout.revision==request.revision,layout.layoutID==request.layoutID else {
+            failPreparation(original);return
+        }
+        guard applyMeasurements(layout.measurements,to:&request) else {
+            failPreparation(original);return
+        }
+        guard let position=presentationPosition(request,geometry:layout.geometry,anchor:renderAnchor) else {
+            failPreparation(original);return
+        }
+        rendering=request;desired=request
+        let local=max(0,position.origin-position.windowTop)
+        web.capture(token:request.id,scrollPoint:NSPoint(x:0,y:local)) { [weak self] frame in
+            self?.receiveCapturedFrame(frame,request:request,position:position)
+        }
+    }
+    private func receiveCapturedFrame(_ frame:HTMLPreviewFrame?,request original:PreviewRequest,
+        position originalPosition:PresentationPosition) {
+        guard var request=rendering,request.id==original.id else{return}
+        guard isCurrent(request) else {web.discard(frame);finishPreparation(original);return}
+        guard let frame,frame.token==request.id,frame.revision==request.revision,
+              frame.layoutID==request.layoutID else {failPreparation(original);return}
+        guard applyMeasurements(frame.measurements,to:&request),
+              let position=presentationPosition(request,geometry:frame.geometry,anchor:renderAnchor) else {
+            web.discard(frame);failPreparation(original);return
+        }
+        // Resource completion between layout and capture can alter the desired
+        // local scroll point. Settle that deterministic race before publishing.
+        let oldLocal=max(0,originalPosition.origin-originalPosition.windowTop)
+        let newLocal=max(0,position.origin-position.windowTop)
+        if abs(oldLocal-newLocal)>=0.5 {
+            rendering=request;desired=request
+            web.capture(token:request.id,scrollPoint:NSPoint(x:0,y:newLocal)) { [weak self] settled in
+                self?.receiveSettledFrame(settled,request:request)
             }
             return
         }
-        let geometry=measured
-        let heights=measuredHeights(geometry,for:request.entries)
-        let extentChange=preparedDocument?.recordPreviewHeights(heights,revision:request.revision) ?? 0
-        if extentChange != 0,let previewHeight=request.content.previewHeight {
-            // The renderer has already measured every mounted block without
-            // publishing its pending pixels.
-            // Publish its corrected global extent in this first frame so an
-            // inserted paragraph cannot trigger an estimate/measurement bounce.
-            request.content=PreviewContent(revision:request.content.revision,
-                entries:request.content.entries,sourceLength:request.content.sourceLength,
-                sourceRange:request.content.sourceRange,previewTop:request.content.previewTop,
-                previewHeight:previewHeight+extentChange)
-            content=request.content
-            desired=request
-            rendering=request
+        finishCapturedFrame(frame,request:request,position:position)
+    }
+    private func receiveSettledFrame(_ frame:HTMLPreviewFrame?,request original:PreviewRequest) {
+        guard var request=rendering,request.id==original.id else{return}
+        guard isCurrent(request) else {web.discard(frame);finishPreparation(original);return}
+        guard let frame,applyMeasurements(frame.measurements,to:&request),
+              let position=presentationPosition(request,geometry:frame.geometry,anchor:renderAnchor) else {
+            failPreparation(original);return
         }
-        guard let position=presentationPosition(request,geometry:geometry) else {
-            // Source geometry or prepared coverage can legitimately lag the
-            // final window frame by one callback. Keep the coherent old bitmap
-            // and this desired request; source/viewport publication will retry.
-            finishPreparation(request,keepDesired:true)
-            return
+        finishCapturedFrame(frame,request:request,position:position)
+    }
+    private func finishCapturedFrame(_ frame:HTMLPreviewFrame,request:PreviewRequest,position:PresentationPosition) {
+        if isScrollMappingFrozen || resizeSession?.isDragging == true {
+            pendingFrame=PendingPreviewFrame(frame:frame,request:request);web.discard(frame)
+            finishPreparation(request);return
         }
-        surface.size(contentHeight:position.totalHeight,windowTop:position.windowTop,
-            width:request.width,viewportHeight:bounds.height)
-        surface.stageScroll(to:position.origin)
-        guard web.capturePendingFrame(baseURL:request.baseURL,
-            containsImages:request.entries.contains{$0.fragment.html?.contains("<img") == true}) else {
-            #if DEBUG
-            presentationFailureCount += 1
-            retainedPresentationAfterFailure = retainedPresentationAfterFailure &&
-                (committed == nil || (committedFrameID>0 && loadingView.isHidden))
-            #endif
-            finishPreparation(request,keepDesired:true)
-            return
+        let previousRevision=committed?.request.revision
+        let accepted=commit(request,frame:frame,position:position)
+        if accepted,previousRevision != nil,previousRevision != request.revision,
+           source != nil,let anchor=captureViewportAnchor() {
+            idleAnchorLock=anchor
         }
+        if !accepted {web.discard(frame)}
+        finishPreparation(request,keepDesired:!accepted)
+    }
+    private func applyMeasurements(_ measurements:[PreviewBlockMeasurement],to request:inout PreviewRequest,
+        updatePresentationState:Bool=true)->Bool {
+        let delta:Double
+        if let preparedDocument {
+            guard let value=preparedDocument.applyPreviewMeasurements(measurements,revision:request.revision,
+                layoutID:request.layoutID,expectedContentVersions:request.expectedContentVersions) else{return false}
+            delta=value
+        } else {delta=0}
+        if delta != 0,let height=request.content.previewHeight {
+            request.content=PreviewContent(revision:request.content.revision,entries:request.content.entries,
+                sourceLength:request.content.sourceLength,sourceRange:request.content.sourceRange,
+                previewTop:request.content.previewTop,previewHeight:height+delta)
+            if let base=content,base.revision==request.revision {
+                content=PreviewContent(revision:base.revision,entries:base.entries,sourceLength:base.sourceLength,
+                    sourceRange:base.sourceRange,previewTop:base.previewTop,
+                    previewHeight:base.previewHeight.map{$0+delta})
+            }
+            if updatePresentationState {desired=request;rendering=request}
+        }
+        return true
+    }
+    private func failPreparation(_ request:PreviewRequest) {
+        guard rendering?.id==request.id else{return}
         #if DEBUG
-        TimingDiagnostics.shared.end(roundtrip,values:["mounted":Double(request.entries.count),"height":Double(geometry.height)])
+        presentationFailureCount += 1
+        retainedPresentationAfterFailure = retainedPresentationAfterFailure &&
+            (committed == nil || (committedFrameID>0 && loadingView.isHidden))
         #endif
-        let committed=commit(request,geometry:geometry,position:position)
-        if !committed {web.discardPendingFrame()}
-        finishPreparation(request,keepDesired:!committed)
+        web.discard(nil);desired=nil;rendering=nil;renderAnchor=nil;presentationSettled?()
+    }
+    private func receiveResourceFrame(_ frame:HTMLPreviewFrame) {
+        guard let committed,frame.cause == .resource,
+              frame.token==committed.request.id,frame.revision==committed.request.revision,
+              frame.layoutID==committed.request.layoutID else{return}
+        var request:PreviewRequest
+        if let pendingFrame,pendingFrame.frame.cause == .resource,
+           pendingFrame.request.id==frame.token {request=pendingFrame.request}
+        else {request=committed.request}
+        rebaseResourceExtent(&request)
+        guard applyMeasurements(frame.measurements,to:&request,updatePresentationState:false) else{return}
+        let pending=PendingPreviewFrame(frame:frame,request:request)
+        switch activity {
+        case .idle:
+            settleResourceFrame(pending,alignToSource:frame.createdDuringViewportGesture)
+        case .scrolling,.resizing:
+            pendingFrame=pending
+        }
+    }
+    private func rebaseResourceExtent(_ request:inout PreviewRequest) {
+        guard let current=content,current.revision==request.revision else{return}
+        request.content=PreviewContent(revision:request.content.revision,entries:request.content.entries,
+            sourceLength:request.content.sourceLength,sourceRange:request.content.sourceRange,
+            previewTop:current.previewTop,previewHeight:current.previewHeight)
+    }
+    /// The retained tree and the browser geometry change together. If content
+    /// above the viewport grew by `delta`, adding `delta` to the document-
+    /// relative scroll offset keeps every visible point at the same screen Y.
+    private func resourceScrollDelta(from previous:CommittedPresentation,to request:PreviewRequest,
+        geometry:HTMLPreviewGeometry,origin oldOrigin:CGFloat,
+        flowDisplacements:[HTMLPreviewFlowDisplacement])->CGFloat {
+        if oldOrigin<=0.5 {return 0}
+        let newExtent=previewExtent(request,geometry)
+        let local=oldOrigin-previous.windowTop
+        guard let oldIndex=previous.geometry.items.firstIndex(where:{$0.y+$0.height>local+0.01}) ??
+                previous.geometry.items.indices.last else{return 0}
+        let oldItem=previous.geometry.items[oldIndex]
+        if !flowDisplacements.isEmpty {
+            let exact=flowDisplacements.lazy.filter{$0.firstShiftedIndex<=oldIndex}.reduce(CGFloat(0)){$0+$1.delta}
+            return (newExtent.top-previous.windowTop)+exact
+        }
+        guard
+              let newItem=geometry.items.first(where:{$0.id==oldItem.id}) else{return 0}
+        return (newExtent.top+newItem.y)-(previous.windowTop+oldItem.y)
+    }
+    private func settleResourceFrame(_ pending:PendingPreviewFrame,alignToSource:Bool=false) {
+        guard let committed else{return}
+        var request=pending.request
+        rebaseResourceExtent(&request)
+        guard preparedDocument?.revision==nil || preparedDocument?.revision==request.revision,
+              applyMeasurements(pending.frame.measurements,to:&request,updatePresentationState:false) else{return}
+        // Geometry compensation is expressed in the exact logical document
+        // coordinate. Ultralight's quantized applied scroll is used only to
+        // mount the captured bitmap; using it here would discard the native
+        // fractional residual on every resource-driven relayout.
+        let anchorOrigin=surface.logicalOrigin
+        let delta=resourceScrollDelta(from:committed,to:request,
+            geometry:pending.frame.geometry,origin:anchorOrigin,
+            flowDisplacements:pending.frame.flowDisplacements)
+        let baseOrigin=surface.logicalOrigin
+        guard let position=presentationPosition(request,geometry:pending.frame.geometry,
+            anchor:alignToSource ? nil:.absolute(origin:anchorOrigin+delta)) else{return}
+        resourceSettlementGeneration += 1
+        captureSettledResource(request:request,targetOrigin:position.origin,alignToSource:alignToSource,
+            flowDisplacements:pending.frame.flowDisplacements,
+            changedBlocks:Set(pending.frame.measurements.map(\.blockID)),baseOrigin:baseOrigin,
+            requestedPosition:position,generation:resourceSettlementGeneration)
+    }
+    private func captureSettledResource(request original:PreviewRequest,targetOrigin:CGFloat,alignToSource:Bool,
+        flowDisplacements:[HTMLPreviewFlowDisplacement],changedBlocks:Set<BlockID>,
+        baseOrigin:CGFloat,requestedPosition:PresentationPosition,generation:Int) {
+        let local=max(0,requestedPosition.origin-requestedPosition.windowTop)
+        web.captureResource(token:original.id,scrollPoint:NSPoint(x:0,y:local)) { [weak self] frame in
+            guard let self,let committed=self.committed,
+                  generation==self.resourceSettlementGeneration,
+                  committed.request.id==original.id,committed.request.revision==original.revision,
+                  let frame,frame.token==original.id,frame.revision==original.revision,
+                  frame.layoutID==original.layoutID else{return}
+            var request=original
+            guard self.applyMeasurements(frame.measurements,to:&request,updatePresentationState:false) else{return}
+            let currentBase=self.surface.logicalOrigin
+            if abs(currentBase-baseOrigin)>=0.01 {
+                guard let currentPosition=self.presentationPosition(request,geometry:frame.geometry,
+                    anchor:alignToSource ? nil:.absolute(origin:currentBase+self.resourceScrollDelta(
+                        from:committed,to:request,geometry:frame.geometry,origin:currentBase,
+                        flowDisplacements:flowDisplacements))) else{return}
+                self.captureSettledResource(request:request,targetOrigin:currentPosition.origin,
+                    alignToSource:alignToSource,
+                    flowDisplacements:flowDisplacements,changedBlocks:changedBlocks,
+                    baseOrigin:currentBase,requestedPosition:currentPosition,generation:generation)
+                return
+            }
+            guard let position=self.presentationPosition(request,geometry:frame.geometry,
+                anchor:.absolute(origin:targetOrigin)) else{return}
+            let settledLocal=max(0,position.origin-position.windowTop)
+            if abs(settledLocal-local)>=0.5 {
+                self.captureSettledResource(request:request,targetOrigin:targetOrigin,alignToSource:alignToSource,
+                    flowDisplacements:flowDisplacements,changedBlocks:changedBlocks,baseOrigin:baseOrigin,
+                    requestedPosition:position,generation:generation)
+                return
+            }
+            if self.isScrollMappingFrozen || self.resizeSession?.isDragging == true {
+                self.pendingFrame=PendingPreviewFrame(frame:frame,request:request)
+                return
+            }
+            let preservePixels=self.resourceChangesAreOutsideViewport(
+                previous:committed,changedBlocks:changedBlocks)
+            guard self.commit(request,frame:frame,position:position,requiresCurrent:false,
+                preservePixels:preservePixels) else{return}
+            if self.source != nil,!alignToSource {
+                self.idleAnchorLock = .absolute(origin:position.origin)
+            }
+        }
+    }
+    private func commitDeferredFrame(_ pending:PendingPreviewFrame,anchor:ViewportAnchor?) {
+        if pending.frame.cause == .resource {
+            settleResourceFrame(pending,alignToSource:true)
+            return
+        }
+        var request=pending.request
+        guard preparedDocument?.revision==nil || preparedDocument?.revision==request.revision,
+              applyMeasurements(pending.frame.measurements,to:&request),
+              let position=presentationPosition(request,geometry:pending.frame.geometry,anchor:anchor) else{return}
+        _=commit(request,frame:pending.frame,position:position,requiresCurrent:false)
+    }
+    private func resourceChangesAreOutsideViewport(previous:CommittedPresentation,
+        changedBlocks:Set<BlockID>)->Bool {
+        guard !changedBlocks.isEmpty else{return false}
+        let top=surface.logicalOrigin-previous.windowTop
+        let bottom=top+bounds.height
+        let changed=zip(previous.request.entries,previous.geometry.items).filter {
+            changedBlocks.contains($0.0.blockID)
+        }
+        return !changed.isEmpty && changed.allSatisfy {
+            $0.1.y+$0.1.height<=top+0.01 || $0.1.y>=bottom-0.01
+        }
     }
     private func isCurrent(_ request:PreviewRequest)->Bool {
         desired?.id==request.id && rendering?.id==request.id && web.isEngineReady
             && bounds.width==request.width && bounds.height>0.5
     }
-    private func finishPreparation(_ request:PreviewRequest,retry:Bool=false,keepDesired:Bool=false) {
+    private func finishPreparation(_ request:PreviewRequest,keepDesired:Bool=false) {
         guard rendering?.id==request.id else{return}
-        rendering=nil
-        if !retry,!keepDesired,desired?.id==request.id,coversSourceViewport {desired=nil}
+        rendering=nil;renderAnchor=nil
+        if !keepDesired,desired?.id==request.id,coversSourceViewport {desired=nil}
         presentationSettled?()
-        if desired?.id != request.id || retry {preparePresentation()}
+        if desired?.id != request.id {preparePresentation()}
     }
     private struct PresentationPosition {
         let map:ScrollLandmarks?
@@ -598,12 +772,6 @@ private struct CommittedPresentation {
         return (CGFloat(top)-(geometry.items.first?.y ?? 0),height)
     }
     private func targetOrigin(height:CGFloat,map:ScrollLandmarks?)->CGFloat? {
-        if let session=resizeSession,session.protectsViewport {
-            return min(max(0,height-bounds.height),max(0,session.previewOrigin))
-        }
-        if let metadataPinnedOrigin {
-            return min(max(0,height-bounds.height),max(0,metadataPinnedOrigin))
-        }
         let target:CGFloat
         switch scrolling {
         case .independent:target=independentOrigin
@@ -622,16 +790,41 @@ private struct CommittedPresentation {
         guard let y=map.previewY(for:Double(source.viewportOrigin)) else{return nil}
         return min(max(0,height-bounds.height),max(0,CGFloat(y)))
     }
-    private func resizeOrigin(geometry:HTMLPreviewGeometry,windowTop:CGFloat,totalHeight:CGFloat)->CGFloat? {
-        guard let session=resizeSession,session.protectsViewport,
-              let id=session.previewEntryID,
-              let item=geometry.items.first(where:{$0.id==id}) else{return nil}
-        return min(max(0,totalHeight-bounds.height),
-            max(0,windowTop+item.y+session.previewDisplacement))
+    private func currentActivityAnchor()->ViewportAnchor? {
+        switch activity {
+        case .idle:return nil
+        case .scrolling:return nil
+        case .resizing(let anchor):return anchor
+        }
     }
-    private func retainedEditOrigin(_ request:PreviewRequest,totalHeight:CGFloat)->CGFloat? {
-        guard let previous=committed,previous.request.revision != request.revision else{return nil}
-        return min(max(0,totalHeight-bounds.height),max(0,surface.logicalOrigin))
+    private func captureViewportAnchor()->ViewportAnchor? {
+        guard let committed else{return nil}
+        let origin=surface.logicalOrigin,end=max(0,committed.totalHeight-bounds.height)
+        if origin<=0.5 {return .top}
+        if abs(origin-end)<=0.5 {return .bottom}
+        guard origin>=committed.windowTop,
+              origin<=committed.windowTop+committed.geometry.height else {
+            return .absolute(origin:origin)
+        }
+        let local=origin-committed.windowTop
+        guard let item=committed.geometry.items.first(where:{$0.y+$0.height>=local}) ?? committed.geometry.items.last else{return nil}
+        let point=min(max(0,local-item.y),item.height)
+        return .block(id:item.id,localY:point,viewportY:committed.windowTop+item.y+point-origin,
+            fallbackOrigin:origin)
+    }
+    private func resolvedOrigin(_ anchor:ViewportAnchor?,geometry:HTMLPreviewGeometry,
+        windowTop:CGFloat,totalHeight:CGFloat)->CGFloat? {
+        guard let anchor else{return nil}
+        let end=max(0,totalHeight-bounds.height)
+        switch anchor {
+        case .top:return 0
+        case .bottom:return end
+        case .absolute(let origin):return min(end,max(0,origin))
+        case .block(let id,let localY,let viewportY,let fallbackOrigin):
+            guard let item=geometry.items.first(where:{$0.id==id}) else{return min(end,max(0,fallbackOrigin))}
+            let point=min(max(0,localY),item.height)
+            return min(end,max(0,windowTop+item.y+point-viewportY))
+        }
     }
     private func makeMap(_ request:PreviewRequest,geometry:HTMLPreviewGeometry,windowTop:CGFloat,totalHeight:CGFloat)->ScrollLandmarks? {
         #if DEBUG
@@ -642,7 +835,7 @@ private struct CommittedPresentation {
         let revision=source.geometryRevision
         let landmarks=zip(geometry.items,request.entries).compactMap {item,entry -> (previewY:CGFloat,entry:RenderedEntry)? in
             guard entry.fragment.from != 0,entry.fragment.kind != .pending else{return nil}
-            return (item.landmark ?? item.y,entry)
+            return (item.y+(item.landmark ?? 0),entry)
         }
         // A map must use one coordinate system throughout. Mixing locally exact
         // TextKit positions with retained estimates lets the monotonic map
@@ -661,69 +854,60 @@ private struct CommittedPresentation {
         // therefore legitimately has no interior landmarks.
         return ScrollLandmarks(points).viewportMap(sourceHeight:Double(source.contentHeight),viewportHeight:Double(bounds.height),previewHeight:Double(totalHeight))
     }
-    private func presentationPosition(_ request:PreviewRequest,geometry:HTMLPreviewGeometry)->PresentationPosition? {
+    private func presentationPosition(_ request:PreviewRequest,geometry:HTMLPreviewGeometry,
+        anchor:ViewportAnchor?=nil)->PresentationPosition? {
         #if DEBUG
         if debugFailsNextPosition {debugFailsNextPosition=false;return nil}
         #endif
         let extent=previewExtent(request,geometry)
         switch scrolling {
         case .independent:
-            guard let origin=resizeOrigin(geometry:geometry,windowTop:extent.top,totalHeight:extent.total) ??
+            guard let origin=resolvedOrigin(anchor,geometry:geometry,windowTop:extent.top,totalHeight:extent.total) ??
                     targetOrigin(height:extent.total,map:nil) else{return nil}
             return PresentationPosition(map:nil,sourceGeometryRevision:nil,origin:origin,windowTop:extent.top,totalHeight:extent.total)
         case .synchronized(let source):
             guard covers(request.content,visible:source.visibleSourceRange) else{return nil}
-            if resizeSession?.protectsViewport == true {
-                guard let origin=resizeOrigin(geometry:geometry,windowTop:extent.top,totalHeight:extent.total) ??
-                        targetOrigin(height:extent.total,map:nil) else{return nil}
-                return PresentationPosition(map:nil,sourceGeometryRevision:source.geometryRevision,
-                    origin:origin,windowTop:extent.top,totalHeight:extent.total)
-            }
             guard let map=makeMap(request,geometry:geometry,windowTop:extent.top,totalHeight:extent.total) else{return nil}
-            guard let origin=resizeOrigin(geometry:geometry,windowTop:extent.top,totalHeight:extent.total) ??
-                    retainedEditOrigin(request,totalHeight:extent.total) ??
+            guard let origin=resolvedOrigin(anchor,geometry:geometry,windowTop:extent.top,totalHeight:extent.total) ??
                     targetOrigin(height:extent.total,map:map) else{return nil}
             return PresentationPosition(map:map,sourceGeometryRevision:source.geometryRevision,origin:origin,windowTop:extent.top,totalHeight:extent.total)
         }
     }
-    @discardableResult private func commit(_ request:PreviewRequest,geometry:HTMLPreviewGeometry,
-        position:PresentationPosition,reusesPixels:Bool=false)->Bool {
-        guard isCurrent(request) else{return false}
+    @discardableResult private func commit(_ request:PreviewRequest,frame:HTMLPreviewFrame,
+        position:PresentationPosition,requiresCurrent:Bool=true,preservePixels:Bool=false)->Bool {
+        if requiresCurrent {guard isCurrent(request) else{return false}}
+        guard frame.token==request.id,frame.revision==request.revision,frame.layoutID==request.layoutID else{return false}
         if isScrollMappingFrozen,coversSourceViewport,!needsWindowReplenishment,
            committed?.request.revision==request.revision {return false}
         if let source {
             guard source.contentRevision==request.revision,position.sourceGeometryRevision==source.geometryRevision,
                   covers(request.content,visible:source.visibleSourceRange) else{return false}
         }
-        let previousPresentation=committed
         #if DEBUG
-        if let previousPresentation,previousPresentation.request.revision != request.revision {
+        if let previousPresentation=committed,previousPresentation.request.revision != request.revision {
             crossRevisionCommitCount += 1
-            if reusesPixels {pixelReuseCommitCount += 1}
         }
         #endif
-        let preservesEditOrigin=previousPresentation.map{$0.request.revision != request.revision} ?? false
-        if preservesEditOrigin {
-            metadataPinnedOrigin=position.origin
-            metadataPinnedSourceOrigin=source?.viewportOrigin
-        } else if !reusesPixels {metadataPinnedOrigin=nil;metadataPinnedSourceOrigin=nil}
         CATransaction.begin();CATransaction.setDisableActions(true)
-        if !reusesPixels {
-            guard web.publishPendingFrame() else {CATransaction.commit();return false}
-            #if DEBUG
-            committedFrameID += 1
-            #endif
-        }
-        committed=CommittedPresentation(request:request,geometry:geometry,map:position.map,sourceGeometryRevision:position.sourceGeometryRevision,viewportHeight:bounds.height,windowTop:position.windowTop,totalHeight:position.totalHeight)
+        let previousPaintedOffset=surface.paintedViewportOffset
+        let nextPaintedOffset=position.windowTop+frame.scrollPoint.y-position.origin
+        web.publish(frame,preservePixels:preservePixels,
+            preservedImageOffsetY:preservePixels ? previousPaintedOffset-nextPaintedOffset:0)
+        #if DEBUG
+        committedFrameID += 1
+        #endif
+        committed=CommittedPresentation(request:request,geometry:frame.geometry,map:position.map,sourceGeometryRevision:position.sourceGeometryRevision,viewportHeight:bounds.height,windowTop:position.windowTop,totalHeight:position.totalHeight)
         desired=nil
         surface.size(contentHeight:position.totalHeight,windowTop:position.windowTop,width:request.width,viewportHeight:bounds.height)
-        moveClip(to:position.origin)
+        surface.publish(at:position.origin,paintedLocalOrigin:frame.scrollPoint.y)
+        independentOrigin=position.origin
         updateLoadingState()
         assert(!surface.clip.isHidden && !web.isHidden)
         CATransaction.commit()
         updateCommentAnchor(closeIfMissing:true)
         if let session=resizeSession,session.protectsViewport {
             session.previewOrigin=position.origin
+            if !session.isDragging {activity = .idle;resizeSession=nil}
         }
         #if DEBUG
         debugPresentationCommitted?()
@@ -757,7 +941,6 @@ private struct CommittedPresentation {
         preparePresentation()
     }
     func captureResizeAnchor()->(entryID:String?,displacement:CGFloat,origin:CGFloat) {
-        web.flush()
         let origin=surface.logicalOrigin
         guard let committed else{return(nil,0,origin)}
         let local=origin-committed.windowTop
@@ -768,56 +951,20 @@ private struct CommittedPresentation {
     }
     func beginResize(_ session:ViewportResizeSession) {
         resizeSession=session
-        metadataPinnedOrigin=nil;metadataPinnedSourceOrigin=nil
+        let anchor=captureViewportAnchor();activity = .resizing(anchor)
+        #if DEBUG
+        debugResizeAnchor=anchor
+        #endif
     }
     func finishResizeLayout() {
         guard let session=resizeSession,session.protectsViewport else{return}
         layoutSubtreeIfNeeded()
-        if committed?.request.width != bounds.width {requestPresentation()}
-        // The displayed engine has already reflowed to the final viewport
-        // during the drag. If its semantic content is unchanged, publish its
-        // new geometry and bitmap without remounting a second surface.
-        let reused=reuseResizedPresentation()
-        ResizeTrace.record(reused ? "preview.release.reused" : "preview.release.render",
-            "width=\(bounds.width) committed=\(committed?.request.width ?? -1) desired=\(desired?.width ?? -1)")
         session.isDragging=false
+        pendingFrame=nil
+        if committed?.request.width != bounds.width || desired?.width != bounds.width {requestPresentation()}
+        ResizeTrace.record("preview.release.render",
+            "width=\(bounds.width) committed=\(committed?.request.width ?? -1) desired=\(desired?.width ?? -1)")
         preparePresentation()
-    }
-    private func reuseResizedPresentation()->Bool {
-        guard rendering==nil,let request=desired,let previous=committed,
-              web.isEngineReady,
-              request.content==previous.request.content,
-              request.fontSize==previous.request.fontSize,
-              request.baseURL==previous.request.baseURL,
-              request.width==bounds.width,
-              web.bounds.width==bounds.width else{return false}
-        web.flush()
-        guard let geometry=web.geometry(),
-              abs(geometry.width-request.width)<1,
-              geometry.items.map(\.id)==request.entries.map(\.id),
-              let position=presentationPosition(request,geometry:geometry) else{return false}
-        rendering=request
-        let reused=commit(request,geometry:geometry,position:position,reusesPixels:true)
-        finishPreparation(request,keepDesired:!reused)
-        return reused
-    }
-    private func viewportDidResize() {
-        guard let session=resizeSession,session.protectsViewport,
-              let committed,let geometry=web.geometry() else{return}
-        let extent=previewExtent(committed.request,geometry)
-        if let id=session.previewEntryID,
-           let item=geometry.items.first(where:{$0.id==id}) {
-            session.previewOrigin=min(max(0,extent.total-bounds.height),
-                max(0,extent.top+item.y+session.previewDisplacement))
-        }
-        let origin=session.previewOrigin
-        surface.size(contentHeight:extent.total,windowTop:extent.top,
-            width:bounds.width,viewportHeight:bounds.height)
-        surface.scroll(to:origin)
-        self.committed=CommittedPresentation(request:committed.request,geometry:geometry,
-            map:committed.map,sourceGeometryRevision:committed.sourceGeometryRevision,
-            viewportHeight:bounds.height,windowTop:extent.top,totalHeight:extent.total)
-        updateCommentAnchor(closeIfMissing:false)
     }
     private func refreshMap() {
         guard let committed,let source,(committed.map == nil || committed.sourceGeometryRevision != source.geometryRevision || committed.viewportHeight != bounds.height) else{return}
@@ -828,7 +975,11 @@ private struct CommittedPresentation {
         guard let committed else{return}
         if let source,source.contentRevision != committed.request.revision {return}
         if !isScrollMappingFrozen {refreshMap()}
-        guard hasCurrentMap,let current=self.committed,let origin=targetOrigin(height:current.totalHeight,map:current.map) else{return}
+        guard hasCurrentMap,let current=self.committed else{return}
+        let anchored=idleAnchorLock.flatMap {
+            resolvedOrigin($0,geometry:current.geometry,windowTop:current.windowTop,totalHeight:current.totalHeight)
+        }
+        guard let origin=anchored ?? targetOrigin(height:current.totalHeight,map:current.map) else{return}
         moveClip(to:origin)
     }
     private func moveClip(to origin:CGFloat) {
@@ -859,7 +1010,7 @@ private struct CommittedPresentation {
     var debugIsIndependentlyScrolled:Bool {detachedSourceOrigin != nil}
     var debugSelectedCommentAnchor:NSRect? {selectedCommentAnchor}
     func debugScrollViewport(by delta:CGFloat) {
-        metadataPinnedOrigin=nil;metadataPinnedSourceOrigin=nil
+        idleAnchorLock=nil
         scrollPreview(to:independentOrigin+delta,detachFromSource:source != nil)
     }
     var debugFirstHeadingViewportY:CGFloat? {
@@ -880,13 +1031,15 @@ private struct CommittedPresentation {
               let expected=map.previewY(for:Double(source.viewportOrigin)) else{return nil}
         return CGFloat(expected)-surface.logicalOrigin
     }
+    var debugMapGeometryRevision:Int? {committed?.sourceGeometryRevision}
+    var debugMaximumOrigin:CGFloat {max(0,(committed?.totalHeight ?? bounds.height)-bounds.height)}
     func debugGeometry()->String {
         let visible=source?.visibleSourceRange
         let pendingVisible=committed?.request.content.entries.contains { entry in
             guard entry.fragment.kind == .pending,let visible else{return false}
             return NSIntersectionRange(entry.fragment.range,visible).length>0
         } ?? false
-        return "mounted=\(preparedFragmentCount), height=\(committed?.geometry.height ?? 0), desired=\(String(describing:desired?.id)), rendering=\(String(describing:rendering?.id)), measuredSource=\(source?.hasMeasuredLayout == true), sourceRevision=\(source?.contentRevision ?? -1), displayedRevision=\(displayedDocumentRevision), pendingVisible=\(pendingVisible), mapCurrent=\(hasCurrentMap), uncommitted=\(web.hasUncommittedPresentation), failures=\(presentationFailureCount), frame=\(committedFrameID), clip=\(clipOrigin), patches=\(patchCount), displayed=\(String(describing:displayedSourceRange)), visible=\(String(describing:visible))"
+        return "mounted=\(preparedFragmentCount), windowTop=\(committed?.windowTop ?? -1), total=\(committed?.totalHeight ?? -1), height=\(committed?.geometry.height ?? 0), desired=\(String(describing:desired?.id)), rendering=\(String(describing:rendering?.id)), contentRevision=\(content?.revision ?? -1), lastRevision=\(lastRevision), measuredSource=\(source?.hasMeasuredLayout == true), sourceRevision=\(source?.contentRevision ?? -1), displayedRevision=\(displayedDocumentRevision), detached=\(detachedSourceOrigin != nil), anchor=\(String(describing:idleAnchorLock)), pendingVisible=\(pendingVisible), mapCurrent=\(hasCurrentMap), uncommitted=\(web.hasUncommittedPresentation), failures=\(presentationFailureCount), frame=\(committedFrameID), clip=\(clipOrigin), patches=\(patchCount), displayed=\(String(describing:displayedSourceRange)), visible=\(String(describing:visible))"
     }
     #endif
     override func menu(for event:NSEvent)->NSMenu? {
