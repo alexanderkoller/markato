@@ -250,7 +250,7 @@ import PDFKit
                         fflush(nil);_exit(EXIT_SUCCESS)
                     }
                     let frame=controller.preview.committedFrameID
-                    controller.source.reveal(positions[index],alignTop:index==0)
+                    controller.source.reveal(positions[index],alignment:index==0 ? .top:.minimalReveal)
                     func awaitJump(_ remaining:Int) {
                         guard remaining>0 else{fail("Bounded jump did not publish: \(controller.preview.debugGeometry())")}
                         if controller.preview.coversSourceViewport && !controller.preview.isRenderingPresentation &&
@@ -332,7 +332,7 @@ import PDFKit
         func jump(_ index:Int,_ samples:[Double]) {
             guard index<positions.count else{completion(samples);return}
             let start=DispatchTime.now().uptimeNanoseconds,frame=controller.preview.committedFrameID
-            controller.source.reveal(positions[index],alignTop:true)
+            controller.source.reveal(positions[index],alignment:.top)
             func wait(_ remaining:Int) {
                 guard remaining>0 else{fail("Profile jump did not publish: \(controller.preview.debugGeometry())")}
                 if controller.preview.coversSourceViewport && !controller.preview.hasPendingPresentation &&
@@ -402,7 +402,7 @@ import PDFKit
                 publications.append(DispatchTime.now().uptimeNanoseconds);lastPoint=point
             }
             preview.previewView.debugDidDraw={draws.append(DispatchTime.now().uptimeNanoseconds)}
-            source.reveal(0,alignTop:true)
+            source.reveal(0,alignment:.top)
             wait(300,{abs(preview.visibleWebRange.lowerBound)<0.01 &&
                 preview.debugScrollMapError.map{abs($0)<1}==true},
                 "Preview did not reach the scroll benchmark start") {
@@ -475,7 +475,7 @@ import PDFKit
             if ready() {completion()}
             else {DispatchQueue.main.asyncAfter(deadline:.now()+0.01){wait(remaining-1,ready,failure,completion)}}
         }
-        controller.source.reveal(range.location,alignTop:true)
+        controller.source.reveal(range.location,alignment:.top)
         wait(500,{controller.hasPreparedDocument && preview.coversSourceViewport &&
             preview.previewView.debugCount("img[data-astra-delayed-src]")>0},
             "Bounded sample placeholder did not become ready") {
@@ -484,7 +484,7 @@ import PDFKit
             // Re-issue the semantic destination after installing the observer.
             // The first reveal is allowed to settle while the bounded window is
             // being mounted, before this test can observe its final scroll.
-            controller.source.reveal(range.location,alignTop:true)
+            controller.source.reveal(range.location,alignment:.top)
             wait(300,{preview.debugScrollMapError.map{abs($0)<0.01}==true &&
                 !preview.hasPendingPresentation &&
                 (publishedScrollPoint == nil ||
@@ -930,7 +930,7 @@ import PDFKit
         let introRange=(document.source.string as NSString).range(of:intro)
         check(introRange.location != NSNotFound,"Paragraph edit stability fixture is missing its introduction")
         let insertion=NSMaxRange(introRange)+2
-        controller.source.reveal(0,alignTop:true)
+        controller.source.reveal(0,alignment:.top)
         @MainActor func waitForStart(_ remaining:Int) {
             guard remaining>0 else{fail("Paragraph edit stability fixture did not settle")}
             guard controller.preview.lastRevision==document.revision,controller.preview.coversSourceViewport,
@@ -1036,7 +1036,7 @@ import PDFKit
             if controller.debugComments.count==2,controller.preview.lastRevision==document.revision,
                controller.preview.previewView.debugText.contains("Second commented paragraph") {
                 let middle=(document.source.string as NSString).range(of:"Middle paragraph.")
-                controller.source.reveal(0,alignTop:true)
+                controller.source.reveal(0,alignment:.top)
                 @MainActor func waitForPosition(_ positionRemaining:Int) {
                     guard positionRemaining>0 else{fail("Could not position the comment edit stability fixture")}
                     guard let y=controller.preview.debugParagraphViewportY(containing:"First commented paragraph"),
@@ -1132,6 +1132,9 @@ import PDFKit
         }
     }
     private static func verifyOutline(_ controller:EditorWindowController,document:MarkdownDocument) {
+        // Exercise the early-heading transition at the geometry that exposed
+        // an exact TextKit line-boundary hit in the sidebar selection.
+        controller.window?.setContentSize(NSSize(width:1900,height:1060))
         @MainActor func wait(_ remaining:Int,_ completion:@escaping()->Void) {
             guard remaining>0 else{fail("Outline did not settle: headings=\(controller.sidebar.debugHeadingCount), \(controller.preview.debugGeometry())")}
             if controller.sidebar.debugHeadingCount>80,controller.hasPreparedDocument,
@@ -1149,28 +1152,57 @@ import PDFKit
             check(controller.isSidebarVisible,"Sidebar toggle must reveal the outline")
             check(controller.sidebar.debugHeadingTitles.first=="Markato — a long example",
                 "Outline must use parser-produced plain heading titles")
-            let selected=controller.sidebar.debugHeading(containing:"Section 56")
-            check(controller.sidebar.debugActivateHeading(containing:"Section 56"),"Missing deep outline heading")
-            let expected=(document.source.string as NSString).range(of:"## Section 56 —").location
-            check(selected?.range.location==expected,
-                "Outline heading range is wrong: expected=\(expected), heading=\(String(describing:selected))")
-            @MainActor func waitForJump(_ remaining:Int) {
-                guard remaining>0 else{fail("Outline jump did not settle: \(controller.preview.debugGeometry())")}
-                if controller.source.visibleSourceRange.location<=expected,
-                   NSMaxRange(controller.source.visibleSourceRange)>expected,
-                   controller.preview.coversSourceViewport {
-                    check(!controller.preview.displaysCompleteDocument,
-                        "Background completion must retain a bounded preview presentation")
-                    controller.toggleSidebar(nil)
-                    check(!controller.isSidebarVisible,"Sidebar toggle must collapse the outline")
-                    controller.toggleSidebar(nil)
-                    check(controller.isSidebarVisible,"Sidebar toggle must restore the outline")
-                    print("OUTLINE INTEGRATION PASSED: semantic headings, complete background preview, deep jump, collapse and restore")
-                    fflush(nil);_exit(EXIT_SUCCESS)
+            @MainActor func verifyDeepJump() {
+                let selected=controller.sidebar.debugHeading(containing:"Section 56")
+                check(controller.sidebar.debugActivateHeading(containing:"Section 56"),"Missing deep outline heading")
+                let expected=(document.source.string as NSString).range(of:"## Section 56 —").location
+                check(selected?.range.location==expected,
+                    "Outline heading range is wrong: expected=\(expected), heading=\(String(describing:selected))")
+                @MainActor func waitForJump(_ remaining:Int) {
+                    guard remaining>0 else{fail("Deep outline jump did not settle: \(controller.preview.debugGeometry())")}
+                    if controller.source.visibleSourceRange.location<=expected,
+                       NSMaxRange(controller.source.visibleSourceRange)>expected,
+                       controller.preview.coversSourceViewport,
+                       let selected,
+                       controller.sidebar.debugSelectedHeadingID==selected.id,
+                       let sourceY=controller.source.debugRenderedViewportY(for:expected),
+                       let previewY=controller.preview.debugHeadingViewportY(containing:"Section 56"),
+                       abs(sourceY-controller.source.alignmentOffset)<1,
+                       abs(previewY-sourceY)<2 {
+                        check(!controller.preview.displaysCompleteDocument,
+                            "Background completion must retain a bounded preview presentation")
+                        controller.toggleSidebar(nil)
+                        check(!controller.isSidebarVisible,"Sidebar toggle must collapse the outline")
+                        controller.toggleSidebar(nil)
+                        check(controller.isSidebarVisible,"Sidebar toggle must restore the outline")
+                        print("OUTLINE INTEGRATION PASSED: early and deep headings, shared reading-anchor jump, stable selection, bounded preview, collapse and restore")
+                        fflush(nil);_exit(EXIT_SUCCESS)
+                    }
+                    DispatchQueue.main.asyncAfter(deadline:.now()+0.01){waitForJump(remaining-1)}
                 }
-                DispatchQueue.main.asyncAfter(deadline:.now()+0.01){waitForJump(remaining-1)}
+                waitForJump(500)
             }
-            waitForJump(500)
+            let early=controller.sidebar.debugHeading(containing:"A few expressions")
+            check(controller.sidebar.debugActivateHeading(containing:"A few expressions"),"Missing early outline heading")
+            let expectedEarly=(document.source.string as NSString).range(of:"## A few expressions").location
+            check(early?.range.location==expectedEarly,
+                "Early outline heading range is wrong: expected=\(expectedEarly), heading=\(String(describing:early))")
+            @MainActor func waitForEarlyJump(_ remaining:Int) {
+                guard remaining>0 else {
+                    fail("Early outline selection did not settle: selected=\(String(describing:controller.sidebar.debugSelectedHeadingID)), expected=\(String(describing:early?.id)), anchor=\(controller.source.alignmentAnchor), heading=\(expectedEarly), \(controller.preview.debugGeometry())")
+                }
+                if controller.preview.coversSourceViewport,
+                   let early,
+                   controller.sidebar.debugSelectedHeadingID==early.id,
+                   let sourceY=controller.source.debugRenderedViewportY(for:expectedEarly),
+                   let previewY=controller.preview.debugHeadingViewportY(containing:"A few expressions"),
+                   abs(sourceY-controller.source.alignmentOffset)<1,
+                   abs(previewY-sourceY)<2 {
+                    verifyDeepJump();return
+                }
+                DispatchQueue.main.asyncAfter(deadline:.now()+0.01){waitForEarlyJump(remaining-1)}
+            }
+            waitForEarlyJump(500)
         }
     }
     private static func verifyComments(_ controller:EditorWindowController,document:MarkdownDocument) {
@@ -1963,7 +1995,7 @@ import PDFKit
     private static func continueAfterTopResize(_ controller:EditorWindowController,document:MarkdownDocument,
         startupCount:Int,wait:@escaping(Int,@escaping()->Bool,String,@escaping()->Void)->Void) {
         let preview=controller.preview,source=controller.source
-            source.reveal(document.source.count,alignTop:false)
+            source.reveal(document.source.count,alignment:.minimalReveal)
             wait(800,{controller.hasPreparedDocument && preview.coversSourceViewport && !preview.isShowingLoadingState &&
                 preview.displayedSourceRange.map{NSMaxRange($0)>=document.source.count-1}==true},
                 "A cached deep jump did not publish") {
@@ -1979,7 +2011,7 @@ import PDFKit
                     "An edit must retain the committed preview without flashing the loading layer")
                 check(preview.committedFrameID==retainedFrame,
                     "An edit must leave the committed frame visible while its replacement prepares")
-                source.reveal(document.source.count,alignTop:false)
+                source.reveal(document.source.count,alignment:.minimalReveal)
                 wait(800,{document.revision==transientRevision && preview.lastRevision==transientRevision &&
                     preview.previewView.debugText.contains("TRANSIENT_PARSE_EDIT")},"Transient parser failure did not recover") {
                     check(preview.crossRevisionCommitCount>crossRevisionCommits,
@@ -1990,7 +2022,7 @@ import PDFKit
                     let retainedRevision=preview.displayedDocumentRevision,repeatedRevision=document.revision+1
                     document.parser.debugFailNextRequests(2)
                     document.replace(NSRange(location:document.source.count,length:0),with:"\n\n## REPEATED_PARSE_EDIT\n\nRecovered manually.\n")
-                    source.reveal(document.source.count,alignTop:false)
+                    source.reveal(document.source.count,alignment:.minimalReveal)
                     wait(800,{controller.isShowingParseError},"Repeated parser failure did not expose Retry") {
                         check(preview.displayedDocumentRevision==retainedRevision,
                             "Repeated parser failure must retain the last successful preview revision")
@@ -2011,7 +2043,7 @@ import PDFKit
         wait:@escaping(Int,@escaping()->Bool,String,@escaping()->Void)->Void,completion:@escaping()->Void) {
         guard let window=controller.window else{fail("Missing resize regression window")}
         let source=controller.source,preview=controller.preview
-        source.reveal(0,alignTop:true)
+        source.reveal(0,alignment:.top)
         window.contentView?.layoutSubtreeIfNeeded();window.displayIfNeeded()
         let beforeNoMotionX=source.debugTextViewportX
         controller.windowWillStartLiveResize(Notification(name:NSWindow.willStartLiveResizeNotification,object:window))
@@ -2197,7 +2229,7 @@ import PDFKit
         let preview=controller.preview,source=controller.source,following="Recovered manually."
         let location=(document.source.string as NSString).range(of:following).location
         guard location != NSNotFound else{fail("Missing paragraph insertion fixture")}
-        source.reveal(location,alignTop:true)
+        source.reveal(location,alignment:.top)
         wait(800,{preview.coversSourceViewport && preview.debugParagraphViewportY(containing:following) != nil},
             "The following paragraph was not visible before insertion") {
             let retainedFrame=preview.committedFrameID
@@ -2272,7 +2304,7 @@ import PDFKit
     private static func verifyTypingStability(_ controller:EditorWindowController,document:MarkdownDocument,
         wait:@escaping(Int,@escaping()->Bool,String,@escaping()->Void)->Void,completion:@escaping()->Void) {
         let preview=controller.preview,source=controller.source
-        source.reveal(document.source.count,alignTop:false)
+        source.reveal(document.source.count,alignment:.minimalReveal)
         source.textView.setSelectedRange(NSRange(location:document.source.count,length:0))
         let characters=Array(" flickercheck")
         var expected=""
@@ -2315,7 +2347,7 @@ import PDFKit
                 preview.lastRevision==document.revision},
                 "Edited document did not finish background measurement before cached navigation (\(controller.debugPreparationState))") {
                 let completeFrame=preview.committedFrameID
-                source.reveal(0,alignTop:true)
+                source.reveal(0,alignment:.top)
                 wait(800,{preview.coversSourceViewport && preview.previewView.debugText.contains("Markato")},
                     "Return to the cached first viewport failed") {
                     check(!preview.displaysCompleteDocument,

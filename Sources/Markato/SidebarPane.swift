@@ -267,6 +267,7 @@ import MarkdownCore
     #if DEBUG
     var debugHeadingCount:Int {ordered.count}
     var debugHeadingTitles:[String] {ordered.map{$0.heading.title}}
+    var debugSelectedHeadingID:BlockID? {(outline.item(atRow:outline.selectedRow) as? Node)?.heading.id}
     var debugCommentCount:Int {allComments.count}
     var debugVisibleCommentCount:Int {comments.count}
     var debugCommentSnippets:[String] {comments.map(snippet)}

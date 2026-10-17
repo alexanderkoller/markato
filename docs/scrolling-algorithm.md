@@ -230,6 +230,12 @@ gesture end, deferred work is positioned against that final location; no
 gesture-start position may be restored. A preview scroll may move independently
 until the source moves again or the document revision changes.
 
+Activating an outline heading places that heading at this same reading
+position in both panes. It is centered in the document interior and follows
+the same continuous top- and bottom-alignment transitions near the document
+boundaries. The outline's active row is derived from that shared position, so
+the clicked heading remains active after viewport synchronization.
+
 ### Mapping algorithm
 
 The map is built from stable block landmarks. Each point pairs a source

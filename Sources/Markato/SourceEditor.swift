@@ -121,6 +121,17 @@ final class SourceTextView:NSTextView {
 
 /// One retained Swift document tree. Navigation never reloads text or invents geometry.
 final class SourceEditor:NSView,NSTextViewDelegate,NSTextStorageDelegate,ScrollSource {
+    enum NavigationAlignment {
+        case minimalReveal
+        case top
+        case readingAnchor
+    }
+
+    private struct NavigationRequest {
+        let offset:Int
+        let alignment:NavigationAlignment
+    }
+
     let scroll:NSScrollView=SourceScrollView()
     let canvas=FlippedView()
     let textView=SourceTextView(usingTextLayoutManager:false)
@@ -141,8 +152,8 @@ final class SourceEditor:NSView,NSTextViewDelegate,NSTextStorageDelegate,ScrollS
     private var nativeLayoutRevision:Int?
     private var layoutCompletionScheduled=false
     private var layoutCompletionPaused=false
-    private var pendingNavigation:(offset:Int,alignTop:Bool)?
-    private var retainedNavigationPin:(offset:Int,alignTop:Bool)?
+    private var pendingNavigation:NavigationRequest?
+    private var retainedNavigationPin:NavigationRequest?
     private var observations=[NSObjectProtocol]()
     var resizeSession:ViewportResizeSession?
     private var highlightedRanges=[NSRange]()
@@ -205,7 +216,12 @@ final class SourceEditor:NSView,NSTextViewDelegate,NSTextStorageDelegate,ScrollS
     var selection:NSRange {textView.selectedRange()}
     var documentRange:NSRange {NSRange(location:0,length:document.source.count)}
     var viewportAnchor:Int {renderedViewportAnchor}
-    var alignmentAnchor:Int {renderedOffset(atCanvasY:scroll.contentView.bounds.minY+alignmentOffset)}
+    var alignmentAnchor:Int {
+        // The shared reading position may coincide exactly with the top of a
+        // visual line. Sample just inside that line so TextKit cannot resolve
+        // the boundary to the preceding line and therefore the prior heading.
+        renderedOffset(atCanvasY:scroll.contentView.bounds.minY+alignmentOffset+2)
+    }
     var visibleSourceRange:NSRange {
         if !initialStylesReady {return NSRange(location:0,length:0)}
         let top=scroll.contentView.bounds.minY,bottom=top+scroll.contentSize.height
@@ -638,7 +654,7 @@ final class SourceEditor:NSView,NSTextViewDelegate,NSTextStorageDelegate,ScrollS
         guard prefixEnd==0 || !prepared.sourceLayout.hasEstimates(in:NSRange(location:0,length:prefixEnd)) else{return}
         pendingNavigation=nil
         retainedNavigationPin=nil
-        performNavigation(to:request.offset,alignTop:request.alignTop)
+        performNavigation(request)
     }
     func verticalPosition(for offset:Int)->CGFloat? {
         // EOF has no glyph. Its coordinate is the explicit document boundary.
@@ -952,7 +968,7 @@ final class SourceEditor:NSView,NSTextViewDelegate,NSTextStorageDelegate,ScrollS
             }
         }
     }
-    func reveal(_ offset:Int,alignTop:Bool=false) {
+    func reveal(_ offset:Int,alignment:NavigationAlignment = .minimalReveal) {
         clearResizePin()
         endScrollGesture()
         let position=min(max(0,offset),document.source.count)
@@ -969,15 +985,19 @@ final class SourceEditor:NSView,NSTextViewDelegate,NSTextStorageDelegate,ScrollS
                 length:max(1,min(1024,document.source.count-localStart))))
         }
         pendingNavigation=nil
-        // Navigation is immediate, but its semantic destination remains
-        // pinned until the retained prefix becomes exact. This prevents the
-        // final canvas-height correction from moving EOF after Cmd-End.
-        retainedNavigationPin=hasEstimatedPrefix ? (position,alignTop):nil
-        performNavigation(to:position,alignTop:alignTop)
+        // Navigation is immediate, but its semantic destination and alignment
+        // remain pinned until the retained prefix becomes exact. This keeps an
+        // outline target or EOF fixed through later canvas-height correction.
+        let request=NavigationRequest(offset:position,alignment:alignment)
+        retainedNavigationPin=hasEstimatedPrefix ? request:nil
+        performNavigation(request)
         scheduleLayoutCompletion()
     }
-    private func performNavigation(to position:Int,alignTop:Bool) {
-        if !alignTop {textView.setSelectedRange(NSRange(location:position,length:0))}
+    private func performNavigation(_ request:NavigationRequest) {
+        let position=request.offset
+        if request.alignment == .minimalReveal {
+            textView.setSelectedRange(NSRange(location:position,length:0))
+        }
         var correctedDocumentExtent=false
         if position==document.source.count,position>0,
            let lastY=renderedVerticalPosition(for:position-1) {
@@ -997,8 +1017,17 @@ final class SourceEditor:NSView,NSTextViewDelegate,NSTextStorageDelegate,ScrollS
         else if position==document.source.count {scroll.contentView.scroll(to:NSPoint(x:0,y:max(0,canvas.bounds.height-scroll.contentSize.height)))}
         else if let y=renderedVerticalPosition(for:position) {
             let target=NSRect(x:textView.textContainerInset.width,y:y,width:1,height:1)
-            if alignTop {scroll.contentView.scroll(to:NSPoint(x:0,y:y))}
-            else {canvas.scrollToVisible(target.insetBy(dx:0,dy:-30))}
+            switch request.alignment {
+            case .minimalReveal:
+                canvas.scrollToVisible(target.insetBy(dx:0,dy:-30))
+            case .top:
+                scroll.contentView.scroll(to:NSPoint(x:0,y:y))
+            case .readingAnchor:
+                let origin=ScrollLandmarks.viewportOrigin(for:Double(y),
+                    sourceHeight:Double(canvas.bounds.height),
+                    viewportHeight:Double(scroll.contentSize.height))
+                scroll.contentView.scroll(to:NSPoint(x:0,y:CGFloat(origin)))
+            }
         }
         scroll.reflectScrolledClipView(scroll.contentView);changingLayout=false
         if correctedDocumentExtent {geometryChanged?()}

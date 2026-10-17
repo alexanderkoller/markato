@@ -248,7 +248,7 @@ final class EditorWindowController: NSWindowController, NSSplitViewDelegate, NSS
         NotificationCenter.default.addObserver(self,selector:#selector(contentResized(_:)),name:NSView.frameDidChangeNotification,object:content)
         sidebar.activateHeading = { [weak self] id,focusSource in
             guard let self,let heading=self.preparedDocument.heading(id:id) else{return}
-            self.source.reveal(heading.range.location,alignTop:true)
+            self.source.reveal(heading.range.location,alignment:.readingAnchor)
             if focusSource {self.window?.makeFirstResponder(self.source.textView)}
         }
         sidebar.activateComment = { [weak self] id,focusSource in self?.revealComment(id,focusSource:focusSource) }
@@ -338,7 +338,7 @@ final class EditorWindowController: NSWindowController, NSSplitViewDelegate, NSS
         // Materialize TextKit only after the pane and its scroll view have
         // their actual sizes. A zero-width initial layout wraps every character.
         content.layoutSubtreeIfNeeded()
-        source.reveal(0,alignTop:true);window.makeFirstResponder(source.textView)
+        source.reveal(0,alignment:.top);window.makeFirstResponder(source.textView)
         scheduleCommentRefresh(force:true)
     }
     required init?(coder:NSCoder) { fatalError() }
