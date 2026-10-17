@@ -171,12 +171,12 @@ viewport tops. Every intermediate layout resolves those same anchors, so the
 top visible content remains at the same painted coordinate while wrapping and
 document origins change.
 
-Ordinary center-aligned source-to-preview mapping is suspended for the entire
+Ordinary reading-aligned source-to-preview mapping is suspended for the entire
 session. Mouse-up does not end the anchoring rule: the same session survives
 final TextKit measurement, final bounded Ultralight layout, and completed
 background-geometry publication. It is released only by genuine
 source movement or a document revision; the next source movement resumes
-ordinary center alignment. Mouse-up must therefore produce no viewport
+ordinary reading alignment. Mouse-up must therefore produce no viewport
 correction.
 
 Each published resize frame is one coherent width, geometry, mapping,

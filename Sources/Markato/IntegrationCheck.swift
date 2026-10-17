@@ -1858,7 +1858,7 @@ import PDFKit
                     controller.source.debugScrollViewport(by:80)
                     wait(300,{preview.clipOrigin != releaseOrigin &&
                         preview.debugScrollMapError.map{abs($0)<0.01}==true},
-                        "The next source movement did not release resize anchoring and resume center alignment") {
+                        "The next source movement did not release resize anchoring and resume reading alignment") {
                         print("PREVIEW REWRAP PASSED: native 60 Hz window-resize motion produced \(commitsDuringMotion) coherent commits and \(drawsOfCommittedFrames) draws; the source stayed exact, the visible formula stayed within subpixel scroll quantization, and mouse-up caused zero pixel displacement")
                         fflush(stdout);_exit(EXIT_SUCCESS)
                     }
@@ -2190,12 +2190,12 @@ import PDFKit
                     if range.location==NSNotFound {break}
                     let offset=NSMaxRange(range)
                     if let y=source.debugRenderedViewportY(for:offset) {
-                        candidates.append((offset,abs(y-source.bounds.height/2)))
+                        candidates.append((offset,abs(y-source.alignmentOffset)))
                     }
                     cursor=max(cursor+1,offset)
                 }
                 guard let insertion=candidates.min(by:{$0.distance<$1.distance})?.offset else {
-                    fail("Missing centered paragraph boundary")
+                    fail("Missing paragraph boundary at the reading anchor")
                 }
                 let beforeClick=source.viewportOrigin
                 source.debugClickInsertionPoint(at:insertion)
@@ -2208,7 +2208,7 @@ import PDFKit
                     let sourceY=source.debugRenderedViewportY(for:insertion)
                     let previewY=preview.debugParagraphViewportY(containing:"What's")
                     check(sourceY.flatMap{a in previewY.map{abs(a-$0)<32}}==true,
-                        "Typed paragraph is not visually center-aligned (source \(String(describing:sourceY)), preview \(String(describing:previewY)), mapError \(String(describing:preview.debugScrollMapError)), \(preview.debugGeometry()))")
+                        "Typed paragraph is not visually reading-aligned (source \(String(describing:sourceY)), preview \(String(describing:previewY)), mapError \(String(describing:preview.debugScrollMapError)), \(preview.debugGeometry()))")
                     DispatchQueue.main.asyncAfter(deadline:.now()+0.2) {
                         window.contentView?.layoutSubtreeIfNeeded();window.displayIfNeeded()
                         let settledSourceY=source.debugRenderedViewportY(for:insertion)

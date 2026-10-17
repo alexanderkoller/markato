@@ -54,7 +54,7 @@ final class ScrollLandmarksTests:XCTestCase {
         XCTAssertNil(map.previewY(for:.infinity))
         XCTAssertNil(ScrollLandmarks([]).previewY(for:0))
     }
-    func testMidpointReferenceAndInverseForShortAndLongDocuments() {
+    func testReadingAnchorReferenceAndInverseForShortAndLongDocuments() {
         for height in [600.0,1000,2000,8000] {
             let viewport=760.0,end=max(0,height-viewport)
             for step in 0...100 {
@@ -64,7 +64,8 @@ final class ScrollLandmarksTests:XCTestCase {
             }
             XCTAssertEqual(ScrollLandmarks.alignmentOffset(at:0,sourceHeight:height,viewportHeight:viewport),0,accuracy:1e-8)
             if end>0 {
-                XCTAssertEqual(ScrollLandmarks.alignmentOffset(at:end/2,sourceHeight:height,viewportHeight:viewport),viewport/2,accuracy:1e-8)
+                XCTAssertEqual(ScrollLandmarks.alignmentOffset(at:end/2,sourceHeight:height,viewportHeight:viewport),
+                    viewport*ScrollLandmarks.readingAnchorFraction,accuracy:1e-8)
                 XCTAssertEqual(ScrollLandmarks.alignmentOffset(at:end,sourceHeight:height,viewportHeight:viewport),viewport,accuracy:1e-8)
             }
         }

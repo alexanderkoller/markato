@@ -15,7 +15,7 @@ At any moment, one operation determines the preview position:
 - an explicit jump.
 
 Two operations must never correct the viewport at the same time. In
-particular, resize anchoring suspends ordinary center alignment, and delayed
+particular, resize anchoring suspends ordinary reading alignment, and delayed
 layout compensation must not restore a position captured before a scroll
 gesture. A new explicit navigation action replaces the current owner. Passive
 geometry publication preserves the current owner's anchor; if a resource
@@ -218,10 +218,11 @@ supersession discards that work and retains the committed presentation.
 Source movement normally owns synchronized navigation. The committed mapping
 converts the source reading position to the corresponding preview reading
 position. Near the document boundaries, that reading position transitions
-between the viewport top, center, and bottom so both panes can reach their true
-ends. In the document interior, the panes are center-aligned.
+between the viewport top, the upper golden-ratio division about 38.2 percent
+from the top, and the viewport bottom so both panes can reach their true ends.
+In the document interior, the panes are aligned at that golden-ratio position.
 
-This center-alignment rule applies only to ordinary source movement. It does
+This reading-alignment rule applies only to ordinary source movement. It does
 not apply while resize anchoring or delayed-height compensation owns the
 viewport.
 
@@ -231,18 +232,20 @@ gesture-start position may be restored. A preview scroll may move independently
 until the source moves again or the document revision changes.
 
 Activating an outline heading places that heading at this same reading
-position in both panes. It is centered in the document interior and follows
-the same continuous top- and bottom-alignment transitions near the document
-boundaries. The outline's active row is derived from that shared position, so
-the clicked heading remains active after viewport synchronization.
+position in both panes. It sits at the upper golden-ratio division in the
+document interior and follows the same continuous top- and bottom-alignment
+transitions near the document boundaries. The outline's active row is derived
+from that shared position, so the clicked heading remains active after
+viewport synchronization.
 
 ### Mapping algorithm
 
 The map is built from stable block landmarks. Each point pairs a source
 passage Y with the corresponding global preview Y. Exact document boundaries
 are added as endpoints. Before interpolation, each passage point is converted
-to the viewport origin that produces top alignment near the beginning, center
-alignment through the interior, and bottom alignment near the end. Alignment
+to the viewport origin that produces top alignment near the beginning,
+golden-ratio reading alignment through the interior, and bottom alignment near
+the end. Alignment
 is therefore encoded once in the map rather than subtracted after lookup.
 
 The points are ordered by source Y and forced to be monotone in preview Y.
@@ -354,7 +357,7 @@ preview block at the viewport top, together with their exact viewport
 displacements. Both panes retain that same session.
 
 At every intermediate width, TextKit and Ultralight reflow independently and
-each pane resolves its saved anchor. Ordinary center-aligned synchronization is
+each pane resolves its saved anchor. Ordinary reading-aligned synchronization is
 suspended. The source clip rejects incidental AppKit origin corrections while
 protected; the preview uses the normal asynchronous publication path. A
 completed coherent width may be displayed while a newer width remains queued,
@@ -430,7 +433,7 @@ Automated checks must exercise the behavior, not merely helper calculations:
   fixed to the exact device-pixel row;
 - no movement on mouse-up, final-width layout, or completed-geometry publication;
 - the next genuine source movement releasing the resize anchor and restoring
-  center alignment;
+  golden-ratio reading alignment;
 - top, middle, bottom, fractional-origin, stale-result, and failure cases;
 - rejection of wrong revision, render token, content version, layout ID, and
   source geometry revision;

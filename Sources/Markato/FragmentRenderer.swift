@@ -495,7 +495,7 @@ private struct PendingPreviewFrame {
         guard content != next || committed?.request.content != next else{updateLoadingState();return}
         if let committed,committed.request.revision != revision {
             // Every edit abandons resize anchoring and publishes a fresh
-            // center-aligned map, even when the HTML pixels are unchanged.
+            // reading-aligned map, even when the HTML pixels are unchanged.
             clearResizePin();clearIdleAnchorLock();endScrollGesture()
         }
         content=next;requestPresentation();updateLoadingState()
@@ -827,21 +827,21 @@ private struct PendingPreviewFrame {
         case .synchronized(let source):
             if detachedSourceOrigin != nil || source.contentHeight<=bounds.height+0.001 {target=independentOrigin}
             else {
-                guard let map,let origin=centerAlignedOrigin(height:height,map:map,source:source) else{return nil}
+                guard let map,let origin=readingAlignedOrigin(height:height,map:map,source:source) else{return nil}
                 return origin
             }
         }
         return min(max(0,height-bounds.height),max(0,target))
     }
-    /// The single source of truth for center alignment. Ordinary scrolling and
+    /// The single source of truth for reading alignment. Ordinary scrolling and
     /// edit commits both map the source viewport through this exact function.
-    private func centerAlignedOrigin(height:CGFloat,map:ScrollLandmarks,source:ScrollSource)->CGFloat? {
+    private func readingAlignedOrigin(height:CGFloat,map:ScrollLandmarks,source:ScrollSource)->CGFloat? {
         guard let y=map.previewY(for:Double(source.viewportOrigin)) else{return nil}
         return min(max(0,height-bounds.height),max(0,CGFloat(y)))
     }
     /// A live resize owns the viewport. Reflow may move every block below the
     /// pinned one, but the first visible block keeps its viewport position.
-    /// Center alignment is deliberately suspended until the gesture ends.
+    /// Reading alignment is deliberately suspended until the gesture ends.
     private func pinnedResizeOrigin(geometry:HTMLPreviewGeometry,windowTop:CGFloat,totalHeight:CGFloat)->CGFloat? {
         guard let session=resizeSession,session.protectsViewport else{return nil}
         let end=max(0,totalHeight-bounds.height)

@@ -14,6 +14,8 @@ public struct ScrollLandmark: Equatable, Sendable {
 /// A monotone piecewise-linear position map. The preview maps
 /// viewport origins, so no changing alignment term is subtracted afterward.
 public struct ScrollLandmarks: Sendable {
+    /// The upper golden-ratio division shared by source and preview.
+    public static let readingAnchorFraction=(3-sqrt(5.0))/2
     public private(set) var points:[ScrollLandmark]
     public init(_ input:[ScrollLandmark]) {
         var result=[ScrollLandmark]()
@@ -47,25 +49,26 @@ public struct ScrollLandmarks: Sendable {
         let a=points[index],b=points[index+1]
         return (b.previewY-a.previewY)/(b.sourceY-a.sourceY)
     }
-    /// Solve passageY = viewportY + top/midpoint/bottom alignment once per
+    /// Solve passageY = viewportY + top/reading-anchor/bottom alignment once per
     /// reference. Interpolation then operates entirely on viewport origins.
     public static func alignmentOffset(at sourceY:Double,sourceHeight:Double,viewportHeight:Double)->Double {
         let viewport=max(1,viewportHeight),end=max(0,sourceHeight-viewport)
         guard end>0 else{return 0}
-        let band=min(viewport,end/2)
+        let band=min(viewport,end/2),anchor=viewport*readingAnchorFraction
         let top=min(1,max(0,sourceY/band))
         let bottom=min(1,max(0,(sourceY-end+band)/band))
-        return (top+bottom)*viewport/2
+        return top*anchor+bottom*(viewport-anchor)
     }
     public static func viewportOrigin(for passageY:Double,sourceHeight:Double,viewportHeight:Double)->Double {
         let viewport=max(1,viewportHeight),end=max(0,sourceHeight-viewport)
         guard end>0 else{return 0}
-        let band=min(viewport,end/2),gain=1+viewport/(2*band)
-        let topEnd=band+viewport/2,bottomStart=end-band+viewport/2
+        let band=min(viewport,end/2),anchor=viewport*readingAnchorFraction
+        let topGain=1+anchor/band,bottomGain=1+(viewport-anchor)/band
+        let topEnd=band+anchor,bottomStart=end-band+anchor
         let origin:Double
-        if passageY<topEnd {origin=passageY/gain}
-        else if passageY<=bottomStart {origin=passageY-viewport/2}
-        else {origin=(passageY-viewport/2+(gain-1)*(end-band))/gain}
+        if passageY<topEnd {origin=passageY/topGain}
+        else if passageY<=bottomStart {origin=passageY-anchor}
+        else {origin=(passageY-anchor+(bottomGain-1)*(end-band))/bottomGain}
         return min(end,max(0,origin))
     }
     public func viewportMap(sourceHeight:Double,viewportHeight:Double,previewHeight:Double)->ScrollLandmarks {
