@@ -208,7 +208,11 @@ func exportProfileRecording(_ path:UnsafePointer<CChar>) {
         if launchConfiguration.opensSample || (checking && !checkingStartup) {
             let document=MarkdownDocument()
             #if DEBUG
-            document.setInitialText(checkingEmptyEdits ? "" : Self.sample)
+            let profileDocument=CommandLine.arguments
+                .first(where:{$0.hasPrefix("--integration-profile-document=")})
+                .map{String($0.dropFirst("--integration-profile-document=".count))}
+                .flatMap{try? String(contentsOfFile:$0,encoding:.utf8)}
+            document.setInitialText(profileDocument ?? (checkingEmptyEdits ? "" : Self.sample))
             #else
             document.setInitialText(Self.sample)
             #endif

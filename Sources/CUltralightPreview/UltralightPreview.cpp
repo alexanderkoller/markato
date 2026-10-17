@@ -123,6 +123,100 @@ struct AstraULSurface {
   std::vector<PendingImage> delayed_images;
   std::unordered_set<std::string> dirty_entries;
   double pending_font_size = 14;
+  dom::Node resize_anchor_node;
+  size_t resize_anchor_offset = 0;
+  double resize_anchor_target_viewport_y = 0;
+  bool has_resize_anchor = false;
+
+  size_t text_length(const dom::Node& node) const {
+    const std::string text = node.nodeValue;
+    return String(text.c_str(), text.size()).utf16().length();
+  }
+
+  bool capture_text_anchor(const dom::Node& node) {
+    // KaTeX places its clipped, 1x1 accessibility MathML tree before the
+    // painted HTML tree. Its text has a DOM rectangle, but that rectangle is
+    // not the glyph position users see and does not reflow like the painted
+    // formula. A visual resize anchor must therefore come from katex-html.
+    if (node.nodeType() == dom::NodeType::Element &&
+        node.AsElement().matches(".katex-mathml")) return false;
+    if (node.nodeType() == dom::NodeType::Text) {
+      const size_t length = text_length(node);
+      if (length == 0) return false;
+      auto range = document.createRange();
+      range.setStart(node, 0);
+      range.setEnd(node, length);
+      const auto whole = range.getBoundingClientRect();
+      if (whole.width <= 0 || whole.height <= 0 || whole.bottom() <= 0) return false;
+      // Character rectangles are vertically monotonic within a text node.
+      // Locate the first visible character without scanning a potentially
+      // very large paragraph one UTF-16 unit at a time.
+      size_t low = 0, high = length;
+      while (low < high) {
+        const size_t middle = low + (high - low) / 2;
+        range.setStart(node, middle);
+        range.setEnd(node, middle + 1);
+        if (range.getBoundingClientRect().bottom() > 0) high = middle;
+        else low = middle + 1;
+      }
+      while (low < length) {
+        range.setStart(node, low);
+        range.setEnd(node, low + 1);
+        const auto candidate = range.getBoundingClientRect();
+        if (candidate.height > 0 && candidate.width > 0 && candidate.bottom() > 0) break;
+        ++low;
+      }
+      if (low >= length) return false;
+      range.setStart(node, low);
+      range.setEnd(node, low + 1);
+      const auto rect = range.getBoundingClientRect();
+      resize_anchor_node = node;
+      resize_anchor_offset = low;
+      resize_anchor_target_viewport_y = rect.y;
+      has_resize_anchor = true;
+      return true;
+    }
+    for (auto child = node.firstChild(); child; child = child.nextSibling())
+      if (capture_text_anchor(child)) return true;
+    return false;
+  }
+
+  bool capture_resize_anchor() {
+    has_resize_anchor = false;
+    for (const auto& entry : entries) {
+      const auto rect = entry.element.getBoundingClientRect();
+      if (rect.bottom() <= 0) continue;
+      if (capture_text_anchor(entry.element)) return true;
+    }
+    return false;
+  }
+
+  bool resize_anchor_scroll_y(double* value) {
+    if (!has_resize_anchor || !resize_anchor_node.isConnected()) return false;
+    const size_t length = text_length(resize_anchor_node);
+    if (resize_anchor_offset >= length) return false;
+    auto range = document.createRange();
+    range.setStart(resize_anchor_node, resize_anchor_offset);
+    range.setEnd(resize_anchor_node, resize_anchor_offset + 1);
+    const auto rect = range.getBoundingClientRect();
+    if (rect.height <= 0 || rect.width <= 0) return false;
+    if (value) *value = std::max(0.0, document.defaultView().scrollY()
+        + rect.y - resize_anchor_target_viewport_y);
+    return true;
+  }
+
+  bool resize_anchor_viewport_y(double* value) {
+    if (!has_resize_anchor || !resize_anchor_node.isConnected()) return false;
+    const size_t length = text_length(resize_anchor_node);
+    if (resize_anchor_offset >= length) return false;
+    auto range = document.createRange();
+    range.setStart(resize_anchor_node, resize_anchor_offset);
+    range.setEnd(resize_anchor_node, resize_anchor_offset + 1);
+    const auto rect = range.getBoundingClientRect();
+    if (rect.height <= 0 || rect.width <= 0) return false;
+    if (value) *value = rect.y;
+    return true;
+  }
 
   std::string owner_of(dom::Element element) const {
     for (auto current = element; current; current = current.parentElement()) {
@@ -274,9 +368,9 @@ struct AstraULSurface {
     pending.clear();
     auto html = document.documentElement();
     html.setAttribute("style", "font-size:" + std::to_string(pending_font_size) + "px");
-    // Hidden alternating surfaces are not driven by a display loop. Force
-    // this DOM revision to paint before its bitmap can be published.
-    view->set_needs_paint(true);
+    // Advance style and layout so callers can measure the committed DOM.
+    // The visible surface forces exactly one full paint immediately before it
+    // captures this revision; measurement-only surfaces need no bitmap.
     render();
     return true;
   }
@@ -390,6 +484,33 @@ bool astra_ul_surface_scroll(AstraULSurface* surface, double x, double y) {
 double astra_ul_surface_scroll_y(AstraULSurface* surface) {
   if (!surface) return 0;
   return surface->document.defaultView().scrollY();
+}
+
+bool astra_ul_surface_capture_resize_anchor(AstraULSurface* surface) {
+  return surface && surface->capture_resize_anchor();
+}
+
+bool astra_ul_surface_resize_anchor_scroll_y(AstraULSurface* surface,
+                                             double* scroll_y) {
+  return surface && surface->resize_anchor_scroll_y(scroll_y);
+}
+
+bool astra_ul_surface_resize_anchor_viewport_y(AstraULSurface* surface,
+                                               double* viewport_y) {
+  return surface && surface->resize_anchor_viewport_y(viewport_y);
+}
+
+bool astra_ul_surface_resize_anchor_target_viewport_y(AstraULSurface* surface,
+                                                      double* viewport_y) {
+  if (!surface || !surface->has_resize_anchor) return false;
+  if (viewport_y) *viewport_y = surface->resize_anchor_target_viewport_y;
+  return true;
+}
+
+void astra_ul_surface_clear_resize_anchor(AstraULSurface* surface) {
+  if (!surface) return;
+  surface->has_resize_anchor = false;
+  surface->resize_anchor_node = {};
 }
 
 void astra_ul_surface_invalidate(AstraULSurface* surface) {

@@ -192,6 +192,7 @@ public struct HTMLPreviewLayout:Sendable {
     public let layoutID:PreviewLayoutID
     public let geometry:HTMLPreviewGeometry
     public let measurements:[PreviewBlockMeasurement]
+    public let resizeAnchorScrollY:CGFloat?
 }
 
 public final class HTMLPreviewFrame:@unchecked Sendable {
@@ -208,16 +209,19 @@ public final class HTMLPreviewFrame:@unchecked Sendable {
     public let scrollPoint:NSPoint
     public let flowDisplacements:[HTMLPreviewFlowDisplacement]
     public let createdDuringViewportGesture:Bool
+    public let resizeAnchorScrollY:CGFloat?
     fileprivate let pixels:Data
     fileprivate init(token:Int,revision:Int,layoutID:PreviewLayoutID,geometry:HTMLPreviewGeometry,
         measurements:[PreviewBlockMeasurement],pixels:Data,image:CGImage,imageSize:NSSize,
         baseURL:URL?,cause:Cause,scrollPoint:NSPoint,
-        flowDisplacements:[HTMLPreviewFlowDisplacement],createdDuringViewportGesture:Bool) {
+        flowDisplacements:[HTMLPreviewFlowDisplacement],createdDuringViewportGesture:Bool,
+        resizeAnchorScrollY:CGFloat?) {
         self.token=token;self.revision=revision;self.layoutID=layoutID;self.geometry=geometry
         self.measurements=measurements;self.pixels=pixels;self.image=image;self.imageSize=imageSize
         self.baseURL=baseURL;self.cause=cause;self.scrollPoint=scrollPoint
         self.flowDisplacements=flowDisplacements
         self.createdDuringViewportGesture=createdDuringViewportGesture
+        self.resizeAnchorScrollY=resizeAnchorScrollY
     }
 }
 
@@ -255,6 +259,7 @@ private final class HTMLRendererExecutor {
         var pixelData=Data()
         var paintedScrollPoint:NSPoint?
         var pendingScrollPoint:NSPoint?
+        var committedPaintToken:Int?
         var request:HTMLPreviewRenderRequest?
         var resourceStarted:Date?
         var delayedImagesReadyAt:Date?
@@ -288,6 +293,7 @@ private final class HTMLRendererExecutor {
                 }}
             }
             guard astra_ul_surface_commit_update(engine) else{return nil}
+            committedPaintToken=request.token
             entries=request.entries;entryIDs=request.entries.map(\.id)
             guard updateGeometry(ids:Set(entryIDs)) else{return nil}
             _=drainDirtyIDs()
@@ -296,17 +302,20 @@ private final class HTMLRendererExecutor {
                 delayedImagesReadyAt=imageLoadDelay>0 ? now.addingTimeInterval(imageLoadDelay):nil
             } else {resourceStarted=nil;delayedImagesReadyAt=nil}
             let measurements=makeMeasurements(ids:Set(entryIDs))
+            let anchor=resizeAnchorScrollY(engine)
             return HTMLPreviewLayout(token:request.token,revision:request.revision,layoutID:request.layoutID,
-                geometry:geometry(),measurements:measurements)
+                geometry:geometry(),measurements:measurements,resizeAnchorScrollY:anchor)
         }
 
         func capture(token:Int,point:NSPoint)->HTMLPreviewFrame? {
             guard let engine,request?.token==token else{return nil}
-            scrollAndRender(engine,to:point)
+            let mustPaint=committedPaintToken==token
+            scrollAndRender(engine,to:point,forcePaint:mustPaint)
             let dirty=drainDirtyIDs()
             if !dirty.isEmpty,!updateGeometry(ids:dirty) {return nil}
             if astra_ul_surface_pending_resource_count(engine)>0,resourceStarted==nil {resourceStarted=Date()}
             guard let bitmap=makeBitmap() else{return nil}
+            if mustPaint {committedPaintToken=nil}
             paintedScrollPoint=point
             return makeFrame(bitmap:bitmap,measuredIDs:dirty.isEmpty ? Set(entryIDs):dirty,cause:.request)
         }
@@ -318,11 +327,11 @@ private final class HTMLRendererExecutor {
             // Layout-changing resources are rare and require pixels for the
             // compensated offset immediately. Ordinary source scrolling does
             // not take this full-repaint path.
-            astra_ul_surface_invalidate(engine)
-            scrollAndRender(engine,to:point)
+            scrollAndRender(engine,to:point,forcePaint:true)
             let dirty=drainDirtyIDs()
             if !dirty.isEmpty,!updateGeometry(ids:dirty) {return nil}
             guard let bitmap=makeBitmap() else{return nil}
+            if committedPaintToken==token {committedPaintToken=nil}
             paintedScrollPoint=point
             return makeFrame(bitmap:bitmap,measuredIDs:dirty,cause:.resource)
         }
@@ -369,14 +378,12 @@ private final class HTMLRendererExecutor {
             if refreshAll {
                 geometryItems=entryIDs.map{.init(id:$0,y:0,height:0,landmark:nil)}
                 exactItemYs=Array(repeating:0,count:entryIDs.count)
-                var y:CGFloat=32
                 for index in entryIDs.indices {
                     var value=AstraULGeometryItem()
                     guard astra_ul_surface_geometry_item(engine,index,&value) else{return false}
                     exactItemYs[index]=value.y
-                    geometryItems[index] = .init(id:entryIDs[index],y:y,height:value.height,
+                    geometryItems[index] = .init(id:entryIDs[index],y:value.y,height:value.height,
                         landmark:value.has_landmark ? value.landmark_y:nil)
-                    y += value.height
                 }
             } else {
                 // Query the changed box and the following flow boundary. The
@@ -417,7 +424,7 @@ private final class HTMLRendererExecutor {
             return true
         }
         private func makeFrame(bitmap:HTMLPreviewBitmap,measuredIDs:Set<String>,cause:HTMLPreviewFrame.Cause)->HTMLPreviewFrame? {
-            guard let request else{return nil}
+            guard let request,let engine else{return nil}
             let displacements=flowDisplacements
             flowDisplacements.removeAll(keepingCapacity:true)
             return HTMLPreviewFrame(token:request.token,revision:request.revision,layoutID:request.layoutID,
@@ -425,7 +432,29 @@ private final class HTMLRendererExecutor {
                 image:bitmap.image,imageSize:bitmap.size,baseURL:request.baseURL,cause:cause,
                 scrollPoint:NSPoint(x:0,y:astra_ul_surface_scroll_y(engine)),
                 flowDisplacements:displacements,
-                createdDuringViewportGesture:viewportGestureActive)
+                createdDuringViewportGesture:viewportGestureActive,
+                resizeAnchorScrollY:resizeAnchorScrollY(engine))
+        }
+        private func resizeAnchorScrollY(_ engine:OpaquePointer)->CGFloat? {
+            var value=0.0
+            return astra_ul_surface_resize_anchor_scroll_y(engine,&value) ? CGFloat(value):nil
+        }
+        func captureResizeAnchor()->Bool {
+            guard let engine else{return false}
+            return astra_ul_surface_capture_resize_anchor(engine)
+        }
+        func clearResizeAnchor() {
+            if let engine {astra_ul_surface_clear_resize_anchor(engine)}
+        }
+        func resizeAnchorViewportY()->CGFloat? {
+            guard let engine else{return nil}
+            var value=0.0
+            return astra_ul_surface_resize_anchor_viewport_y(engine,&value) ? CGFloat(value):nil
+        }
+        func resizeAnchorTargetViewportY()->CGFloat? {
+            guard let engine else{return nil}
+            var value=0.0
+            return astra_ul_surface_resize_anchor_target_viewport_y(engine,&value) ? CGFloat(value):nil
         }
         private func geometry()->HTMLPreviewGeometry {
             .init(width:rootWidth,height:rootHeight,items:geometryItems)
@@ -492,14 +521,21 @@ private final class HTMLRendererExecutor {
             paintedScrollPoint=point;pendingScrollPoint=nil
             return inputPaintResult()
         }
-        private func scrollAndRender(_ engine:OpaquePointer,to point:NSPoint) {
-            guard astra_ul_surface_scroll(engine,point.x,point.y) else{return}
+        private func scrollAndRender(_ engine:OpaquePointer,to point:NSPoint,forcePaint:Bool=false) {
+            let moved=astra_ul_surface_scroll(engine,point.x,point.y)
+            guard moved || forcePaint else{return}
+            if forcePaint {astra_ul_surface_invalidate(engine)}
             // Ultralight updates DOM scroll metrics in its first cycle but may
             // not repaint the software surface until a later scheduler tick.
             // Do not copy and publish the preceding scroll position. This is a
             // bounded renderer wait, independent of document size.
+            var painted=false
             for attempt in 0..<12 {
-                if astra_ul_surface_render(engine) {return}
+                painted=astra_ul_surface_render(engine) || painted
+                // The first cycle can report the explicit invalidation while
+                // only updating DOM scroll metrics. Require a second cycle so
+                // the copied surface cannot retain the preceding position.
+                if attempt>0,painted {return}
                 if attempt<11 {Thread.sleep(forTimeInterval:0.002)}
             }
         }
@@ -576,6 +612,7 @@ private final class HTMLRendererExecutor {
         }
         let condition=NSCondition()
         var tasks=[(ThreadState)->Void]()
+        var measurementTasks=[(ThreadState)->Void]()
         private var pendingScroll:ScrollWork?
         private var latestScrollGeneration=0
         let sdkRoot:String,css:String
@@ -588,6 +625,10 @@ private final class HTMLRendererExecutor {
         }
         func run() {
             let renderer=ThreadState(sdkRoot:sdkRoot,css:css,imageLoadDelay:imageLoadDelay)
+            // Measurement has its own bounded DOM. It lives on the same
+            // Ultralight thread but can be replaced freely without disturbing
+            // the visible presentation or its delayed resources.
+            let measurer=ThreadState(sdkRoot:sdkRoot,css:css,imageLoadDelay:0)
             var activeScroll:ScrollWork?
             var nextResourceTick=Date()
             condition.lock();isReady=true;let callback=ready;condition.unlock()
@@ -600,7 +641,7 @@ private final class HTMLRendererExecutor {
                     continue
                 }
                 condition.lock()
-                while tasks.isEmpty,pendingScroll == nil {
+                while tasks.isEmpty,pendingScroll == nil,measurementTasks.isEmpty {
                     if activeScroll != nil {
                         _ = condition.wait(until:Date(timeIntervalSinceNow:1/240));break
                     }
@@ -614,6 +655,9 @@ private final class HTMLRendererExecutor {
                 // not continually restart the paint and starve publication.
                 let scroll=task == nil && activeScroll == nil ? pendingScroll:nil
                 if scroll != nil {pendingScroll=nil}
+                let measurement=task == nil && scroll == nil && activeScroll == nil &&
+                    !renderer.needsResourceTicks && !measurementTasks.isEmpty
+                    ? measurementTasks.removeFirst():nil
                 condition.unlock()
                 if let task {autoreleasepool {task(renderer)}}
                 else if let scroll {
@@ -645,6 +689,7 @@ private final class HTMLRendererExecutor {
                     nextResourceTick=Date(timeIntervalSinceNow:1/60)
                     if let frame {DispatchQueue.main.async { [weak self] in self?.resourceFrame?(frame) }}
                 }
+                else if let measurement {autoreleasepool {measurement(measurer)}}
             }
         }
         private func finish(_ work:ScrollWork,result:HTMLPreviewPaintResult?) {
@@ -673,6 +718,12 @@ private final class HTMLRendererExecutor {
                 settles:true,completion:completion)
             condition.signal();condition.unlock()
         }
+        func cancelScroll() {
+            condition.lock()
+            latestScrollGeneration += 1
+            pendingScroll=nil
+            condition.signal();condition.unlock()
+        }
         private func isCurrentScroll(_ generation:Int)->Bool {
             condition.lock();defer{condition.unlock()}
             return generation == latestScrollGeneration
@@ -697,12 +748,16 @@ private final class HTMLRendererExecutor {
     func async(_ task:@escaping(ThreadState)->Void) {
         queue.condition.lock();queue.tasks.append(task);queue.condition.signal();queue.condition.unlock()
     }
+    func asyncMeasurement(_ task:@escaping(ThreadState)->Void) {
+        queue.condition.lock();queue.measurementTasks.append(task);queue.condition.signal();queue.condition.unlock()
+    }
     func scroll(token:Int,point:NSPoint,completion:@escaping(HTMLPreviewPaintResult?)->Void) {
         queue.enqueueScroll(token:token,point:point,completion:completion)
     }
     func settleScroll(token:Int,point:NSPoint,completion:@escaping(HTMLPreviewPaintResult?)->Void) {
         queue.enqueueScrollSettlement(token:token,point:point,completion:completion)
     }
+    func cancelScroll() {queue.cancelScroll()}
     func sync<T>(_ task:@escaping(ThreadState)->T)->T {
         let semaphore=DispatchSemaphore(value:0);var result:T!
         async {state in result=task(state);semaphore.signal()};semaphore.wait();return result
@@ -783,6 +838,15 @@ private final class HTMLRendererExecutor {
             deliverOnMainRunLoop {completion(layout)}
         }
     }
+    /// Measures a bounded, non-visible HTML window on the renderer thread.
+    /// Foreground presentation and scroll work always run first.
+    public func requestMeasurements(_ request:HTMLPreviewRenderRequest,
+        completion:@escaping(HTMLPreviewLayout?)->Void) {
+        renderer.asyncMeasurement {state in
+            let layout=state.layout(request)
+            deliverOnMainRunLoop {completion(layout)}
+        }
+    }
     public func capture(token:Int,scrollPoint:NSPoint,completion:@escaping(HTMLPreviewFrame?)->Void) {
         renderer.async {state in
             let frame=state.capture(token:token,point:scrollPoint)
@@ -797,6 +861,10 @@ private final class HTMLRendererExecutor {
     }
     public func beginViewportGesture() {renderer.async{$0.viewportGestureActive=true}}
     public func endViewportGesture() {renderer.async{$0.viewportGestureActive=false}}
+    public func captureResizeAnchor()->Bool {renderer.sync{$0.captureResizeAnchor()}}
+    public func clearResizeAnchor() {renderer.async{$0.clearResizeAnchor()}}
+    public func resizeAnchorViewportY()->CGFloat? {renderer.sync{$0.resizeAnchorViewportY()}}
+    public func resizeAnchorTargetViewportY()->CGFloat? {renderer.sync{$0.resizeAnchorTargetViewportY()}}
     public func publish(_ frame:HTMLPreviewFrame,preservePixels:Bool=false,
         preservedImageOffsetY:CGFloat=0) {
         if preservePixels {imageOffsetY=preservedImageOffsetY}
@@ -842,6 +910,11 @@ private final class HTMLRendererExecutor {
         }
         scrollSettlement=settlement
         DispatchQueue.main.asyncAfter(deadline:.now()+0.04,execute:settlement)
+    }
+    public func cancelPendingScroll() {
+        scrollGeneration += 1
+        scrollSettlement?.cancel();scrollSettlement=nil
+        renderer.cancelScroll()
     }
     private func publish(_ result:HTMLPreviewPaintResult?,token:Int) {
         guard committedToken==token,!hasUncommittedPresentation,let result else{return}

@@ -136,11 +136,6 @@ private let previewLayout=PreviewLayoutID(width:640,fontSize:15,stylesheetGenera
     doc.store(ParseResult(revision:1,spans:[],fragments:[prepared("555",5550,5560,"filled")]),range:NSRange(location:5550,length:10))
     #expect(doc.firstUnpreparedOffset(from:0)==10000)
     #expect(doc.hasCompleteFragments)
-    let complete=doc.completeWindow()
-    #expect(complete?.range==NSRange(location:0,length:10000))
-    #expect(complete?.entries.count==1000)
-    #expect(complete?.entries.first?.blockID==BlockID("0"))
-    #expect(complete?.entries.last?.blockID==BlockID("999"))
 }
 
 @Test func renderedWindowsUseCachedHeightPrefixesAndStopAtCacheHoles() {
@@ -162,6 +157,30 @@ private let previewLayout=PreviewLayoutID(width:640,fontSize:15,stylesheetGenera
     #expect(expanded?.entries.map(\.blockID)==["0","1","2","3","4"].map{BlockID($0)})
     #expect(expanded?.range==NSRange(location:0,length:50))
     #expect(expanded?.previewTop==32)
+}
+
+@Test func backgroundMeasurementWindowsAreBoundedAndSkipCompletedPrefixes() throws {
+    let doc=PreparedDocument()
+    let blocks=(0..<10).map{PreparedBlock(id:"\($0)",kind:"Paragraph",from:$0*10,to:($0+1)*10)}
+    doc.adopt(blocks,revision:1,length:100)
+    doc.store(ParseResult(revision:1,spans:[],fragments:(0..<10).map{
+        prepared("\($0)",$0*10,($0+1)*10,"\($0)")
+    }),range:NSRange(location:0,length:100))
+    doc.setPreviewLayoutID(previewLayout)
+
+    let first=try #require(doc.measurementWindow(from:0,layoutID:previewLayout,maximumBlocks:3))
+    #expect(first.entries.map(\.blockID)==["0","1","2"].map{BlockID($0)})
+    #expect(first.range==NSRange(location:0,length:30))
+    let expected=Dictionary(uniqueKeysWithValues:first.entries.map{($0.blockID,$0.contentVersion)})
+    let values=first.entries.map{
+        PreviewBlockMeasurement(blockID:$0.blockID,contentVersion:$0.contentVersion,stride:40)
+    }
+    #expect(doc.applyPreviewMeasurements(values,revision:1,layoutID:previewLayout,
+        expectedContentVersions:expected) != nil)
+
+    let next=try #require(doc.measurementWindow(from:0,layoutID:previewLayout,maximumBlocks:3))
+    #expect(next.entries.map(\.blockID)==["3","4","5"].map{BlockID($0)})
+    #expect(next.range==NSRange(location:30,length:30))
 }
 
 @Test func measuredHeightCorrectionMatchesTheNextRenderedExtent() throws {

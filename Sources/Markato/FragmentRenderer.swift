@@ -102,6 +102,7 @@ private final class PreviewClipView:NSClipView {
     var viewportOrigin:CGFloat {get}
     var contentHeight:CGFloat {get}
     var sourceLength:Int {get}
+    var verticalLineScroll:CGFloat {get}
     var visibleSourceRange:NSRange {get}
     var alignmentAnchor:Int {get}
     func verticalPosition(for offset:Int)->CGFloat?
@@ -225,10 +226,12 @@ private struct PendingPreviewFrame {
     private var detachedSourceOrigin:CGFloat?
     private var detachedSourceRevision:Int?
     private var version=0,measuredSize:NSSize = .zero
+    private var measurementVersion=0
     var resizeSession:ViewportResizeSession?
     private var failedParseRevision:Int?
     private var sourceGestureActive=false
     private var renderAnchor:ViewportAnchor?
+    private var usesDOMResizeAnchor=false
     private var pendingFrame:PendingPreviewFrame?
     private var idleAnchorLock:ViewportAnchor?
     private var resourceSettlementGeneration=0
@@ -238,6 +241,7 @@ private struct PendingPreviewFrame {
         switch scrolling {case .independent:return nil;case .synchronized(let source):return source}
     }
     private func clearResizePin() {
+        if usesDOMResizeAnchor {web.clearResizeAnchor();usesDOMResizeAnchor=false}
         resizeSession?.end();resizeSession=nil
     }
     private func clearIdleAnchorLock() {
@@ -393,11 +397,13 @@ private struct PendingPreviewFrame {
         loadingView.isHidden=hidden
     }
     private func handleVerticalScroll(_ event:NSEvent) {
+        let delta=event.hasPreciseScrollingDeltas ? event.scrollingDeltaY :
+            event.scrollingDeltaY*(source?.verticalLineScroll ?? max(1,fontSize*1.5))
         switch scrolling {
         case .synchronized:
-            scrollPreview(to:independentOrigin-event.scrollingDeltaY,detachFromSource:true)
+            scrollPreview(to:independentOrigin-delta,detachFromSource:true)
         case .independent:
-            scrollPreview(to:independentOrigin-event.scrollingDeltaY,detachFromSource:false)
+            scrollPreview(to:independentOrigin-delta,detachFromSource:false)
         }
     }
     private func scrollPreview(to proposedOrigin:CGFloat,detachFromSource:Bool) {
@@ -426,7 +432,9 @@ private struct PendingPreviewFrame {
               abs(event.scrollingDeltaY)>=abs(event.scrollingDeltaX) else{return false}
         clearResizePin()
         clearIdleAnchorLock()
-        independentOrigin=max(0,visibleWebRange.lowerBound-event.scrollingDeltaY);place();return true
+        let delta=event.hasPreciseScrollingDeltas ? event.scrollingDeltaY :
+            event.scrollingDeltaY*source.verticalLineScroll
+        independentOrigin=max(0,visibleWebRange.lowerBound-delta);place();return true
     }
     func navigatePreview(toEnd:Bool) {
         guard let committed else{return}
@@ -492,6 +500,20 @@ private struct PendingPreviewFrame {
         }
         content=next;requestPresentation();updateLoadingState()
     }
+    var currentLayoutID:PreviewLayoutID {
+        PreviewLayoutID(width:Double(bounds.width),fontSize:Double(fontSize),
+            stylesheetGeneration:HTMLPreviewResources.stylesheetGeneration)
+    }
+    func measure(_ entries:[RenderedEntry],revision:Int,
+        completion:@escaping(HTMLPreviewLayout?)->Void) {
+        guard bounds.width>0.5,bounds.height>0.5,web.isEngineReady else{completion(nil);return}
+        measurementVersion += 1
+        let scale=max(1,window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 1)
+        let request=HTMLPreviewRenderRequest(token:-measurementVersion,revision:revision,
+            layoutID:currentLayoutID,entries:entries,fontSize:fontSize,baseURL:baseURL,
+            viewportSize:NSSize(width:bounds.width,height:bounds.height),scale:scale)
+        web.requestMeasurements(request,completion:completion)
+    }
     func showParseFailure(revision:Int) {failedParseRevision=revision;updateLoadingState()}
     func clearParseFailure() {failedParseRevision=nil;updateLoadingState()}
     private func requestPresentation() {
@@ -538,7 +560,8 @@ private struct PendingPreviewFrame {
         guard applyMeasurements(layout.measurements,to:&request) else {
             failPreparation(original);return
         }
-        guard let position=presentationPosition(request,geometry:layout.geometry,anchor:renderAnchor) else {
+        guard let position=presentationPosition(request,geometry:layout.geometry,anchor:renderAnchor,
+            resizeAnchorScrollY:layout.resizeAnchorScrollY) else {
             failPreparation(original);return
         }
         rendering=request
@@ -555,7 +578,8 @@ private struct PendingPreviewFrame {
         guard let frame,frame.token==request.id,frame.revision==request.revision,
               frame.layoutID==request.layoutID else {failPreparation(original);return}
         guard applyMeasurements(frame.measurements,to:&request),
-              let position=presentationPosition(request,geometry:frame.geometry,anchor:renderAnchor) else {
+              let position=presentationPosition(request,geometry:frame.geometry,anchor:renderAnchor,
+                resizeAnchorScrollY:frame.resizeAnchorScrollY) else {
             web.discard();failPreparation(original);return
         }
         // Resource completion between layout and capture can alter the desired
@@ -576,7 +600,8 @@ private struct PendingPreviewFrame {
         guard var request=rendering,request.id==original.id else{return}
         guard isCurrent(request) else {web.discard();finishPreparation(original);return}
         guard let frame,applyMeasurements(frame.measurements,to:&request),
-              let position=presentationPosition(request,geometry:frame.geometry,anchor:renderAnchor) else {
+              let position=presentationPosition(request,geometry:frame.geometry,anchor:renderAnchor,
+                resizeAnchorScrollY:frame.resizeAnchorScrollY) else {
             failPreparation(original);return
         }
         finishCapturedFrame(frame,request:request,position:position)
@@ -684,7 +709,8 @@ private struct PendingPreviewFrame {
             flowDisplacements:pending.frame.flowDisplacements)
         let baseOrigin=surface.logicalOrigin
         guard let position=presentationPosition(request,geometry:pending.frame.geometry,
-            anchor:alignToSource ? nil:.absolute(origin:anchorOrigin+delta)) else{return}
+            anchor:alignToSource ? nil:.absolute(origin:anchorOrigin+delta),
+            resizeAnchorScrollY:pending.frame.resizeAnchorScrollY) else{return}
         resourceSettlementGeneration += 1
         captureSettledResource(request:request,targetOrigin:position.origin,alignToSource:alignToSource,
             flowDisplacements:pending.frame.flowDisplacements,
@@ -708,7 +734,7 @@ private struct PendingPreviewFrame {
                 guard let currentPosition=self.presentationPosition(request,geometry:frame.geometry,
                     anchor:alignToSource ? nil:.absolute(origin:currentBase+self.resourceScrollDelta(
                         from:committed,to:request,geometry:frame.geometry,origin:currentBase,
-                        flowDisplacements:flowDisplacements))) else{return}
+                        flowDisplacements:flowDisplacements)),resizeAnchorScrollY:frame.resizeAnchorScrollY) else{return}
                 self.captureSettledResource(request:request,targetOrigin:currentPosition.origin,
                     alignToSource:alignToSource,
                     flowDisplacements:flowDisplacements,changedBlocks:changedBlocks,
@@ -716,7 +742,7 @@ private struct PendingPreviewFrame {
                 return
             }
             guard let position=self.presentationPosition(request,geometry:frame.geometry,
-                anchor:.absolute(origin:targetOrigin)) else{return}
+                anchor:.absolute(origin:targetOrigin),resizeAnchorScrollY:frame.resizeAnchorScrollY) else{return}
             let settledLocal=max(0,position.origin-position.windowTop)
             if abs(settledLocal-local)>=0.5 {
                 self.captureSettledResource(request:request,targetOrigin:targetOrigin,alignToSource:alignToSource,
@@ -745,7 +771,8 @@ private struct PendingPreviewFrame {
         var request=pending.request
         guard preparedDocument?.revision==nil || preparedDocument?.revision==request.revision,
               applyMeasurements(pending.frame.measurements,to:&request),
-              let position=presentationPosition(request,geometry:pending.frame.geometry,anchor:nil) else{return}
+              let position=presentationPosition(request,geometry:pending.frame.geometry,anchor:nil,
+                resizeAnchorScrollY:pending.frame.resizeAnchorScrollY) else{return}
         _=commit(request,frame:pending.frame,position:position,requiresCurrent:false)
     }
     private func resourceChangesAreOutsideViewport(previous:CommittedPresentation,
@@ -884,21 +911,24 @@ private struct PendingPreviewFrame {
             viewportHeight:Double(bounds.height),previewHeight:Double(totalHeight))
     }
     private func presentationPosition(_ request:PreviewRequest,geometry:HTMLPreviewGeometry,
-        anchor:ViewportAnchor?=nil)->PresentationPosition? {
+        anchor:ViewportAnchor?=nil,resizeAnchorScrollY:CGFloat?=nil)->PresentationPosition? {
         #if DEBUG
         if debugFailsNextPosition {debugFailsNextPosition=false;return nil}
         #endif
         let extent=previewExtent(request,geometry)
+        let resizeOrigin=usesDOMResizeAnchor ? resizeAnchorScrollY.map {
+            min(max(0,extent.total-bounds.height),max(0,extent.top+$0))
+        }:nil
         switch scrolling {
         case .independent:
-            guard let origin=pinnedResizeOrigin(geometry:geometry,windowTop:extent.top,totalHeight:extent.total) ??
+            guard let origin=resizeOrigin ?? pinnedResizeOrigin(geometry:geometry,windowTop:extent.top,totalHeight:extent.total) ??
                     resolvedOrigin(anchor,geometry:geometry,windowTop:extent.top,totalHeight:extent.total) ??
                     targetOrigin(height:extent.total,map:nil) else{return nil}
             return PresentationPosition(map:nil,sourceGeometryRevision:nil,origin:origin,windowTop:extent.top,totalHeight:extent.total)
         case .synchronized(let source):
             guard covers(request.content,visible:source.visibleSourceRange) else{return nil}
             if resizeSession?.protectsViewport == true {
-                guard let origin=pinnedResizeOrigin(geometry:geometry,windowTop:extent.top,
+                guard let origin=resizeOrigin ?? pinnedResizeOrigin(geometry:geometry,windowTop:extent.top,
                     totalHeight:extent.total) else{return nil}
                 return PresentationPosition(map:nil,sourceGeometryRevision:source.geometryRevision,
                     origin:origin,windowTop:extent.top,totalHeight:extent.total)
@@ -979,6 +1009,8 @@ private struct PendingPreviewFrame {
         preparePresentation()
     }
     func captureResizeAnchor()->PreviewResizeAnchor {
+        web.cancelPendingScroll()
+        usesDOMResizeAnchor=web.captureResizeAnchor()
         let origin=surface.logicalOrigin
         guard let committed,origin>0.5 else{return .top}
         let local=origin-committed.windowTop
@@ -993,6 +1025,10 @@ private struct PendingPreviewFrame {
         return .block(id:item.0.id,displacement:local-item.1.y)
     }
     func beginResize(_ session:ViewportResizeSession) {
+        // A bitmap requested for the preceding viewport can otherwise arrive
+        // under the still-current DOM token after live resize has taken
+        // ownership, briefly replacing the anchored pixels with another scroll
+        // position. The resize presentation will capture its own position.
         resizeSession=session
     }
     func finishResizeLayout() {
@@ -1046,6 +1082,8 @@ private struct PendingPreviewFrame {
     }
     #if DEBUG
     var debugIsIndependentlyScrolled:Bool {detachedSourceOrigin != nil}
+    var debugDOMResizeAnchorViewportY:CGFloat? {web.resizeAnchorViewportY()}
+    var debugDOMResizeAnchorTargetViewportY:CGFloat? {web.resizeAnchorTargetViewportY()}
     var debugSelectedCommentAnchor:NSRect? {selectedCommentAnchor}
     func debugScrollViewport(by delta:CGFloat) {
         scrollPreview(to:independentOrigin+delta,detachFromSource:source != nil)
@@ -1062,6 +1100,10 @@ private struct PendingPreviewFrame {
         guard committed != nil,
               let rect=web.debugRect("h1, h2, h3, h4, h5, h6",containing:text) else{return nil}
         return surface.viewportRect(forEngineViewportRect:rect).minY
+    }
+    func debugElementViewportRect(_ selector:String,containing text:String?=nil)->NSRect? {
+        guard committed != nil,let rect=web.debugRect(selector,containing:text ?? "") else{return nil}
+        return surface.viewportRect(forEngineViewportRect:rect)
     }
     var debugScrollMapError:CGFloat? {
         guard let committed,let source,let map=committed.map,

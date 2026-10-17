@@ -561,16 +561,62 @@ public final class PreparedDocument {
         guard fragments.allSatisfy({$0 != nil}) else{return nil}
         return zip(blocks,fragments).map{RenderedEntry(id:$0.block.id,fragment:$1!)}
     }
-    /// The complete prepared presentation. This is requested once background
-    /// preparation has filled every block; subsequent viewport movement uses
-    /// the retained browser layout instead of replacing a bounded window.
-    public func completeWindow()->RenderedWindow? {
-        guard hasCompleteFragments else{return nil}
-        var blocks=[BlockNode]();blocks.reserveCapacity(count);collect(root,&blocks)
-        let entries=blocks.compactMap {node in preparedFragment(node).map{RenderedEntry(id:node.block.id,fragment:$0)} }
-        guard entries.count==blocks.count else{return nil}
-        return RenderedWindow(range:NSRange(location:0,length:length),entries:entries,
-            previewTop:0,previewHeight:64+(root?.previewSum ?? 0))
+
+    /// Returns the next bounded run whose preview strides have not yet been
+    /// measured for `layoutID`. Background layout uses this cursor-based API
+    /// so completing document geometry never constructs a document-sized DOM
+    /// or repeatedly scans the retained prefix.
+    public func measurementWindow(from position:Int,layoutID:PreviewLayoutID,
+        maximumBlocks:Int)->RenderedWindow? {
+        guard hasCompleteFragments,maximumBlocks>0 else{return nil}
+        func successor(_ node:BlockNode)->BlockNode? {
+            materialize(node)
+            if var n=node.right {
+                while true {n.push();if let left=n.left {n=left}else{return n}}
+            }
+            var child=node,current=node.parent
+            while let parent=current {
+                if parent.left === child {return parent}
+                child=parent;current=parent.parent
+            }
+            return nil
+        }
+        func firstNode(atOrAfter offset:Int)->BlockNode? {
+            var current=root,candidate:BlockNode?
+            while let node=current {
+                node.push()
+                if node.end>offset {candidate=node;current=node.left}
+                else {current=node.right}
+            }
+            return candidate
+        }
+        func entry(_ node:BlockNode)->RenderedEntry? {
+            preparedFragment(node).map{RenderedEntry(id:node.block.id,fragment:$0)}
+        }
+        func isMeasured(_ node:BlockNode)->Bool {
+            guard let value=entry(node) else{return false}
+            if case .measured(let measuredLayout,let version)=node.previewLayout.state {
+                return measuredLayout==layoutID && version==value.contentVersion
+            }
+            return false
+        }
+        var cursor=firstNode(atOrAfter:max(0,position))
+        while let node=cursor,isMeasured(node) {cursor=successor(node)}
+        guard let first=cursor else{return nil}
+        var blocks=[BlockNode](),node:BlockNode?=first
+        while let current=node,blocks.count<maximumBlocks,!isMeasured(current) {
+            blocks.append(current);node=successor(current)
+        }
+        let entries=blocks.compactMap(entry)
+        guard entries.count==blocks.count,let last=blocks.last else{return nil}
+        materialize(first)
+        var top=first.left?.previewSum ?? 0,child=first,current=first.parent
+        while let parent=current {
+            if parent.right === child {top += (parent.left?.previewSum ?? 0)+parent.effectivePreviewHeight}
+            child=parent;current=parent.parent
+        }
+        return RenderedWindow(range:NSRange(location:first.start,length:last.end-first.start),
+            entries:entries,previewTop:32+top,previewHeight:64+(root?.previewSum ?? 0))
     }
     /// Returns cached blocks around a source viewport. The tree supplies the
     /// global preview extent; no document-sized placeholder enters the HTML engine.

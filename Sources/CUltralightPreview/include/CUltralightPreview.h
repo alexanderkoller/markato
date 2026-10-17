@@ -52,6 +52,14 @@ void astra_ul_surface_activate_delayed_images(AstraULSurface* surface);
 void astra_ul_surface_abandon_pending_resources(AstraULSurface* surface);
 bool astra_ul_surface_scroll(AstraULSurface* surface, double x, double y);
 double astra_ul_surface_scroll_y(AstraULSurface* surface);
+bool astra_ul_surface_capture_resize_anchor(AstraULSurface* surface);
+bool astra_ul_surface_resize_anchor_scroll_y(AstraULSurface* surface,
+                                             double* scroll_y);
+bool astra_ul_surface_resize_anchor_viewport_y(AstraULSurface* surface,
+                                               double* viewport_y);
+bool astra_ul_surface_resize_anchor_target_viewport_y(AstraULSurface* surface,
+                                                      double* viewport_y);
+void astra_ul_surface_clear_resize_anchor(AstraULSurface* surface);
 void astra_ul_surface_invalidate(AstraULSurface* surface);
 void astra_ul_surface_clear_dirty_pixels(AstraULSurface* surface);
 

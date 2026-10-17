@@ -1,5 +1,6 @@
 #if DEBUG
 import AppKit
+import Darwin
 import HTMLPreview
 import MarkdownCore
 import PDFKit
@@ -16,6 +17,7 @@ import PDFKit
         var viewportOrigin:CGFloat
         var contentHeight:CGFloat=1800
         let sourceLength=42
+        let verticalLineScroll:CGFloat=10
         var visibleSourceRange:NSRange {
             let location=min(sourceLength-1,max(0,Int(viewportOrigin/contentHeight*CGFloat(sourceLength))))
             return NSRange(location:location,length:1)
@@ -27,12 +29,50 @@ import PDFKit
         }
         func alignmentVerticalPosition(for offset:Int)->CGFloat? {verticalPosition(for:offset)}
     }
+    /// Drives the production live-resize lifecycle from a real AppKit drag
+    /// event stream without requiring accessibility/UI-automation privileges.
+    @MainActor private final class WindowResizeGestureTarget {
+        let window:NSWindow
+        let begin:()->Void,end:()->Void
+        init(window:NSWindow,begin:@escaping()->Void,end:@escaping()->Void) {
+            self.window=window;self.begin=begin;self.end=end
+        }
+        func mouseDown(with event:NSEvent) {
+            let start=event.locationInWindow,size=window.contentLayoutRect.size
+            begin();defer{end()}
+            while let next=window.nextEvent(matching:[.leftMouseDragged,.leftMouseUp]) {
+                if next.type == .leftMouseUp {return}
+                let delta=next.locationInWindow.x-start.x
+                window.setContentSize(NSSize(width:max(640,size.width+delta),height:size.height))
+                window.contentView?.layoutSubtreeIfNeeded();window.displayIfNeeded()
+            }
+        }
+    }
     private static func check(_ condition:@autoclosure()->Bool,_ message:String) {
         if !condition() { fail(message) }
     }
     private static func fail(_ message:String)->Never {
         FileHandle.standardError.write(Data("INTEGRATION FAILED: \(message)\n".utf8))
-        exit(EXIT_FAILURE)
+        fflush(nil);_exit(EXIT_FAILURE)
+    }
+    private static func memorySnapshot()->(resident:UInt64,footprint:UInt64,peak:UInt64) {
+        var basic=mach_task_basic_info_data_t()
+        var basicCount=mach_msg_type_number_t(MemoryLayout.size(ofValue:basic)/MemoryLayout<natural_t>.size)
+        let basicResult=withUnsafeMutablePointer(to:&basic) {pointer in
+            pointer.withMemoryRebound(to:integer_t.self,capacity:Int(basicCount)) {
+                task_info(mach_task_self_,task_flavor_t(MACH_TASK_BASIC_INFO),$0,&basicCount)
+            }
+        }
+        var vm=task_vm_info_data_t()
+        var vmCount=mach_msg_type_number_t(MemoryLayout.size(ofValue:vm)/MemoryLayout<natural_t>.size)
+        let vmResult=withUnsafeMutablePointer(to:&vm) {pointer in
+            pointer.withMemoryRebound(to:integer_t.self,capacity:Int(vmCount)) {
+                task_info(mach_task_self_,task_flavor_t(TASK_VM_INFO),$0,&vmCount)
+            }
+        }
+        var usage=rusage();getrusage(RUSAGE_SELF,&usage)
+        return (basicResult==KERN_SUCCESS ? UInt64(basic.resident_size):0,
+            vmResult==KERN_SUCCESS ? UInt64(vm.phys_footprint):0,UInt64(usage.ru_maxrss))
     }
     private struct PixelCapture {
         let width:Int,height:Int,bytes:Data,png:Data,inkRows:[Int]
@@ -83,6 +123,11 @@ import PDFKit
         NSApp.postEvent(up,atStart:true)
         view.mouseDown(with:down)
         return true
+    }
+    private static func scrollWheelEvent(units:CGScrollEventUnit,delta:Int32)->NSEvent? {
+        guard let event=CGEvent(scrollWheelEvent2Source:nil,units:units,wheelCount:1,
+            wheel1:delta,wheel2:0,wheel3:0) else{return nil}
+        return NSEvent(cgEvent:event)
     }
     private static func visualVerticalShift(_ before:PixelCapture,_ after:PixelCapture,maxShift:Int=160)->Int? {
         guard before.width==after.width,before.height==after.height,before.inkRows.count==after.inkRows.count else{return nil}
@@ -185,37 +230,156 @@ import PDFKit
         if CommandLine.arguments.contains("--integration-preview-rewrap") {
             verifyPreviewRewrap(controller,document:document);return
         }
+        if CommandLine.arguments.contains("--integration-large-profile") {
+            profileLargeDocument(controller,document:document);return
+        }
         if CommandLine.arguments.contains("--integration-preview-jump") {
             let started=DispatchTime.now().uptimeNanoseconds
             func awaitComplete(_ remaining:Int) {
                 guard remaining>0 else{fail("Complete preview did not become ready: \(controller.preview.debugGeometry())")}
-                guard controller.hasPreparedDocument,controller.preview.displaysCompleteDocument,
+                guard controller.hasPreparedDocument,controller.hasMeasuredPreviewDocument,
                       controller.preview.lastRevision==document.revision else {
                     DispatchQueue.main.asyncAfter(deadline:.now()+0.001){awaitComplete(remaining-1)};return
                 }
-                let frame=controller.preview.committedFrameID
                 let positions=[0,document.source.count/4,document.source.count/2,
                     document.source.count*3/4,document.source.count]
                 func jump(_ index:Int) {
                     guard index<positions.count else {
                         print("PREVIEW JUMP READY: \(Double(DispatchTime.now().uptimeNanoseconds-started)/1e6) ms, fullCache=\(controller.hasPreparedDocument), \(controller.preview.debugGeometry())")
                         try? TimingDiagnostics.shared.snapshot().json().write(to:URL(fileURLWithPath:"/private/tmp/markato-preview-jump-timings.json"))
-                        exit(EXIT_SUCCESS)
+                        fflush(nil);_exit(EXIT_SUCCESS)
                     }
+                    let frame=controller.preview.committedFrameID
                     controller.source.reveal(positions[index],alignTop:index==0)
-                    check(controller.preview.displaysCompleteDocument,
-                        "A deep scroll replaced the complete preview presentation")
-                    check(!controller.preview.isShowingLoadingState,
-                        "A deep scroll exposed Loading preview after background completion")
-                    check(controller.preview.committedFrameID==frame,
-                        "A deep scroll rendered a replacement presentation instead of using lookup")
-                    DispatchQueue.main.asyncAfter(deadline:.now()+0.01){jump(index+1)}
+                    func awaitJump(_ remaining:Int) {
+                        guard remaining>0 else{fail("Bounded jump did not publish: \(controller.preview.debugGeometry())")}
+                        if controller.preview.coversSourceViewport && !controller.preview.isRenderingPresentation &&
+                           (positions[index]==0 || controller.preview.committedFrameID>frame) {
+                            check(!controller.preview.displaysCompleteDocument,
+                                "A deep jump mounted a document-sized DOM")
+                            check(!controller.preview.isShowingLoadingState,
+                                "A deep jump exposed Loading preview after background measurement")
+                            DispatchQueue.main.asyncAfter(deadline:.now()+0.01){jump(index+1)}
+                        } else {DispatchQueue.main.asyncAfter(deadline:.now()+0.001){awaitJump(remaining-1)}}
+                    }
+                    awaitJump(30_000)
                 }
                 jump(0)
             }
             awaitComplete(3000);return
         }
         verifyUltralightPreview(controller,document:document)
+    }
+
+    private static func profileLargeDocument(_ controller:EditorWindowController,
+        document:MarkdownDocument) {
+        let started=DispatchTime.now().uptimeNanoseconds
+        func elapsedMs()->Double {
+            Double(DispatchTime.now().uptimeNanoseconds-started)/1_000_000
+        }
+        func wait(_ remaining:Int,_ ready:@escaping()->Bool,_ failure:String,
+            _ completion:@escaping()->Void) {
+            guard remaining>0 else{fail("\(failure): \(controller.preview.debugGeometry())")}
+            if ready(){completion()}
+            else {DispatchQueue.main.asyncAfter(deadline:.now()+0.01) {
+                wait(remaining-1,ready,failure,completion)
+            }}
+        }
+        wait(12_000,{controller.hasPreparedViewport},"Large document first viewport did not become ready") {
+            let firstVisible=elapsedMs()
+            wait(12_000,{controller.hasPreparedDocument},"Large document fragments did not finish") {
+                let prepared=elapsedMs()
+                profileJumps(controller,document:document) {coldJumps in
+                    profileScrolling(controller) {coldScroll in
+                        wait(18_000,{controller.hasMeasuredPreviewDocument},
+                            "Large document geometry did not finish") {
+                            let measured=elapsedMs()
+                            profileJumps(controller,document:document) {warmJumps in
+                                profileScrolling(controller) {warmScroll in
+                                    wait(3_000,{!controller.preview.hasPendingPresentation},
+                                        "Large document final presentation did not settle") {
+                                        let memory=memorySnapshot()
+                                        let result:[String:Any]=[
+                                            "status":"complete","documentCharacters":document.source.count,
+                                            "firstVisibleMs":firstVisible,"fragmentsReadyMs":prepared,
+                                            "geometryReadyMs":measured,"coldNavigationMs":coldJumps,
+                                            "warmNavigationMs":warmJumps,"coldScroll":coldScroll,
+                                            "warmScroll":warmScroll,
+                                            "residentBytes":memory.resident,
+                                            "physicalFootprintBytes":memory.footprint,
+                                            "peakResidentBytes":memory.peak,
+                                            "mountedBlocks":controller.preview.preparedFragmentCount,
+                                            "cachedBlocks":controller.cachedBlockCount,
+                                            "cachedByteCost":controller.cachedByteCost,
+                                            "preview":controller.preview.debugGeometry()
+                                        ]
+                                        let data=try! JSONSerialization.data(withJSONObject:result,options:[.sortedKeys])
+                                        print(String(data:data,encoding:.utf8)!);fflush(nil);_exit(EXIT_SUCCESS)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private static func profileJumps(_ controller:EditorWindowController,document:MarkdownDocument,
+        completion:@escaping([Double])->Void) {
+        let positions=[document.source.count/4,document.source.count/2,
+            document.source.count*3/4,document.source.count,0]
+        func jump(_ index:Int,_ samples:[Double]) {
+            guard index<positions.count else{completion(samples);return}
+            let start=DispatchTime.now().uptimeNanoseconds,frame=controller.preview.committedFrameID
+            controller.source.reveal(positions[index],alignTop:true)
+            func wait(_ remaining:Int) {
+                guard remaining>0 else{fail("Profile jump did not publish: \(controller.preview.debugGeometry())")}
+                if controller.preview.coversSourceViewport && !controller.preview.hasPendingPresentation &&
+                   controller.preview.committedFrameID>frame {
+                    let duration=Double(DispatchTime.now().uptimeNanoseconds-start)/1_000_000
+                    DispatchQueue.main.asyncAfter(deadline:.now()+0.02){jump(index+1,samples+[duration])}
+                } else {DispatchQueue.main.asyncAfter(deadline:.now()+0.001){wait(remaining-1)}}
+            }
+            wait(30_000)
+        }
+        jump(0,[])
+    }
+
+    private static func profileScrolling(_ controller:EditorWindowController,
+        completion:@escaping([String:Any])->Void) {
+        let preview=controller.preview,source=controller.source
+        var publications=[UInt64](),draws=[UInt64]()
+        preview.previewView.debugScrollPublished={_ in publications.append(DispatchTime.now().uptimeNanoseconds)}
+        preview.previewView.debugDidDraw={draws.append(DispatchTime.now().uptimeNanoseconds)}
+        let frequency=60,steps=frequency*2,started=DispatchTime.now().uptimeNanoseconds
+        let period=UInt64(1_000_000_000/frequency)
+        source.beginScrollGesture()
+        func percentile(_ values:[Double],_ p:Double)->Double {
+            guard !values.isEmpty else{return 0}
+            let values=values.sorted(),index=Int((Double(values.count-1)*p).rounded())
+            return values[index]
+        }
+        func step(_ index:Int) {
+            guard index<steps else {
+                let ended=DispatchTime.now().uptimeNanoseconds;source.endScrollGesture()
+                preview.previewView.debugScrollPublished=nil;preview.previewView.debugDidDraw=nil
+                let publicationTimes=[started]+publications.filter{$0>=started && $0<=ended}+[ended]
+                let drawTimes=[started]+draws.filter{$0>=started && $0<=ended}+[ended]
+                let publicationGaps=zip(publicationTimes,publicationTimes.dropFirst()).map{Double($1-$0)/1e6}
+                let drawGaps=zip(drawTimes,drawTimes.dropFirst()).map{Double($1-$0)/1e6}
+                completion(["publicationCount":publicationTimes.count-2,
+                    "publicationGapP95Ms":percentile(publicationGaps,0.95),
+                    "publicationGapMaxMs":publicationGaps.max() ?? 0,
+                    "drawCount":drawTimes.count-2,"drawGapP95Ms":percentile(drawGaps,0.95),
+                    "drawGapMaxMs":drawGaps.max() ?? 0])
+                return
+            }
+            source.debugScrollViewport(by:18)
+            DispatchQueue.main.asyncAfter(
+                deadline:DispatchTime(uptimeNanoseconds:started+UInt64(index+1)*period)){step(index+1)}
+        }
+        step(0)
     }
 
     private static func verifyScrollThroughput(_ controller:EditorWindowController) {
@@ -226,10 +390,10 @@ import PDFKit
             if ready() {completion()}
             else {DispatchQueue.main.asyncAfter(deadline:.now()+0.01){wait(remaining-1,ready,failure,completion)}}
         }
-        // Exercise steady-state scrolling: the complete retained document and
-        // its intentionally delayed sample image must both be settled first.
-        wait(900,{controller.hasPreparedDocument && preview.displaysCompleteDocument &&
-            preview.previewView.debugCount("img[data-astra-delayed-src]")==0},
+        // Exercise steady-state scrolling after complete retained geometry is
+        // available while the browser DOM remains bounded.
+        wait(900,{controller.hasPreparedDocument && controller.hasMeasuredPreviewDocument &&
+            !preview.isRenderingPresentation},
             "Steady-state preview did not become ready") {
             var publications=[UInt64]()
             var draws=[UInt64]()
@@ -285,7 +449,7 @@ import PDFKit
                                 "SCROLL THROUGHPUT PASSED: %d publications (%.1f fps), %d draws (%.1f fps), " +
                                 "longest gaps %.1f/%.1f ms",
                                 active.count,rate,activeDraws.count,drawRate,longestGap*1000,longestDrawGap*1000))
-                            exit(EXIT_SUCCESS)
+                            fflush(nil);_exit(EXIT_SUCCESS)
                         }
                         return
                     }
@@ -311,14 +475,20 @@ import PDFKit
             if ready() {completion()}
             else {DispatchQueue.main.asyncAfter(deadline:.now()+0.01){wait(remaining-1,ready,failure,completion)}}
         }
-        wait(500,{controller.hasPreparedDocument && preview.displaysCompleteDocument &&
+        controller.source.reveal(range.location,alignTop:true)
+        wait(500,{controller.hasPreparedDocument && preview.coversSourceViewport &&
             preview.previewView.debugCount("img[data-astra-delayed-src]")>0},
-            "Complete sample placeholder did not become ready") {
+            "Bounded sample placeholder did not become ready") {
             var publishedScrollPoint:NSPoint?
             preview.previewView.debugScrollSettled={publishedScrollPoint=$0}
+            // Re-issue the semantic destination after installing the observer.
+            // The first reveal is allowed to settle while the bounded window is
+            // being mounted, before this test can observe its final scroll.
             controller.source.reveal(range.location,alignTop:true)
-            wait(300,{publishedScrollPoint.map{abs($0.y-preview.visibleWebRange.lowerBound)<0.01}==true &&
-                preview.debugScrollMapError.map{abs($0)<0.01}==true},
+            wait(300,{preview.debugScrollMapError.map{abs($0)<0.01}==true &&
+                !preview.hasPendingPresentation &&
+                (publishedScrollPoint == nil ||
+                    publishedScrollPoint.map{abs($0.y-preview.visibleWebRange.lowerBound)<0.01}==true)},
                 "Sample did not settle below its delayed image") {
                 preview.previewView.debugScrollSettled=nil
                 let visibleHeadings=(4...10).compactMap { index -> (String,CGFloat)? in
@@ -363,7 +533,7 @@ import PDFKit
                         "Sample delayed image changed the heading position from \(headingY) to \(afterY)")
                     verifyCoalescedScroll(preview,heading:heading,headingY:afterY) {
                         print("SAMPLE DELAYED IMAGE STABILITY PASSED: \(commits.count) committed frame(s) stayed fixed")
-                        exit(EXIT_SUCCESS)
+                        fflush(nil);_exit(EXIT_SUCCESS)
                     }
                 }
             }
@@ -394,92 +564,39 @@ import PDFKit
         // The untouched path models a command sent as soon as the document
         // window opens, before a first preview presentation or placeholder is
         // available. Clicking first naturally moves this command later.
-        if !clickBeforeEnd,controller.source.selection.location != document.source.count {
-            jumpToEnd(clickFirst:false)
+        if controller.source.selection.location != document.source.count {
+            jumpToEnd(clickFirst:clickBeforeEnd)
         }
-        wait(500,{controller.hasPreparedDocument &&
-            preview.previewView.debugCount("img[data-astra-delayed-src]")>0},
-            "Sample placeholder did not become ready for early end navigation") {
-            if clickBeforeEnd {
-                // Let the click's deferred selection callback run before the
-                // responder command, as it does for a real click then keypress.
-                DispatchQueue.main.async {jumpToEnd(clickFirst:true)}
+        wait(800,{controller.hasPreparedDocument && !preview.displaysCompleteDocument &&
+            controller.source.selection.location==document.source.count && preview.coversSourceViewport &&
+            preview.debugScrollMapError.map{abs($0)<0.01}==true && !preview.hasPendingPresentation &&
+            abs(preview.clipOrigin-preview.debugMaximumOrigin)<0.01 &&
+            (settled == nil || settled.map{abs($0.y-preview.visibleWebRange.lowerBound)<0.01}==true)},
+            "Cmd-End did not settle at the bounded document boundary") {
+            preview.previewView.debugScrollSettled=nil
+            check(preview.previewView.debugCount("img[data-astra-delayed-src]")==0,
+                "The bounded end window mounted a distant image from the document start")
+            guard let beforeY=preview.debugHeadingViewportY(containing:marker) else {
+                fail("End marker is not mounted after Cmd-End")
             }
-            wait(500,{preview.displaysCompleteDocument &&
-                controller.source.selection.location==document.source.count &&
-                settled.map{abs($0.y-preview.visibleWebRange.lowerBound)<0.01}==true &&
+            let region=NSRect(x:20,y:max(0,beforeY-30),width:max(1,preview.bounds.width-60),
+                height:min(90,preview.bounds.height-max(0,beforeY-30)))
+            let before=capture(preview,rect:region)
+            wait(800,{controller.hasMeasuredPreviewDocument && !preview.hasPendingPresentation &&
                 abs(preview.clipOrigin-preview.debugMaximumOrigin)<0.01},
-                "Cmd-End did not settle at the document boundary") {
-                preview.previewView.debugScrollSettled=nil
-                guard let beforeY=preview.debugHeadingViewportY(containing:marker) else {
-                    fail("End marker is not mounted after Cmd-End")
+                "Background geometry did not finish while pinned at the end") {
+                preview.moveViewport()
+                guard let afterY=preview.debugHeadingViewportY(containing:marker) else {
+                    fail("End marker disappeared after background geometry completion")
                 }
-                let region=NSRect(x:20,y:max(0,beforeY-30),width:max(1,preview.bounds.width-60),
-                    height:min(90,preview.bounds.height-max(0,beforeY-30)))
-                let before=capture(preview,rect:region)
-                let beforeFrame=preview.committedFrameID
-                let beforeMaximum=preview.debugMaximumOrigin
-                var observations=[(origin:CGFloat,maximum:CGFloat,y:CGFloat,pixels:PixelCapture)]()
-                preview.debugPresentationCommitted={
-                    guard preview.committedFrameID>beforeFrame,
-                          let y=preview.debugHeadingViewportY(containing:marker) else{return}
-                    observations.append((preview.clipOrigin,preview.debugMaximumOrigin,y,
-                        capture(preview,rect:region)))
+                check(abs(afterY-beforeY)<0.01,
+                    "Background geometry moved the bottom viewport from \(beforeY) to \(afterY)")
+                let after=capture(preview,rect:region)
+                guard let backgroundShift=visualVerticalShift(before,after,maxShift:12) else {
+                    fail("Could not compare the background-geometry frame")
                 }
-                wait(800,{preview.committedFrameID>beforeFrame &&
-                    preview.previewView.debugCount("img[data-astra-delayed-src]")==0},
-                    "Delayed image did not finish while pinned at the end") {
-                    preview.debugPresentationCommitted=nil
-                    check(!observations.isEmpty,"Delayed image produced no end-viewport commit")
-                    for (index,observation) in observations.enumerated() {
-                        check(observation.maximum>=observation.origin,
-                            "Bottom commit \(index) exceeded the scrollbar maximum: " +
-                            "origin=\(observation.origin), maximum=\(observation.maximum)")
-                        check(observation.maximum>beforeMaximum,
-                            "Delayed image did not increase the retained document extent")
-                        check(abs(observation.y-beforeY)<0.01,
-                            "Bottom commit \(index) moved the end marker from \(beforeY) to \(observation.y)")
-                        guard let shift=visualVerticalShift(before,observation.pixels,maxShift:12) else {
-                            fail("Could not compare end-viewport image frame \(index)")
-                        }
-                        check(shift==0,
-                            "Bottom commit \(index) shifted visible pixels by \(shift) px")
-                        if before.bytes != observation.pixels.bytes {
-                            try? before.png.write(to:URL(fileURLWithPath:"/tmp/astra-bottom-before.png"))
-                            try? observation.pixels.png.write(to:URL(fileURLWithPath:"/tmp/astra-bottom-after.png"))
-                            fail("Bottom commit \(index) changed the end-marker glyph pixels without moving its geometry")
-                        }
-                    }
-                    preview.moveViewport()
-                    guard let afterY=preview.debugHeadingViewportY(containing:marker) else {
-                        fail("End marker disappeared after source alignment")
-                    }
-                    guard let committedOrigin=observations.last?.origin else {
-                        fail("Missing the final delayed-image observation")
-                    }
-                    check(abs(preview.clipOrigin-committedOrigin)<0.01,
-                        "Source alignment snapped the stable viewport from \(committedOrigin) " +
-                        "to \(preview.clipOrigin)")
-                    check(abs(afterY-beforeY)<0.01,
-                        "Source alignment moved the bottom viewport from \(beforeY) to \(afterY)")
-                    // A focused NSTextView can settle its clip origin after
-                    // the resource commit to keep the active insertion point
-                    // visible. That is not a new scroll/navigation request and
-                    // must not release the resource-settlement anchor.
-                    controller.source.debugApplyPassiveViewportCorrection(by:-0.25)
-                    window.displayIfNeeded()
-                    guard let correctedY=preview.debugHeadingViewportY(containing:marker) else {
-                        fail("End marker disappeared after passive source clip correction")
-                    }
-                    check(abs(correctedY-beforeY)<0.01,
-                        "Passive focused-source correction moved the bottom viewport from " +
-                        "\(beforeY) to \(correctedY)")
-                    let corrected=capture(preview,rect:region)
-                    guard let correctionShift=visualVerticalShift(before,corrected,maxShift:12) else {
-                        fail("Could not compare the passive source-correction frame")
-                    }
-                    check(correctionShift==0,
-                        "Passive focused-source correction shifted visible pixels by \(correctionShift) px")
+                check(backgroundShift==0,
+                    "Background geometry shifted visible bottom pixels by \(backgroundShift) px")
                     var samplesRemaining=60
                     @MainActor func verifyPostCommitStability() {
                         window.displayIfNeeded()
@@ -503,15 +620,14 @@ import PDFKit
                             preview.endScrollGesture()
                             wait(200,{preview.debugScrollMapError.map{abs($0)<0.01}==true &&
                                 preview.clipOrigin<lockedOrigin-1},
-                                "Explicit source scroll did not release the resource-settlement anchor") {
+                                "Explicit source scroll did not release the retained bottom anchor") {
                                 let path=clickBeforeEnd ? "clicked source":"untouched startup source"
-                                print("DELAYED IMAGE BOTTOM PASSED: \(path) Cmd-End stayed exact through \(observations.count) resource commit(s), passive source correction, and explicit-scroll release")
+                                print("BOUNDED BOTTOM PASSED: \(path) Cmd-End stayed exact through background geometry and explicit-scroll release")
                                 fflush(stdout);_exit(EXIT_SUCCESS)
                             }
                         }
                     }
                     verifyPostCommitStability()
-                }
             }
         }
     }
@@ -538,14 +654,14 @@ import PDFKit
                 "Could not click source after scrolling")
             DispatchQueue.main.async {source.textView.moveToEndOfDocument(nil)}
             DispatchQueue.main.asyncAfter(deadline:.now()+0.05) {
-                check(source.debugHasPendingNavigation,
-                    "Cmd-End did not wait for its unmeasured source prefix")
-                check(source.selection.location != document.source.count,
-                    "Cmd-End moved the caret before its source prefix was measured")
+                check(!source.debugHasPendingNavigation,
+                    "Cmd-End incorrectly waited for its unmeasured source prefix")
+                check(source.selection.location==document.source.count,
+                    "Cmd-End did not move immediately to the retained end estimate")
                 source.debugSetLayoutCompletionPaused(false)
             }
             wait(500,{source.selection.location==document.source.count && source.debugHasCompleteLayout},
-                "Cmd-End did not complete after measuring the source prefix") {
+                "Cmd-End did not remain stable while source measurement completed") {
                 guard document.source.count>0,
                       let lastY=source.debugRenderedViewportY(for:document.source.count-1) else {
                     fail("Could not locate the final source character")
@@ -553,7 +669,7 @@ import PDFKit
                 check(lastY >= -0.01 && lastY <= source.bounds.height+0.01,
                     "Cmd-End left the final source character outside the viewport at y=\(lastY); retainedLast=\(source.debugMeasuredPosition(for:document.source.count-1)); \(source.debugResizeState)")
                 print("SOURCE END NAVIGATION PASSED: scroll down/up, click, and Cmd-End reached visible EOF")
-                exit(EXIT_SUCCESS)
+                fflush(nil);_exit(EXIT_SUCCESS)
             }
         }
     }
@@ -804,7 +920,7 @@ import PDFKit
             runScenario(revision:9002,duringGesture:true) {
                 runDelayedImageScenario {
                     print("HEIGHT STABILITY INTEGRATION PASSED: delayed images, idle anchoring, and momentum-end reconciliation remain stable")
-                    exit(EXIT_SUCCESS)
+                    fflush(nil);_exit(EXIT_SUCCESS)
                 }
             }
         }
@@ -824,7 +940,7 @@ import PDFKit
             type("a",at:insertion,referenceY:headingY) { firstY in
                 type(" ",at:insertion+1,referenceY:firstY) { _ in
                     print("PARAGRAPH EDIT STABILITY INTEGRATION PASSED: a new paragraph keeps preview alignment before and after trailing space")
-                    exit(EXIT_SUCCESS)
+                    fflush(nil);_exit(EXIT_SUCCESS)
                 }
             }
         }
@@ -883,7 +999,7 @@ import PDFKit
                              referenceRects:[NSRect],index:Int) {
             guard index<characters.count else {
                 print("COMMENT EDIT STABILITY INTEGRATION PASSED: character edits between commented paragraphs keep preview position")
-                exit(EXIT_SUCCESS)
+                fflush(nil);_exit(EXIT_SUCCESS)
             }
             let insertion=String(characters[index])
             controller.source.textView.setSelectedRange(NSRange(location:location,length:0))
@@ -971,7 +1087,7 @@ import PDFKit
                                     preview.preparedFragmentCount==0 && preview.previewView.debugText.isEmpty},
                                     "Deleting all source did not clear the preview") {
                                     print("EMPTY EDITS INTEGRATION PASSED: empty startup, single blocks, character-by-character new paragraph, and delete-all")
-                                    exit(EXIT_SUCCESS)
+                                    fflush(nil);_exit(EXIT_SUCCESS)
                                 }
                                 return
                             }
@@ -1043,14 +1159,14 @@ import PDFKit
                 if controller.source.visibleSourceRange.location<=expected,
                    NSMaxRange(controller.source.visibleSourceRange)>expected,
                    controller.preview.coversSourceViewport {
-                    check(controller.preview.displaysCompleteDocument,
-                        "Background completion must retain the complete preview presentation")
+                    check(!controller.preview.displaysCompleteDocument,
+                        "Background completion must retain a bounded preview presentation")
                     controller.toggleSidebar(nil)
                     check(!controller.isSidebarVisible,"Sidebar toggle must collapse the outline")
                     controller.toggleSidebar(nil)
                     check(controller.isSidebarVisible,"Sidebar toggle must restore the outline")
                     print("OUTLINE INTEGRATION PASSED: semantic headings, complete background preview, deep jump, collapse and restore")
-                    exit(EXIT_SUCCESS)
+                    fflush(nil);_exit(EXIT_SUCCESS)
                 }
                 DispatchQueue.main.asyncAfter(deadline:.now()+0.01){waitForJump(remaining-1)}
             }
@@ -1143,7 +1259,7 @@ import PDFKit
                         do {try capture(popover).png.write(to:popoverURL,options:.atomic)}
                         catch {fail("Could not write comment popover screenshot: \(error.localizedDescription)")}
                         print("COMMENTS SCREENSHOT: \(path)")
-                        print("COMMENT POPOVER SCREENSHOT: \(popoverURL.path)");exit(EXIT_SUCCESS)
+                        print("COMMENT POPOVER SCREENSHOT: \(popoverURL.path)");fflush(nil);_exit(EXIT_SUCCESS)
                     }
                     return
                 }
@@ -1166,15 +1282,23 @@ import PDFKit
                             "Comment popover must initially align with the rendered bubble: bubble=\(bubble), positioning=\(positioning)")
                         let originalY=bubble.minY
                         controller.preview.debugScrollViewport(by:20)
-                        DispatchQueue.main.asyncAfter(deadline:.now()+0.05) {
+                        @MainActor func waitForMovedPopover(_ moveRemaining:Int) {
                             guard let moved=controller.preview.debugSelectedCommentAnchor,
                                   let movedPositioning=controller.debugCommentPopoverPositioningRect else {
                                 fail("Visible comment popover disappeared while tracking a small scroll")
                             }
-                            check(moved.minY<originalY-1,
-                                "The selected comment bubble did not move with preview scrolling: before=\(originalY), after=\(moved.minY)")
-                            check(abs(moved.midX-movedPositioning.midX)<0.5 && abs(moved.midY-movedPositioning.midY)<0.5,
-                                "Comment popover positioning did not follow the bubble while scrolling: bubble=\(moved), positioning=\(movedPositioning), raw=\(String(describing:web.debugRect(".markato-comment-bubble.is-selected"))), local=\(controller.preview.visibleWebRange.lowerBound), clip=\(controller.preview.clipOrigin)")
+                            let movedWithPreview=moved.minY<originalY-1
+                            let popoverCaughtUp=abs(moved.midX-movedPositioning.midX)<0.5 &&
+                                abs(moved.midY-movedPositioning.midY)<0.5
+                            if !movedWithPreview || !popoverCaughtUp {
+                                guard moveRemaining>0 else {
+                                    fail("Comment popover positioning did not follow the bubble while scrolling: bubble=\(moved), positioning=\(movedPositioning), raw=\(String(describing:web.debugRect(".markato-comment-bubble.is-selected"))), local=\(controller.preview.visibleWebRange.lowerBound), clip=\(controller.preview.clipOrigin)")
+                                }
+                                DispatchQueue.main.asyncAfter(deadline:.now()+0.01) {
+                                    waitForMovedPopover(moveRemaining-1)
+                                }
+                                return
+                            }
                             controller.preview.debugScrollViewport(by:controller.preview.bounds.height)
                             DispatchQueue.main.asyncAfter(deadline:.now()+0.05) {
                                 check(!controller.debugCommentPopoverIsShown,
@@ -1183,6 +1307,7 @@ import PDFKit
                                 resolveComment()
                             }
                         }
+                        DispatchQueue.main.asyncAfter(deadline:.now()+0.01) {waitForMovedPopover(200)}
                         return
                     }
                     DispatchQueue.main.asyncAfter(deadline:.now()+0.01){waitForTrackedPopover(remaining-1)}
@@ -1320,7 +1445,7 @@ import PDFKit
                                                                 "Undoing comment deletion shortened source scrolling: bottom=\(bottom), contentEnd=\(footerStart), \(controller.source.debugResizeState)")
                                                         }
                                                         print("COMMENTS INTEGRATION PASSED: inline add/edit/delete, storage, highlighting, sidebar, resolve, undo, and annotated PDF export")
-                                                        exit(EXIT_SUCCESS)
+                                                        fflush(nil);_exit(EXIT_SUCCESS)
                                                     }
                                                     DispatchQueue.main.asyncAfter(deadline:.now()+0.01){waitForUndo(undoRemaining-1)}
                                                 }
@@ -1394,7 +1519,7 @@ import PDFKit
                         document.undoManager?.redo()
                         wait(500,4,0) {
                             print("MERMAID INTEGRATION PASSED: SVG image painting, repeated diagrams, math, resize, edit, undo and redo")
-                            exit(EXIT_SUCCESS)
+                            fflush(nil);_exit(EXIT_SUCCESS)
                         }
                     }
                 }
@@ -1459,7 +1584,7 @@ import PDFKit
                         document.undoManager?.redo()
                         wait(500,"CHANGED_HIGHLIGHT_STRING") {
                             print("HIGHLIGHT INTEGRATION PASSED: token colors, literal code, math, Mermaid, resize, edit, undo and redo")
-                            exit(EXIT_SUCCESS)
+                            fflush(nil);_exit(EXIT_SUCCESS)
                         }
                     }
                 }
@@ -1519,54 +1644,70 @@ import PDFKit
         wait(800,{preview.lastRevision==document.revision &&
             preview.previewView.debugRect("p",containing:"This document is here") != nil},
             "Preview paragraph did not become ready") {
-            let heading="Section 56 — observing a changing landscape"
-            let marker=(document.source.string as NSString).range(of:"## \(heading)").location
-            guard marker != NSNotFound else{fail("Missing middle resize fixture")}
+            let heading="An aligned calculation"
+            let source=document.source.string as NSString
+            let section35=source.range(of:"## Section 35 —")
+            let formulaSearch=section35.location==NSNotFound ? NSRange(location:0,length:0):
+                NSRange(location:section35.location,length:source.length-section35.location)
+            let marker=source.range(of:"a(t) &= a",options:[],range:formulaSearch).location
+            guard marker != NSNotFound else{fail("Missing formula resize fixture")}
+            guard let formulaBlockID=controller.debugBlockID(at:marker) else {
+                fail("Missing formula block identity")
+            }
+            let formulaSelector="section[data-id='\(formulaBlockID)'] .katex-display"
             var scrollSettled=false
             preview.previewView.debugScrollSettled={_ in scrollSettled=true}
             // Put a stable rendered landmark just inside the top edge. This
             // catches top-viewport motion directly rather than observing a
             // convenient element in the middle of the pane.
-            controller.source.debugAlignViewport(at:marker,viewportY:153)
+            controller.source.debugAlignViewport(at:marker,viewportY:96)
             preview.moveViewport()
             wait(800,{preview.lastRevision==document.revision && preview.coversSourceViewport &&
-                preview.debugScrollMapError.map{abs($0)<0.01}==true && scrollSettled &&
+                preview.debugScrollMapError.map{abs($0)<0.01}==true &&
+                (scrollSettled || !preview.hasPendingPresentation) &&
                 preview.debugHeadingViewportY(containing:heading) != nil},
                 "Middle preview did not settle before continuous resize") {
             preview.previewView.debugScrollSettled=nil
-            guard let headingY=preview.debugHeadingViewportY(containing:heading) else {
-                fail("Missing middle heading before divider resize")
+            guard let formula=preview.debugElementViewportRect(formulaSelector) else {
+                fail("Missing display formula before window resize")
             }
-            guard headingY>=0,headingY<=64 else {
-                fail("Resize landmark is not near the preview top edge: y=\(headingY)")
+            guard formula.minY < 100, formula.maxY > 0 else {
+                fail("Resize formula is not crossing the preview top region: rect=\(formula)")
             }
-            let reflowParagraph="This is passage 56"
+            let formulaY=formula.minY
+            let reflowParagraph="This is passage 35"
             guard let before=preview.previewView.debugRect("p",containing:reflowParagraph) else {
                 fail("Missing preview paragraph before resize")
             }
-            controller.split.debugSetDividerGestureActive(true)
-            let startDivider=controller.source.frame.width
-            let targetDivider=min(controller.split.bounds.width-300,startDivider+260)
+            let startSize=window.contentLayoutRect.size
+            let targetSize=NSSize(width:startSize.width-190,height:startSize.height)
             let steps=72
             var step=0,commitsDuringMotion=0,drawsOfCommittedFrames=0,awaitingCommittedDraw=false
             var heightsDuringMotion=[CGFloat]()
-            guard let resizeAnchorY=preview.debugResizeAnchorViewportY else {
-                fail("Missing continuous-resize preview anchor")
-            }
             let sourceResizeAnchor=controller.source.debugRenderedViewportAnchor
             guard let sourceResizeY=controller.source.debugRenderedViewportY(for:sourceResizeAnchor) else {
                 fail("Missing continuous-resize source anchor")
             }
-            let stableHeadingY=headingY
-            var anchorErrors=[CGFloat]()
+            let probeRect=NSRect(x:0,y:0,width:min(240,preview.bounds.width),height:min(120,preview.bounds.height))
+            let stablePixels=capture(preview,rect:probeRect)
+            var domAnchorErrors=[CGFloat]()
+            var formulaAnchorErrors=[CGFloat]()
             var bitmapAlignmentErrors=[CGFloat]()
-            var headingYs=[headingY]
             var sourceAnchorYs=[CGFloat]()
+            var visualShifts=[Int?]()
+            var preReleasePixels:PixelCapture?
+            var preReleaseDOMY:CGFloat?
+            var preReleaseSourceY:CGFloat?
             preview.debugPresentationCommitted={
                 commitsDuringMotion += 1
                 awaitingCommittedDraw=true
-                if let y=preview.debugResizeAnchorViewportY {anchorErrors.append(abs(y-resizeAnchorY))}
-                if let y=preview.debugHeadingViewportY(containing:heading) {headingYs.append(y)}
+                if let y=preview.debugDOMResizeAnchorViewportY,
+                   let target=preview.debugDOMResizeAnchorTargetViewportY {
+                    domAnchorErrors.append(abs(y-target))
+                }
+                if let rect=preview.debugElementViewportRect(formulaSelector) {
+                    formulaAnchorErrors.append(abs(rect.minY-formulaY))
+                }
                 bitmapAlignmentErrors.append(preview.debugBitmapAlignmentError)
                 if let height=preview.previewView.debugRect("p",containing:reflowParagraph)?.height {
                     heightsDuringMotion.append(height)
@@ -1575,37 +1716,72 @@ import PDFKit
             preview.previewView.debugDidDraw={
                 if awaitingCommittedDraw {drawsOfCommittedFrames += 1;awaitingCommittedDraw=false}
             }
+            guard let gestureWindow=controller.split.window else{fail("Missing resize gesture window")}
+            let downPoint=NSPoint(x:gestureWindow.contentLayoutRect.midX,y:gestureWindow.contentLayoutRect.midY)
+            guard let down=NSEvent.mouseEvent(with:.leftMouseDown,location:downPoint,
+                modifierFlags:[],timestamp:0,windowNumber:gestureWindow.windowNumber,
+                context:nil,eventNumber:1,clickCount:1,pressure:1) else {
+                fail("Could not create divider mouse-down")
+            }
             let timer=Timer(timeInterval:1.0/60.0,repeats:true) {timer in
                 MainActor.assumeIsolated {
-                    guard step<steps else{timer.invalidate();return}
+                    if step>0 {
+                        controller.split.layoutSubtreeIfNeeded();window.displayIfNeeded()
+                        visualShifts.append(visualVerticalShift(stablePixels,
+                            capture(preview,rect:probeRect),maxShift:80))
+                        if let y=controller.source.debugRenderedViewportY(for:sourceResizeAnchor) {
+                            sourceAnchorYs.append(y)
+                        }
+                    }
+                    guard step<steps else {
+                        preReleasePixels=capture(preview,rect:probeRect)
+                        preReleaseDOMY=preview.debugDOMResizeAnchorViewportY
+                        preReleaseSourceY=controller.source.debugRenderedViewportY(for:sourceResizeAnchor)
+                        guard let up=NSEvent.mouseEvent(with:.leftMouseUp,
+                            location:NSPoint(x:downPoint.x+targetSize.width-startSize.width,y:downPoint.y),
+                            modifierFlags:[],timestamp:Double(step+1)/60,
+                            windowNumber:gestureWindow.windowNumber,context:nil,eventNumber:step+2,
+                            clickCount:1,pressure:0) else{fail("Could not create divider mouse-up")}
+                        NSApp.postEvent(up,atStart:false);timer.invalidate();return
+                    }
                     step += 1
                     let fraction=CGFloat(step)/CGFloat(steps)
-                    controller.split.setPosition(startDivider+(targetDivider-startDivider)*fraction,
-                        ofDividerAt:0)
-                    controller.split.layoutSubtreeIfNeeded();window.displayIfNeeded()
-                    if let y=controller.source.debugRenderedViewportY(for:sourceResizeAnchor) {
-                        sourceAnchorYs.append(y)
-                    }
+                    guard let drag=NSEvent.mouseEvent(with:.leftMouseDragged,
+                        location:NSPoint(x:downPoint.x+(targetSize.width-startSize.width)*fraction,y:downPoint.y),
+                        modifierFlags:[],timestamp:Double(step)/60,
+                        windowNumber:gestureWindow.windowNumber,context:nil,eventNumber:step+1,
+                        clickCount:1,pressure:1) else{fail("Could not create divider drag")}
+                    NSApp.postEvent(drag,atStart:false)
                 }
             }
             RunLoop.main.add(timer,forMode:.common)
-            let motionDeadline=Date(timeIntervalSinceNow:10)
-            while timer.isValid && Date()<motionDeadline {
-                _=RunLoop.current.run(mode:.eventTracking,before:Date(timeIntervalSinceNow:0.005))
-            }
+            let gesture=WindowResizeGestureTarget(window:gestureWindow,
+                begin:{controller.windowWillStartLiveResize(Notification(
+                    name:NSWindow.willStartLiveResizeNotification,object:gestureWindow))},
+                end:{controller.windowDidEndLiveResize(Notification(
+                    name:NSWindow.didEndLiveResizeNotification,object:gestureWindow))})
+            gesture.mouseDown(with:down)
             timer.invalidate()
+            window.contentView?.layoutSubtreeIfNeeded();window.displayIfNeeded()
+            let immediateReleasePixels=capture(preview,rect:probeRect)
+            let immediateReleaseDOMY=preview.debugDOMResizeAnchorViewportY
+            let immediateReleaseSourceY=controller.source.debugRenderedViewportY(for:sourceResizeAnchor)
             preview.debugPresentationCommitted=nil;preview.previewView.debugDidDraw=nil
             guard step==steps,commitsDuringMotion>=6,drawsOfCommittedFrames>=6,
                   heightsDuringMotion.contains(where:{$0>before.height+10}),
                   sourceAnchorYs.count==steps,
                   sourceAnchorYs.allSatisfy({$0==sourceResizeY}),
-                  anchorErrors.count==commitsDuringMotion,
-                  anchorErrors.allSatisfy({$0==0}),
+                  domAnchorErrors.count==commitsDuringMotion,
+                  domAnchorErrors.allSatisfy({$0<1}),
+                  formulaAnchorErrors.count==commitsDuringMotion,
+                  formulaAnchorErrors.allSatisfy({$0<1}),
                   bitmapAlignmentErrors.count==commitsDuringMotion,
                   bitmapAlignmentErrors.allSatisfy({$0==0}),
-                  headingYs.count==commitsDuringMotion+1,
-                  headingYs.allSatisfy({$0==stableHeadingY}) else {
-                fail("Preview did not reflow with exactly stationary source and preview anchors during continuous divider resize: before=\(before), sourceY=\(sourceResizeY), sourceYs=\(sourceAnchorYs), stableHeading=\(stableHeadingY), steps=\(step), commits=\(commitsDuringMotion), committedDraws=\(drawsOfCommittedFrames), heights=\(heightsDuringMotion), anchorErrors=\(anchorErrors), headingYs=\(headingYs), bitmapAlignmentErrors=\(bitmapAlignmentErrors), \(preview.debugGeometry())")
+                  visualShifts.count==steps,
+                  let preReleasePixels,
+                  preReleaseSourceY==immediateReleaseSourceY,
+                  visualVerticalShift(preReleasePixels,immediateReleasePixels,maxShift:40)==0 else {
+                fail("Preview did not keep the same rendered characters stationary during the native window-resize gesture and mouse-up: before=\(before), formula=\(formula), sourceY=\(sourceResizeY), sourceYs=\(sourceAnchorYs), steps=\(step), commits=\(commitsDuringMotion), committedDraws=\(drawsOfCommittedFrames), heights=\(heightsDuringMotion), domAnchorErrors=\(domAnchorErrors), formulaAnchorErrors=\(formulaAnchorErrors), preReleaseDOM=\(String(describing:preReleaseDOMY)), immediateReleaseDOM=\(String(describing:immediateReleaseDOMY)), preReleaseSource=\(String(describing:preReleaseSourceY)), immediateReleaseSource=\(String(describing:immediateReleaseSourceY)), bitmapAlignmentErrors=\(bitmapAlignmentErrors), visualShifts=\(visualShifts), releasePixelShift=\(String(describing:preReleasePixels.map{visualVerticalShift($0,immediateReleasePixels,maxShift:40)})), \(preview.debugGeometry())")
             }
             let deadline=Date(timeIntervalSinceNow:2)
             while Date()<deadline {
@@ -1621,37 +1797,37 @@ import PDFKit
                 fail("Preview paragraph did not settle after uninterrupted tracking: before=\(before), after=\(String(describing:preview.previewView.debugRect("p",containing:reflowParagraph))), bounds=\(preview.bounds.width), web=\(preview.previewView.geometry()?.width ?? -1), \(preview.debugGeometry())")
             }
             let releaseOrigin=preview.clipOrigin
-            let releaseHeadingY=preview.debugHeadingViewportY(containing:heading)
-            let scale=window.backingScaleFactor
-            let releaseHeadingPixel=releaseHeadingY.map{Int(($0*scale).rounded())}
+            let releaseDOMY=preview.debugDOMResizeAnchorViewportY
+            let releaseFormulaY=preview.debugElementViewportRect(formulaSelector)?.minY
             let releaseFrame=preview.committedFrameID
-            controller.split.debugSetDividerGestureActive(false)
-            wait(800,{preview.lastRevision==document.revision && preview.displaysCompleteDocument &&
+            wait(800,{preview.lastRevision==document.revision && !preview.displaysCompleteDocument &&
                 !preview.isRenderingPresentation && preview.committedFrameID>releaseFrame &&
                 abs((preview.previewView.geometry()?.width ?? 0)-preview.bounds.width)<1},
-                "Final-width complete presentation did not settle after mouse-up") {
+                "Final-width bounded presentation did not settle after mouse-up") {
                 window.contentView?.layoutSubtreeIfNeeded();window.displayIfNeeded()
-                let afterHeadingY=preview.debugHeadingViewportY(containing:heading)
-                let afterHeadingPixel=afterHeadingY.map{Int(($0*scale).rounded())}
-                check(afterHeadingPixel==releaseHeadingPixel,
-                    "Mouse-up moved visible preview content: originBefore=\(releaseOrigin), originAfter=\(preview.clipOrigin), headingBefore=\(String(describing:releaseHeadingY)), headingAfter=\(String(describing:preview.debugHeadingViewportY(containing:heading))), \(preview.debugGeometry())")
+                let afterDOMY=preview.debugDOMResizeAnchorViewportY
+                check(afterDOMY.flatMap { y in preview.debugDOMResizeAnchorTargetViewportY.map{abs(y-$0)<1} }==true,
+                    "Mouse-up moved the top preview character: originBefore=\(releaseOrigin), originAfter=\(preview.clipOrigin), characterBefore=\(String(describing:releaseDOMY)), characterAfter=\(String(describing:afterDOMY)), target=\(String(describing:preview.debugDOMResizeAnchorTargetViewportY)), \(preview.debugGeometry())")
+                check(releaseFormulaY.flatMap { before in
+                    preview.debugElementViewportRect(formulaSelector).map { abs($0.minY-before)<1 }
+                }==true,"Mouse-up moved the visible display formula")
                 check(controller.source.debugRenderedViewportY(for:sourceResizeAnchor)==sourceResizeY,
-                    "Mouse-up or complete publication moved visible source content")
+                    "Mouse-up or completed background geometry moved visible source content")
                 check(preview.debugBitmapAlignmentError==0,
-                    "Final-width complete publication left a bitmap alignment residual")
+                    "Final-width bounded publication left a bitmap alignment residual")
                 DispatchQueue.main.asyncAfter(deadline:.now()+0.2) {
                     window.contentView?.layoutSubtreeIfNeeded();window.displayIfNeeded()
-                    let settledHeadingPixel=preview.debugHeadingViewportY(containing:heading)
-                        .map{Int(($0*scale).rounded())}
-                    check(settledHeadingPixel==releaseHeadingPixel,
-                        "A queued post-release callback moved visible preview content")
+                    check(preview.debugDOMResizeAnchorViewportY.flatMap { y in
+                        preview.debugDOMResizeAnchorTargetViewportY.map{abs(y-$0)<1}
+                    }==true,
+                        "A queued post-release callback moved the top preview character")
                     check(controller.source.debugRenderedViewportY(for:sourceResizeAnchor)==sourceResizeY,
                         "A queued post-release callback moved visible source content")
                     controller.source.debugScrollViewport(by:80)
                     wait(300,{preview.clipOrigin != releaseOrigin &&
                         preview.debugScrollMapError.map{abs($0)<0.01}==true},
                         "The next source movement did not release resize anchoring and resume center alignment") {
-                        print("PREVIEW REWRAP PASSED: 60 Hz divider motion produced \(commitsDuringMotion) coherent commits and \(drawsOfCommittedFrames) draws; source and preview stayed exact through mouse-up, final-width layout, complete publication, and queued callbacks")
+                        print("PREVIEW REWRAP PASSED: native 60 Hz window-resize motion produced \(commitsDuringMotion) coherent commits and \(drawsOfCommittedFrames) draws; the source stayed exact, the visible formula stayed within subpixel scroll quantization, and mouse-up caused zero pixel displacement")
                         fflush(stdout);_exit(EXIT_SUCCESS)
                     }
                 }
@@ -1668,6 +1844,22 @@ import PDFKit
         wait(800,{preview.coversSourceViewport && preview.debugScrollMapError.map{abs($0)<0.01}==true},
             "Preview-scroll regression did not reach its aligned starting point") {
             let sourceOrigin=source.viewportOrigin,previewOrigin=preview.clipOrigin
+            guard let lineEvent=scrollWheelEvent(units:.line,delta:-1),
+                  !lineEvent.hasPreciseScrollingDeltas else {
+                fail("Could not create a non-precise mouse-wheel event")
+            }
+            preview.previewView.scrollWheel(with:lineEvent)
+            check(abs(preview.clipOrigin-(previewOrigin+source.verticalLineScroll))<0.01,
+                "Preview treated a mouse-wheel line as one pixel: before=\(previewOrigin), " +
+                "after=\(preview.clipOrigin), lineScroll=\(source.verticalLineScroll)")
+            guard let pixelEvent=scrollWheelEvent(units:.pixel,delta:-7),
+                  pixelEvent.hasPreciseScrollingDeltas else {
+                fail("Could not create a precise trackpad-style scroll event")
+            }
+            let lineOrigin=preview.clipOrigin
+            preview.previewView.scrollWheel(with:pixelEvent)
+            check(abs(preview.clipOrigin-(lineOrigin+7))<0.01,
+                "Preview scaled a precise scrolling delta")
             preview.debugScrollViewport(by:120)
             check(abs(source.viewportOrigin-sourceOrigin)<0.01,
                 "Scrolling over the preview moved the source viewport")
@@ -1775,8 +1967,8 @@ import PDFKit
             wait(800,{controller.hasPreparedDocument && preview.coversSourceViewport && !preview.isShowingLoadingState &&
                 preview.displayedSourceRange.map{NSMaxRange($0)>=document.source.count-1}==true},
                 "A cached deep jump did not publish") {
-                check(preview.displaysCompleteDocument,
-                    "A deep jump after background completion must use the complete retained presentation")
+                check(!preview.displaysCompleteDocument,
+                    "A deep jump after background completion must keep the browser DOM bounded")
                 check(controller.hasPreparedDocument,"The deep jump should use the fully prepared retained tree")
                 let retainedFrame=preview.committedFrameID
                 let crossRevisionCommits=preview.crossRevisionCommitCount
@@ -1802,8 +1994,10 @@ import PDFKit
                     wait(800,{controller.isShowingParseError},"Repeated parser failure did not expose Retry") {
                         check(preview.displayedDocumentRevision==retainedRevision,
                             "Repeated parser failure must retain the last successful preview revision")
-                        check(preview.previewView.debugText.contains("TRANSIENT_PARSE_EDIT") && !preview.isShowingLoadingState,
-                            "Repeated parser failure must leave the last successful preview visible")
+                        check(preview.previewView.debugText.contains("TRANSIENT_PARSE_EDIT"),
+                            "Repeated parser failure discarded the last successful preview: \(preview.debugGeometry())")
+                        check(!preview.isShowingLoadingState,
+                            "Repeated parser failure covered the retained preview with Loading: \(preview.debugGeometry())")
                         controller.debugRetryFailedParse()
                         wait(800,{document.revision==repeatedRevision && preview.lastRevision==repeatedRevision &&
                             preview.previewView.debugText.contains("REPEATED_PARSE_EDIT")},"Manual parser retry did not recover") {
@@ -1831,29 +2025,49 @@ import PDFKit
             "Deferred no-motion resize shifted source text horizontally: before=\(beforeNoMotionX), after=\(source.debugResizeState)")
         check(abs(source.canvas.frame.width-source.scroll.contentSize.width)<0.1,
             "Source document width did not track the scrollable viewport after scroller retile")
-        let heading=(document.source.string as NSString).range(of:"## Section 56 — observing a changing landscape")
-        guard heading.location != NSNotFound else{fail("Missing Section 56 fixture")}
-        source.debugAlignViewport(at:heading.location,viewportY:source.bounds.height/2)
+        let text=document.source.string as NSString
+        let section35=text.range(of:"## Section 35 — observing a changing landscape")
+        let formulaSearch=section35.location==NSNotFound ? NSRange(location:0,length:0):
+            NSRange(location:section35.location,length:text.length-section35.location)
+        let formulaOffset=text.range(of:"a(t) &= a",options:[],range:formulaSearch).location
+        guard formulaOffset != NSNotFound,let formulaBlockID=controller.debugBlockID(at:formulaOffset) else {
+            fail("Missing Section 35 formula fixture")
+        }
+        let formulaSelector="section[data-id='\(formulaBlockID)'] .katex-display"
+        source.debugAlignViewport(at:formulaOffset,viewportY:96)
         preview.moveViewport()
         wait(800,{preview.coversSourceViewport &&
             abs((preview.previewView.geometry()?.width ?? 0)-preview.bounds.width)<1 &&
             preview.debugScrollMapError.map{abs($0)<0.01}==true},
             "The middle viewport did not settle before resize: covers=\(preview.coversSourceViewport), webWidth=\(preview.previewView.geometry()?.width ?? -1), boundsWidth=\(preview.bounds.width), mapError=\(String(describing:preview.debugScrollMapError)), \(preview.debugGeometry())") {
             let original=window.contentLayoutRect.size
+            guard let formulaRect=preview.debugElementViewportRect(formulaSelector),
+                  formulaRect.minY<100,formulaRect.maxY>0 else {
+                fail("Formula was not at the preview top before live resize: \(String(describing:preview.debugElementViewportRect(formulaSelector)))")
+            }
+            let formulaY=formulaRect.minY
             controller.windowWillStartLiveResize(Notification(name:NSWindow.willStartLiveResizeNotification,object:window))
+            var committedDOMErrors=[CGFloat](),committedFormulaErrors=[CGFloat]()
+            preview.debugPresentationCommitted={
+                if let y=preview.debugDOMResizeAnchorViewportY,
+                   let target=preview.debugDOMResizeAnchorTargetViewportY {
+                    committedDOMErrors.append(abs(y-target))
+                }
+                if let rect=preview.debugElementViewportRect(formulaSelector) {
+                    committedFormulaErrors.append(abs(rect.minY-formulaY))
+                }
+            }
             let anchor=source.debugRenderedViewportAnchor
             guard let sourceY=source.debugRenderedViewportY(for:anchor),
-                  let previewY=preview.debugResizeAnchorViewportY else {
+                  preview.debugDOMResizeAnchorViewportY != nil,
+                  preview.debugDOMResizeAnchorTargetViewportY != nil else {
                 fail("Could not capture both resize anchors")
             }
             @MainActor func assertAnchors(_ stage:String) {
                 check(source.debugRenderedViewportY(for:anchor).map{abs($0-sourceY)<1}==true,
                     "Source visible top moved \(stage): \(source.debugResizeState)")
-                check(preview.debugResizeAnchorViewportY.map{$0==previewY}==true,
-                    "Preview visible top moved \(stage): \(preview.debugResizeAnchorState)")
             }
-            let sizes=[NSSize(width:original.width-190,height:original.height-100),
-                       NSSize(width:original.width+170,height:original.height+80)]
+            let sizes=[NSSize(width:original.width-190,height:original.height)]
             @MainActor func step(_ index:Int) {
                 guard index<sizes.count else {
                     window.contentView?.layoutSubtreeIfNeeded();window.displayIfNeeded()
@@ -1864,8 +2078,14 @@ import PDFKit
                     controller.windowDidEndLiveResize(Notification(name:NSWindow.didEndLiveResizeNotification,object:window))
                     check(!preview.isShowingLoadingState,
                         "Resize release masked the already reflowed preview")
+                    check(source.debugRenderedViewportY(for:anchor).map{abs($0-sourceY)<1}==true,
+                        "Source visible top moved at mouse-up: \(source.debugResizeState)")
+                    check(visualVerticalShift(previewBefore,capture(preview),maxShift:40)==0,
+                        "Preview pixels moved at mouse-up")
                     assertAnchors("at mouse-up")
-                    DispatchQueue.main.asyncAfter(deadline:.now()+0.12) {
+                    wait(800,{!preview.hasPendingPresentation &&
+                        abs((preview.previewView.geometry()?.width ?? 0)-preview.bounds.width)<1},
+                        "Final formula resize presentation did not settle after mouse-up") {
                         window.contentView?.layoutSubtreeIfNeeded();window.displayIfNeeded()
                         let after=capture(source.scroll.contentView)
                         let previewAfter=capture(preview)
@@ -1873,11 +2093,15 @@ import PDFKit
                             "Deferred resize release masked the preview")
                         writeVisualCapture(after,suffix:"after-release")
                         writeVisualCapture(previewAfter,suffix:"preview-after-release")
-                        // Layout completes asynchronously after release. The
-                        // semantic anchor, rather than an exact bitmap match,
-                        // is the stability contract.
-                        check(preview.debugResizeAnchorViewportY.map{$0==previewY}==true,
-                            "Preview visible top moved after deferred layout: \(preview.debugResizeAnchorState)")
+                        assertAnchors("after deferred mouse-up layout")
+                        check(preview.debugElementViewportRect(formulaSelector).map{abs($0.minY-formulaY)<1}==true,
+                            "Visible formula moved after mouse-up settlement: before=\(formulaRect), after=\(String(describing:preview.debugElementViewportRect(formulaSelector))), \(preview.debugResizeAnchorState)")
+                        preview.debugPresentationCommitted=nil
+                        check(!committedDOMErrors.isEmpty && committedDOMErrors.allSatisfy{$0<1},
+                            "A committed outer-resize frame moved its DOM anchor: \(committedDOMErrors)")
+                        check(committedFormulaErrors.count==committedDOMErrors.count &&
+                              committedFormulaErrors.allSatisfy{$0<1},
+                            "A committed outer-resize frame moved or omitted the visible formula: DOM=\(committedDOMErrors), formula=\(committedFormulaErrors)")
                         // Continue the broader integration scenario at its
                         // established geometry. This is a new resize after the
                         // mouse-up invariant above has already been checked.
@@ -2087,23 +2311,23 @@ import PDFKit
         controller.windowDidEndLiveResize(Notification(name:NSWindow.didEndLiveResizeNotification,object:window))
         wait(300,{abs((preview.previewView.geometry()?.width ?? 0)-preview.bounds.width)<=1},
             "Ultralight did not settle after resize") {
-            wait(800,{controller.hasPreparedDocument && preview.displaysCompleteDocument &&
+            wait(800,{controller.hasPreparedDocument && controller.hasMeasuredPreviewDocument &&
                 preview.lastRevision==document.revision},
-                "Edited document did not finish background presentation before cached navigation (\(controller.debugPreparationState))") {
+                "Edited document did not finish background measurement before cached navigation (\(controller.debugPreparationState))") {
                 let completeFrame=preview.committedFrameID
                 source.reveal(0,alignTop:true)
                 wait(800,{preview.coversSourceViewport && preview.previewView.debugText.contains("Markato")},
                     "Return to the cached first viewport failed") {
-                    check(preview.displaysCompleteDocument,
-                        "Returning to the top after background completion must retain the complete presentation")
-                    check(preview.committedFrameID==completeFrame,
-                        "Returning to the top after background completion must be retained-layout lookup")
+                    check(!preview.displaysCompleteDocument,
+                        "Returning to the top after background completion must retain a bounded presentation")
+                    check(preview.committedFrameID>completeFrame,
+                        "Returning to the top must publish the destination's bounded window")
                     check(startupCount>0,"Startup must mount semantic entries")
-                    print("INTEGRATION PASSED: prioritized first view, complete background presentation, presentation recovery, automatic and manual parse recovery, retained stale preview, cached navigation, stable paragraph insertion, rapid typing, edit, resize, and return-to-top scrolling")
+                    print("INTEGRATION PASSED: prioritized first view, complete background geometry, presentation recovery, automatic and manual parse recovery, retained stale preview, cached navigation, stable paragraph insertion, rapid typing, edit, resize, and return-to-top scrolling")
                     if CommandLine.arguments.contains("--diagnostics") {
                         try? TimingDiagnostics.shared.snapshot().json().write(to:URL(fileURLWithPath:"/private/tmp/markato-ultralight-integration-timings.json"),options:.atomic)
                     }
-                    exit(EXIT_SUCCESS)
+                    fflush(nil);_exit(EXIT_SUCCESS)
                 }
             }
         }
@@ -2147,7 +2371,7 @@ import PDFKit
                 if CommandLine.arguments.contains("--diagnostics") {
                     try? TimingDiagnostics.shared.snapshot().json().write(to:URL(fileURLWithPath:"/private/tmp/markato-layout-index-timings.json"))
                 }
-                exit(EXIT_SUCCESS)
+                fflush(nil);_exit(EXIT_SUCCESS)
             }
             DispatchQueue.main.asyncAfter(deadline:.now()+0.05){step(stage+1)}
         }

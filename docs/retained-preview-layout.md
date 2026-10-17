@@ -4,25 +4,21 @@ Status: implemented architecture
 
 ## The model
 
-The preview has two rendering stages for each document revision.
+The preview has two complementary stages for each document revision.
 
 1. **Priority render.** Render the source viewport plus twelve preview
    viewports of runway on each side. This is the first frame and the fallback
    after an edit. It must become visible without waiting for the rest of the
    document.
-2. **Complete render.** Continue preparing the document in the background,
-   then give the complete block list to Ultralight. Ultralight lays it out on
-   its renderer thread. When that frame is ready, publish it atomically and
-   retain the complete DOM.
+2. **Complete geometry.** Continue preparing the document in the background,
+   then give Ultralight small consecutive measurement windows. Store their
+   numeric block strides in `PreparedDocument` and discard each measurement
+   DOM when the next slice replaces it.
 
-The priority window is a scheduling mechanism, not the steady-state storage
-model. Once the complete render has committed, ordinary scrolling never
-replaces the DOM or parses Markdown. It only looks up the new preview position
-and asks Ultralight to paint that position.
-
-The old implementation violated this rule in two places: completion remounted
-another bounded window, and a later hook trimmed any complete presentation
-back to thirty viewports. Both behaviors are removed.
+The retained application model is complete, but the browser presentation is
+always bounded. Scrolling within its runway is lookup plus paint. Crossing the
+runway or jumping to a distant section lays out and atomically publishes a new
+bounded window. No placeholder elements or document-sized DOM are used.
 
 ## Block geometry
 
@@ -43,10 +39,10 @@ Subtree sums make a block prefix, suffix displacement, and document-height
 change logarithmic. A measurement is accepted only if its document revision,
 block ID, content version, and layout identity still match.
 
-Before complete layout, estimates make the priority window navigable. After
-complete layout, Ultralight's full geometry is authoritative for the current
-revision and width. The estimates remain useful only for preparing the next
-priority frame after an edit or width change.
+Before complete measurement, estimates make every destination navigable.
+Afterward, the accumulated Ultralight block measurements are authoritative for
+the current revision and width. Estimates remain useful while preparing the
+next layout identity after an edit or width change.
 
 ## Publishing geometry
 
@@ -117,9 +113,9 @@ apply a below-viewport change after the gesture crossed above it.
 
 ## Scrolling and gesture races
 
-After the complete render, synchronized scrolling is a position lookup against
-the committed mapping. It does not parse, mount a window, or lay out the
-document again.
+After complete geometry, synchronized scrolling inside the mounted runway is a
+position lookup against the committed mapping. Crossing the runway schedules a
+bounded replacement; it never parses or lays out the whole document.
 
 Scroll paints use a latest-value mailbox. The renderer keeps at most one
 pending destination and never publishes a bitmap for a superseded destination.
@@ -145,9 +141,9 @@ correction is not a new navigation request and must not move the preview. A
 real scroll gesture, Cmd-End navigation, preview scroll, or replacement of the
 scroll source releases the anchor before applying the shared mapping.
 
-The complete presentation cannot be outrun, so a long scroll cannot expose a
-“Loading preview” panel after background completion. Before completion, the
-priority window may be replenished if the user reaches its runway.
+Window replacement begins while runway remains and retains the old bitmap until
+the replacement is ready, so a long scroll or jump does not expose a “Loading
+preview” panel. Visible work has priority over background measurement.
 
 ## Scrollbars
 
@@ -155,9 +151,9 @@ Before complete layout, the scrollbar uses the retained estimated total.
 Height corrections may change the thumb, but anchoring prevents visible
 content from moving.
 
-When the complete frame commits, its exact Ultralight document height becomes
-the scroll extent. Later isolated height changes update that extent in the same
-atomic transaction as their pixels and anchored origin.
+When complete geometry is available, its accumulated exact block strides
+become the scroll extent. Later isolated height changes update that extent in
+the same atomic transaction as their pixels and anchored origin.
 
 If every changed block is outside the viewport, the visible bitmap is already
 the correct picture of the anchored content. The commit therefore updates the
@@ -177,8 +173,8 @@ document origins change.
 
 Ordinary center-aligned source-to-preview mapping is suspended for the entire
 session. Mouse-up does not end the anchoring rule: the same session survives
-final TextKit measurement, final Ultralight layout, and replacement of a
-priority presentation by the complete one. It is released only by genuine
+final TextKit measurement, final bounded Ultralight layout, and completed
+background-geometry publication. It is released only by genuine
 source movement or a document revision; the next source movement resumes
 ordinary center alignment. Mouse-up must therefore produce no viewport
 correction.
@@ -193,30 +189,32 @@ for the complete navigation contract.
 An edit keeps the last committed bitmap visible. The parser preserves stable
 block identities and retained measurements outside the changed region. A
 priority render publishes the new revision near the viewport; background work
-then restores a complete presentation for that revision.
+then restores complete retained geometry for that revision.
 
 An edit therefore does not trade responsiveness for the steady-state
-guarantee: the user gets a local update first, and lookup-only scrolling again
-after background completion.
+guarantee: the user gets a local update first, and exact global coordinates
+again after background completion.
 
 ## Work placement
 
-Document-sized parsing, HTML construction, Ultralight layout, and complete
-geometry production belong off the main thread. The main thread performs
-bounded validation and an atomic state swap. Incremental height changes update
-only affected tree paths.
+Document-sized parsing and HTML construction belong off the main thread.
+Ultralight measurement is split into small renderer-thread slices because an
+individual layout transaction is not preemptible. The main thread performs
+bounded validation and tree updates. Incremental height changes update only
+affected paths.
 
 The renderer may coalesce obsolete background work, but there is no fallback
-architecture in which the complete document is silently abandoned. A new
-revision cancels the old revision's completion and starts the same two stages
-again.
+architecture in which complete retained geometry is silently abandoned. A new
+revision cancels the old revision's measurement sequence and starts the same
+two stages again.
 
 ## Required tests
 
 Automated tests must cover:
 
-- a bounded first frame followed by a complete retained presentation;
-- a deep jump after completion with no loading panel or DOM replacement;
+- a bounded first frame followed by complete retained geometry;
+- a deep jump before and after completion with no loading panel or
+  document-sized DOM;
 - delayed image growth and shrinkage above the viewport;
 - a height change from an explicitly fractional logical scroll origin, checked
   to subpixel precision before and after Ultralight paint settlement, with
@@ -228,6 +226,7 @@ Automated tests must cover:
   is released and synchronized scrolling resumes;
 - a height change during momentum, committed at the gesture's final position;
 - resize at the top, middle, and bottom;
-- an edit followed by priority and complete frames without viewport motion;
+- an edit followed by priority and completed-geometry publication without
+  viewport motion;
 - stale revision, content-version, and layout-identity rejection; and
 - exact scrollbar extent after complete layout.

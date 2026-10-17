@@ -158,8 +158,9 @@ when they capture and release an anchor, not in how they resolve one.
 
 ## Retained geometry and complexity
 
-Parsing, full preview layout, and full preview geometry construction happen in
-the background.
+Parsing and full preview geometry construction happen in the background. The
+HTML engine lays out bounded measurement slices and the application retains
+their numeric block strides; it never creates a document-sized browser DOM.
 Scrolling and completed-document navigation use retained lookup structures.
 An isolated height change updates the affected retained-tree paths; it does not
 scan or reconstruct all following positions.
@@ -188,8 +189,8 @@ The main thread may perform bounded TextKit measurement, retained-tree lookup,
 validation, and atomic publication. Source measurement completion may use
 small main-run-loop batches because TextKit is main-thread-bound. No gesture,
 jump, resize callback, or height-change commit may perform work proportional
-to document size. Full preparation and Ultralight layout are allowed to be
-document-sized only on their background or renderer workers.
+to document size. Full preparation may be document-sized on its background
+worker. Ultralight work, including background measurement, remains bounded.
 
 ## Atomic publication
 
@@ -265,22 +266,23 @@ paint the exposed strip; it must not relayout the document or rebuild the DOM.
 
 A jump is explicit navigation, not an unusually large scroll delta.
 
-- If the destination source prefix is not measured yet, delay the jump until
-  that prefix has been measured.
+- Use retained estimates to reach the destination immediately, then replace a
+  bounded region around it with exact TextKit geometry. Geometry above the
+  viewport need not be exact: later corrections shift the target and its
+  logical origin together.
 - Start and end commands target exact document boundaries. They are not
   percentages and are not inferred from an estimated scrollbar maximum.
 - A jump releases any resize or delayed-layout anchor that would otherwise
   override the requested destination.
-- Once complete source and preview presentations exist, a jump is retained
-  lookup plus paint. It must not parse, remount a window, or expose a loading
-  placeholder.
+- A jump explicitly requests a bounded destination window. It must not wait
+  for background geometry, mount a document-sized DOM, or expose a loading
+  placeholder. A previously measured destination is retained lookup plus
+  bounded layout and paint.
 
-The source side stores an unresolved jump as a revision-bound pending
-navigation request. Bounded TextKit batches replace estimates from the required
-prefix until the destination can be resolved exactly. Editing, explicit user
-interaction, or a new navigation request cancels or supersedes the pending
-request. The caret and source clip move only after exact geometry exists; the
-preview is then placed from the resulting committed source origin.
+The source refines a bounded logical-line region around the destination before
+moving its clip. Background TextKit measurement may later correct geometry
+above it, but the visible source and preview anchors remain fixed. A new
+explicit navigation supersedes the current destination.
 
 Cmd-Home and Cmd-End additionally tell the preview that the navigation target
 is the exact start or end boundary. This is a navigation decision only. After
@@ -352,12 +354,18 @@ protected; the preview uses the normal asynchronous publication path. A
 completed coherent width may be displayed while a newer width remains queued,
 which gives real-time reflow without publishing mixed geometry and pixels.
 
+Taking resize ownership also cancels publication of scroll work requested for
+the preceding viewport. A committed resize capture advances Ultralight through
+at least two renderer cycles: the first cycle may report the forced
+invalidation while only updating scroll metrics, and the second makes those
+metrics visible in the software surface. Geometry and pixels are not published
+from different cycles.
+
 Mouse-up finalizes the width but does not release the anchors. Final TextKit
-measurement, final Ultralight layout, queued callbacks, and replacement of a
-priority presentation by the complete presentation all resolve the same
-session. The session ends only on genuine source navigation or a document
-revision. Ordinary center alignment resumes on that next navigation, not on
-mouse-up.
+measurement, final bounded Ultralight layout, queued callbacks, and completed
+background-geometry publication all resolve the same session. The session ends
+only on genuine source navigation or a document revision. Ordinary center
+alignment resumes on that next navigation, not on mouse-up.
 
 Within one revision both semantic anchors must remain resolvable; otherwise the
 result is stale and is rejected. The document top is an explicit boundary. The
@@ -374,17 +382,16 @@ The thumb may move when offscreen content changes height even though the
 visible passage does not. Do not preserve a percentage, snap to a newly changed
 maximum, or let scrollbar rounding move the content anchor.
 
-## Priority render and complete render
+## Priority render and complete geometry
 
 For a new revision or width, prioritized rendering produces the visible area
-and bounded runway first. Background work continues until the entire document
-is prepared and retained. The priority window is a scheduling policy, not the
-steady-state document model.
+and bounded runway first. Background work continues until every block's HTML
+and numeric geometry are retained. Foreground and steady-state browser DOMs
+remain bounded.
 
-Replacing a priority presentation with the complete presentation is a geometry
-publication, not navigation. Whichever operation currently owns the viewport
-must survive that replacement, including a completed resize session and a
-delayed-height anchor.
+Publishing completed background geometry is not navigation. Whichever
+operation currently owns the viewport must survive the final extent update,
+including a completed resize session and a delayed-height anchor.
 
 The priority window is selected from the retained block tree by source range
 and accumulated preview stride. Its global `windowTop` and total document
@@ -393,11 +400,12 @@ elements. Replenishing a priority window changes the mounted range but not the
 global preview coordinate system.
 
 Background preparation advances through missing HTML and source measurement
-without evicting prepared blocks. When every block is ready, one complete
-Ultralight presentation replaces the bounded one. After that commit, deep
-scrolling and jumping cannot request another window: the complete DOM and
-geometry stay retained until a new document revision or preview layout ID
-requires replacement.
+without evicting prepared blocks. Small, low-priority Ultralight measurement
+windows then fill preview strides. Each slice is short enough that visible
+scrolling or destination rendering does not wait behind a long non-preemptible
+layout. Exact geometry stays retained until a new document revision or preview
+layout ID invalidates it; distant movement still replaces the bounded visible
+window.
 
 If a new edit or width supersedes preparation, obsolete work may be coalesced
 or rejected by identity. The system must not silently abandon completion and
@@ -414,7 +422,7 @@ Automated checks must exercise the behavior, not merely helper calculations:
 - height changes during momentum, settled at the final gesture destination;
 - real-time resize through many intermediate widths, with a near-top landmark
   fixed to the exact device-pixel row;
-- no movement on mouse-up, final-width layout, or complete-presentation swap;
+- no movement on mouse-up, final-width layout, or completed-geometry publication;
 - the next genuine source movement releasing the resize anchor and restoring
   center alignment;
 - top, middle, bottom, fractional-origin, stale-result, and failure cases;
@@ -424,7 +432,8 @@ Automated checks must exercise the behavior, not merely helper calculations:
   input;
 - no main-thread full-document pass in gesture, jump, resize, or resource
   settlement diagnostics; and
-- no loading panel or DOM replacement after complete background rendering.
+- no loading panel during a bounded destination replacement after background
+  completion.
 
 The regression gate is:
 
