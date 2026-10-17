@@ -42,6 +42,7 @@ private final class PreviewClipView:NSClipView {
         let paintedOrigin=windowTop+(localOrigin ?? max(0,logicalOrigin-windowTop))
         let frame=NSRect(x:0,y:paintedOrigin,width:max(1,width),height:max(1,viewportHeight))
         if web.frame != frame {web.frame=frame}
+        web.alignBitmap(toFrameOrigin:paintedOrigin)
         let size=NSSize(width:max(1,width),height:max(viewportHeight,max(contentHeight,frame.maxY)))
         if canvas.frame.size != size {canvas.frame.size=size}
         clip.move(to:logicalOrigin)
@@ -60,15 +61,36 @@ private final class PreviewClipView:NSClipView {
     }
     func applyPaintedScroll(_ localOrigin:CGFloat) {
         self.localOrigin=localOrigin
-        web.setFrameOrigin(NSPoint(x:0,y:windowTop+localOrigin))
+        let paintedOrigin=windowTop+localOrigin
+        web.setFrameOrigin(NSPoint(x:0,y:paintedOrigin))
+        web.alignBitmap(toFrameOrigin:paintedOrigin)
     }
-    var paintedViewportOffset:CGFloat {web.frame.minY-logicalOrigin}
+    var paintedViewportOffset:CGFloat {web.frame.minY+web.paintedOffsetY-logicalOrigin}
+    private var geometryViewportOffset:CGFloat {
+        web.frame.minY+web.frameAlignedOffsetY-logicalOrigin
+    }
+    var bitmapAlignmentError:CGFloat {
+        let paintedOrigin=windowTop+(localOrigin ?? max(0,logicalOrigin-windowTop))
+        return web.frame.minY+web.paintedOffsetY-paintedOrigin
+    }
+    func viewportRect(forEngineViewportRect rect:NSRect)->NSRect {
+        // Ultralight element rectangles are relative to its applied scroll,
+        // not to the unscrolled document. Only add the native bitmap's
+        // residual position inside the clip viewport.
+        NSRect(x:rect.minX,y:geometryViewportOffset+rect.minY,
+            width:rect.width,height:rect.height)
+    }
+    func viewportRect(forMountedDocumentRect rect:NSRect)->NSRect {
+        NSRect(x:rect.minX,y:windowTop+rect.minY-logicalOrigin,
+            width:rect.width,height:rect.height)
+    }
     func publish(at origin:CGFloat,paintedLocalOrigin:CGFloat) {
         logicalOrigin=origin
         requestedLocalOrigin=max(0,origin-windowTop)
         let paintedOrigin=windowTop+paintedLocalOrigin
         localOrigin=paintedLocalOrigin
         web.setFrameOrigin(NSPoint(x:0,y:paintedOrigin))
+        web.alignBitmap(toFrameOrigin:paintedOrigin)
         clip.move(to:origin)
     }
 }
@@ -142,11 +164,6 @@ private enum ViewportAnchor {
     case block(id:String,localY:CGFloat,viewportY:CGFloat,fallbackOrigin:CGFloat)
 }
 
-private enum PreviewActivity {
-    case idle
-    case scrolling
-    case resizing(ViewportAnchor?)
-}
 private struct PendingPreviewFrame {
     let frame:HTMLPreviewFrame
     let request:PreviewRequest
@@ -159,7 +176,7 @@ private struct PendingPreviewFrame {
     var scrolling:PreviewScrolling = .independent {didSet {
         // Replacing the scroll source is an explicit synchronization boundary;
         // an anchor captured for the previous source cannot survive it.
-        idleAnchorLock=nil
+        clearIdleAnchorLock()
         sourceLayoutChanged()
     }}
     var openAnchor:((String)->Void)?
@@ -210,21 +227,21 @@ private struct PendingPreviewFrame {
     private var version=0,measuredSize:NSSize = .zero
     var resizeSession:ViewportResizeSession?
     private var failedParseRevision:Int?
-    private var activity:PreviewActivity = .idle
+    private var sourceGestureActive=false
     private var renderAnchor:ViewportAnchor?
     private var pendingFrame:PendingPreviewFrame?
     private var idleAnchorLock:ViewportAnchor?
     private var resourceSettlementGeneration=0
-    var isScrollMappingFrozen:Bool {
-        if case .scrolling=activity {return true};return false
-    }
+    var isScrollMappingFrozen:Bool {sourceGestureActive}
     var presentationSettled:(()->Void)?
     private var source:ScrollSource? {
         switch scrolling {case .independent:return nil;case .synchronized(let source):return source}
     }
     private func clearResizePin() {
-        resizeSession?.protectsViewport=false;resizeSession=nil
-        if case .resizing=activity {activity = .idle}
+        resizeSession?.end();resizeSession=nil
+    }
+    private func clearIdleAnchorLock() {
+        idleAnchorLock=nil
     }
     var lastRevision:Int {
         guard let committed,web.isEngineReady,desired==nil,content?.revision==committed.request.revision else{return -1}
@@ -237,6 +254,7 @@ private struct PendingPreviewFrame {
         return content.sourceRange.location==0 && NSMaxRange(content.sourceRange)>=content.sourceLength
     }
     var isRenderingPresentation:Bool {rendering != nil}
+    var hasPendingPresentation:Bool {rendering != nil || desired != nil}
     var displayedSourceRange:NSRange? {
         committed?.request.content.sourceRange
     }
@@ -289,26 +307,25 @@ private struct PendingPreviewFrame {
     private(set) var retainedPresentationAfterFailure=true
     private(set) var crossRevisionCommitCount=0
     private(set) var committedFrameID=0
-    private var debugResizeAnchor:ViewportAnchor?
     var debugPresentationCommitted:(()->Void)?
     var debugCommittedHTML:String {
         committed?.request.entries.compactMap(\.fragment.html).joined(separator:"\n") ?? ""
     }
     var debugResizeAnchorViewportY:CGFloat? {
-        guard let committed,let anchor=debugResizeAnchor else{return nil}
-        switch anchor {
+        guard let committed,let session=resizeSession,session.protectsViewport else{return nil}
+        switch session.previewAnchor {
         case .top:return -surface.logicalOrigin
-        case .bottom:return committed.totalHeight-surface.logicalOrigin
-        case .absolute(let origin):return origin-surface.logicalOrigin
-        case .block(let id,let localY,_,_):
+        case .block(let id,let displacement):
             guard let item=committed.geometry.items.first(where:{$0.id==id}) else{return nil}
-            return committed.windowTop+item.y+min(max(0,localY),item.height)-surface.logicalOrigin
+            let localY=max(0,displacement)
+            return committed.windowTop+item.y+min(localY,item.height)-surface.logicalOrigin
         }
     }
     var debugResizeAnchorState:String {
         guard let committed else{return "missing"}
-        return "anchor=\(String(describing:debugResizeAnchor)), window=\(committed.windowTop), origin=\(surface.logicalOrigin), width=\(committed.geometry.width), request=\(committed.request.width), frame=\(committedFrameID)"
+        return "anchor=\(String(describing:resizeSession?.previewAnchor)), window=\(committed.windowTop), origin=\(surface.logicalOrigin), width=\(committed.geometry.width), request=\(committed.request.width), frame=\(committedFrameID)"
     }
+    var debugBitmapAlignmentError:CGFloat {surface.bitmapAlignmentError}
     private var debugFailsNextPresentation=false
     private var debugFailsNextPosition=false
     func debugFailNextPresentation() {debugFailsNextPresentation=true}
@@ -340,6 +357,7 @@ private struct PendingPreviewFrame {
     required init?(coder:NSCoder) {fatalError()}
     override func draw(_ dirtyRect:NSRect) {NSColor.textBackgroundColor.setFill();dirtyRect.fill()}
     func moveViewport() {
+        if resizeSession != nil,resizeSession?.protectsViewport != true {clearResizePin()}
         if resizeSession?.protectsViewport == true {updateLoadingState();return}
         resumeSourceAlignmentIfNeeded()
         place()
@@ -385,7 +403,7 @@ private struct PendingPreviewFrame {
     private func scrollPreview(to proposedOrigin:CGFloat,detachFromSource:Bool) {
         guard let committed else{return}
         clearResizePin()
-        idleAnchorLock=nil
+        clearIdleAnchorLock()
         let origin=min(max(0,committed.totalHeight-bounds.height),max(0,proposedOrigin))
         guard abs(origin-independentOrigin)>=0.01 else{return}
         if detachFromSource,let source {
@@ -407,14 +425,14 @@ private struct PendingPreviewFrame {
               let committed,committed.totalHeight>bounds.height,
               abs(event.scrollingDeltaY)>=abs(event.scrollingDeltaX) else{return false}
         clearResizePin()
-        idleAnchorLock=nil
+        clearIdleAnchorLock()
         independentOrigin=max(0,visibleWebRange.lowerBound-event.scrollingDeltaY);place();return true
     }
     func navigatePreview(toEnd:Bool) {
         guard let committed else{return}
         clearResizePin()
         resumeSourceAlignment()
-        idleAnchorLock=nil
+        clearIdleAnchorLock()
         independentOrigin=toEnd ? max(0,committed.totalHeight-bounds.height):0;place()
     }
     func beginScrollGesture() {
@@ -422,20 +440,20 @@ private struct PendingPreviewFrame {
         // corrections. Only explicit navigation intent starts a new source to
         // preview alignment; inferring intent from a changed source origin
         // made an active insertion point able to release the anchor.
-        idleAnchorLock=nil
+        clearIdleAnchorLock()
         guard !isScrollMappingFrozen else{return}
         refreshMap()
         guard hasCurrentMap else{updateLoadingState();return}
         // Source scrolling owns the destination throughout momentum. Resource
         // frames are deferred, but must eventually be positioned from the
         // final source viewport rather than from where the gesture began.
-        activity = .scrolling
+        sourceGestureActive=true
         web.beginViewportGesture()
     }
     func endScrollGesture() {
         guard isScrollMappingFrozen else{return}
         web.endViewportGesture()
-        activity = .idle
+        sourceGestureActive=false
         if let pending=pendingFrame {
             pendingFrame=nil;commitDeferredFrame(pending)
         }
@@ -470,7 +488,7 @@ private struct PendingPreviewFrame {
         if let committed,committed.request.revision != revision {
             // Every edit abandons resize anchoring and publishes a fresh
             // center-aligned map, even when the HTML pixels are unchanged.
-            clearResizePin();endScrollGesture()
+            clearResizePin();clearIdleAnchorLock();endScrollGesture()
         }
         content=next;requestPresentation();updateLoadingState()
     }
@@ -484,20 +502,19 @@ private struct PendingPreviewFrame {
             sourceLength:content.sourceLength,sourceRange:content.sourceRange,
             previewTop:content.previewTop,previewHeight:content.previewHeight)
         desired=PreviewRequest(id:version,content:presented,fontSize:fontSize,baseURL:baseURL,width:bounds.width)
-        if let desired {preparedDocument?.setPreviewLayoutID(desired.layoutID)}
         preparePresentation()
     }
     private func preparePresentation() {
-        guard resizeSession?.isDragging != true,!isScrollMappingFrozen,rendering==nil,let request=desired,web.isEngineReady,
+        guard !isScrollMappingFrozen,rendering==nil,let request=desired,web.isEngineReady,
               request.width>0.5,bounds.height>0.5 else{return}
         guard request.entries.allSatisfy({$0.fragment.html != nil}),Set(request.entries.map(\.id)).count==request.entries.count else {
             NSLog("Preview request contains incomplete or duplicate fragments")
             return
         }
         rendering=request
+        preparedDocument?.setPreviewLayoutID(request.layoutID)
         let preservesExistingContent=committed.map{$0.request.revision != request.revision} ?? false
-        renderAnchor=currentActivityAnchor() ?? idleAnchorLock ??
-            (preservesExistingContent ? captureViewportAnchor():nil)
+        renderAnchor=idleAnchorLock ?? (preservesExistingContent ? captureViewportAnchor():nil)
         #if DEBUG
         patchCount += 1
         if debugFailsNextPresentation {
@@ -524,7 +541,8 @@ private struct PendingPreviewFrame {
         guard let position=presentationPosition(request,geometry:layout.geometry,anchor:renderAnchor) else {
             failPreparation(original);return
         }
-        rendering=request;desired=request
+        rendering=request
+        if desired?.id==request.id {desired=request}
         let local=max(0,position.origin-position.windowTop)
         web.capture(token:request.id,scrollPoint:NSPoint(x:0,y:local)) { [weak self] frame in
             self?.receiveCapturedFrame(frame,request:request,position:position)
@@ -545,7 +563,8 @@ private struct PendingPreviewFrame {
         let oldLocal=max(0,originalPosition.origin-originalPosition.windowTop)
         let newLocal=max(0,position.origin-position.windowTop)
         if abs(oldLocal-newLocal)>=0.5 {
-            rendering=request;desired=request
+            rendering=request
+            if desired?.id==request.id {desired=request}
             web.capture(token:request.id,scrollPoint:NSPoint(x:0,y:newLocal)) { [weak self] settled in
                 self?.receiveSettledFrame(settled,request:request)
             }
@@ -563,7 +582,7 @@ private struct PendingPreviewFrame {
         finishCapturedFrame(frame,request:request,position:position)
     }
     private func finishCapturedFrame(_ frame:HTMLPreviewFrame,request:PreviewRequest,position:PresentationPosition) {
-        if isScrollMappingFrozen || resizeSession?.isDragging == true {
+        if isScrollMappingFrozen {
             pendingFrame=PendingPreviewFrame(frame:frame,request:request);web.discard()
             finishPreparation(request);return
         }
@@ -593,7 +612,10 @@ private struct PendingPreviewFrame {
                     sourceRange:base.sourceRange,previewTop:base.previewTop,
                     previewHeight:base.previewHeight.map{$0+delta})
             }
-            if updatePresentationState {desired=request;rendering=request}
+            if updatePresentationState {
+                rendering=request
+                if desired?.id==request.id {desired=request}
+            }
         }
         return true
     }
@@ -617,12 +639,8 @@ private struct PendingPreviewFrame {
         rebaseResourceExtent(&request)
         guard applyMeasurements(frame.measurements,to:&request,updatePresentationState:false) else{return}
         let pending=PendingPreviewFrame(frame:frame,request:request)
-        switch activity {
-        case .idle:
-            settleResourceFrame(pending,alignToSource:frame.createdDuringViewportGesture)
-        case .scrolling,.resizing:
-            pendingFrame=pending
-        }
+        if isScrollMappingFrozen || resizeSession?.isDragging == true {pendingFrame=pending}
+        else {settleResourceFrame(pending,alignToSource:frame.createdDuringViewportGesture)}
     }
     private func rebaseResourceExtent(_ request:inout PreviewRequest) {
         guard let current=content,current.revision==request.revision else{return}
@@ -714,7 +732,7 @@ private struct PendingPreviewFrame {
                 previous:committed,changedBlocks:changedBlocks)
             guard self.commit(request,frame:frame,position:position,requiresCurrent:false,
                 preservePixels:preservePixels) else{return}
-            if self.source != nil,!alignToSource {
+            if self.source != nil,!alignToSource,self.resizeSession?.protectsViewport != true {
                 self.idleAnchorLock = .absolute(origin:position.origin)
             }
         }
@@ -743,8 +761,14 @@ private struct PendingPreviewFrame {
         }
     }
     private func isCurrent(_ request:PreviewRequest)->Bool {
-        desired?.id==request.id && rendering?.id==request.id && web.isEngineReady
-            && bounds.width==request.width && bounds.height>0.5
+        guard rendering?.id==request.id,web.isEngineReady,bounds.height>0.5 else{return false}
+        if desired?.id==request.id {return bounds.width==request.width}
+        // Live resize continuously supersedes the in-flight width. Publishing
+        // the completed coherent width keeps text reflowing under the pointer;
+        // the latest desired width remains queued and replaces it next.
+        guard resizeSession?.isDragging == true,let desired else{return false}
+        return desired.content==request.content && desired.fontSize==request.fontSize &&
+            desired.baseURL==request.baseURL
     }
     private func finishPreparation(_ request:PreviewRequest,keepDesired:Bool=false) {
         guard rendering?.id==request.id else{return}
@@ -788,12 +812,35 @@ private struct PendingPreviewFrame {
         guard let y=map.previewY(for:Double(source.viewportOrigin)) else{return nil}
         return min(max(0,height-bounds.height),max(0,CGFloat(y)))
     }
-    private func currentActivityAnchor()->ViewportAnchor? {
-        switch activity {
-        case .idle:return nil
-        case .scrolling:return nil
-        case .resizing(let anchor):return anchor
+    /// A live resize owns the viewport. Reflow may move every block below the
+    /// pinned one, but the first visible block keeps its viewport position.
+    /// Center alignment is deliberately suspended until the gesture ends.
+    private func pinnedResizeOrigin(geometry:HTMLPreviewGeometry,windowTop:CGFloat,totalHeight:CGFloat)->CGFloat? {
+        guard let session=resizeSession,session.protectsViewport else{return nil}
+        let end=max(0,totalHeight-bounds.height)
+        switch session.previewAnchor {
+        case .top:return 0
+        case .block(let id,let displacement):
+            guard let item=geometry.items.first(where:{$0.id==id}) else{return nil}
+            return min(end,max(0,windowTop+item.y+displacement))
         }
+    }
+    private func landmarkMap(_ request:PreviewRequest,geometry:HTMLPreviewGeometry,
+        windowTop:CGFloat,totalHeight:CGFloat,source:ScrollSource)->(ScrollLandmarks,Int)? {
+        guard source.hasMeasuredLayout,source.contentRevision==request.revision,
+              source.sourceLength==request.content.sourceLength else{return nil}
+        let revision=source.geometryRevision
+        var points=zip(geometry.items,request.entries).compactMap {item,entry -> ScrollLandmark? in
+            guard entry.fragment.kind != .pending,
+                  let y=source.alignmentVerticalPosition(for:entry.fragment.from),y.isFinite else{return nil}
+            return ScrollLandmark(offset:entry.fragment.from,sourceY:Double(y),
+                previewY:Double(windowTop+item.y+(item.landmark ?? 0)))
+        }
+        points.append(ScrollLandmark(offset:0,sourceY:0,previewY:0,boundary:true))
+        points.append(ScrollLandmark(offset:Int.max,sourceY:Double(source.contentHeight),
+            previewY:Double(totalHeight),boundary:true))
+        guard revision==source.geometryRevision else{return nil}
+        return (ScrollLandmarks(points),revision)
     }
     private func captureViewportAnchor()->ViewportAnchor? {
         guard let committed else{return nil}
@@ -831,26 +878,10 @@ private struct PendingPreviewFrame {
         #endif
         guard let source,source.hasMeasuredLayout,source.contentRevision==request.revision,source.sourceLength==request.content.sourceLength else{return nil}
         let revision=source.geometryRevision
-        let landmarks=zip(geometry.items,request.entries).compactMap {item,entry -> (previewY:CGFloat,entry:RenderedEntry)? in
-            guard entry.fragment.from != 0,entry.fragment.kind != .pending else{return nil}
-            return (item.y+(item.landmark ?? 0),entry)
-        }
-        // A map must use one coordinate system throughout. Mixing locally exact
-        // TextKit positions with retained estimates lets the monotonic map
-        // reorder/clamp points after reflow, producing large visual offsets.
-        // The browser window is bounded, so measure every mounted landmark.
-        var points=[ScrollLandmark]()
-        for landmark in landmarks {
-            let offset=landmark.entry.fragment.from
-            let y=source.alignmentVerticalPosition(for:offset)
-            guard let y,y.isFinite else{return nil}
-            points.append(ScrollLandmark(offset:offset,sourceY:Double(y),previewY:Double(windowTop+landmark.previewY)))
-        }
-        guard revision==source.geometryRevision else{return nil}
-        // The first block starts at source offset zero and is represented by
-        // the boundary that viewportMap adds. A one-block or empty document
-        // therefore legitimately has no interior landmarks.
-        return ScrollLandmarks(points).viewportMap(sourceHeight:Double(source.contentHeight),viewportHeight:Double(bounds.height),previewHeight:Double(totalHeight))
+        guard let (map,mapRevision)=landmarkMap(request,geometry:geometry,windowTop:windowTop,
+            totalHeight:totalHeight,source:source),mapRevision==revision else{return nil}
+        return map.viewportMap(sourceHeight:Double(source.contentHeight),
+            viewportHeight:Double(bounds.height),previewHeight:Double(totalHeight))
     }
     private func presentationPosition(_ request:PreviewRequest,geometry:HTMLPreviewGeometry,
         anchor:ViewportAnchor?=nil)->PresentationPosition? {
@@ -860,11 +891,18 @@ private struct PendingPreviewFrame {
         let extent=previewExtent(request,geometry)
         switch scrolling {
         case .independent:
-            guard let origin=resolvedOrigin(anchor,geometry:geometry,windowTop:extent.top,totalHeight:extent.total) ??
+            guard let origin=pinnedResizeOrigin(geometry:geometry,windowTop:extent.top,totalHeight:extent.total) ??
+                    resolvedOrigin(anchor,geometry:geometry,windowTop:extent.top,totalHeight:extent.total) ??
                     targetOrigin(height:extent.total,map:nil) else{return nil}
             return PresentationPosition(map:nil,sourceGeometryRevision:nil,origin:origin,windowTop:extent.top,totalHeight:extent.total)
         case .synchronized(let source):
             guard covers(request.content,visible:source.visibleSourceRange) else{return nil}
+            if resizeSession?.protectsViewport == true {
+                guard let origin=pinnedResizeOrigin(geometry:geometry,windowTop:extent.top,
+                    totalHeight:extent.total) else{return nil}
+                return PresentationPosition(map:nil,sourceGeometryRevision:source.geometryRevision,
+                    origin:origin,windowTop:extent.top,totalHeight:extent.total)
+            }
             guard let map=makeMap(request,geometry:geometry,windowTop:extent.top,totalHeight:extent.total) else{return nil}
             guard let origin=resolvedOrigin(anchor,geometry:geometry,windowTop:extent.top,totalHeight:extent.total) ??
                     targetOrigin(height:extent.total,map:map) else{return nil}
@@ -878,8 +916,14 @@ private struct PendingPreviewFrame {
         if isScrollMappingFrozen,coversSourceViewport,!needsWindowReplenishment,
            committed?.request.revision==request.revision {return false}
         if let source {
-            guard source.contentRevision==request.revision,position.sourceGeometryRevision==source.geometryRevision,
+            guard source.contentRevision==request.revision,
                   covers(request.content,visible:source.visibleSourceRange) else{return false}
+            // A pinned resize position is derived only from the retained preview
+            // anchor. Source and preview reflow independently during the gesture,
+            // so source geometry freshness is neither required nor meaningful
+            // until finishResizeLayout rebuilds their scroll map.
+            if resizeSession?.protectsViewport != true,
+               position.sourceGeometryRevision != source.geometryRevision {return false}
         }
         #if DEBUG
         if let previousPresentation=committed,previousPresentation.request.revision != request.revision {
@@ -895,7 +939,7 @@ private struct PendingPreviewFrame {
         committedFrameID += 1
         #endif
         committed=CommittedPresentation(request:request,geometry:frame.geometry,map:position.map,sourceGeometryRevision:position.sourceGeometryRevision,viewportHeight:bounds.height,windowTop:position.windowTop,totalHeight:position.totalHeight)
-        desired=nil
+        if desired?.id==request.id {desired=nil}
         surface.size(contentHeight:position.totalHeight,windowTop:position.windowTop,width:request.width,viewportHeight:bounds.height)
         surface.publish(at:position.origin,paintedLocalOrigin:frame.scrollPoint.y)
         independentOrigin=position.origin
@@ -903,10 +947,6 @@ private struct PendingPreviewFrame {
         assert(!surface.clip.isHidden && !web.isHidden)
         CATransaction.commit()
         updateCommentAnchor(closeIfMissing:true)
-        if let session=resizeSession,session.protectsViewport {
-            session.previewOrigin=position.origin
-            if !session.isDragging {activity = .idle;resizeSession=nil}
-        }
         #if DEBUG
         debugPresentationCommitted?()
         #endif
@@ -938,26 +978,27 @@ private struct PendingPreviewFrame {
         updateCommentAnchor(closeIfMissing:false)
         preparePresentation()
     }
-    func captureResizeAnchor()->(entryID:String?,displacement:CGFloat,origin:CGFloat) {
+    func captureResizeAnchor()->PreviewResizeAnchor {
         let origin=surface.logicalOrigin
-        guard let committed else{return(nil,0,origin)}
+        guard let committed,origin>0.5 else{return .top}
         let local=origin-committed.windowTop
-        let item=Array(zip(committed.request.entries,committed.geometry.items))
-            .last(where:{$0.1.y<=local}) ??
-            Array(zip(committed.request.entries,committed.geometry.items)).first
-        return (item?.0.id,item.map{local-$0.1.y} ?? 0,origin)
+        let items=Array(zip(committed.request.entries,committed.geometry.items))
+        // If the top edge lies in inter-block whitespace, pin the block that is
+        // actually visible below it. Pin the preceding block only when its
+        // painted box intersects the top edge. Otherwise reflowing an entirely
+        // offscreen paragraph moves the first visible heading.
+        let item=items.first(where:{$0.1.y<=local && local<$0.1.y+$0.1.height}) ??
+            items.first(where:{$0.1.y>=local}) ?? items.last
+        guard let item else{return .top}
+        return .block(id:item.0.id,displacement:local-item.1.y)
     }
     func beginResize(_ session:ViewportResizeSession) {
         resizeSession=session
-        let anchor=captureViewportAnchor();activity = .resizing(anchor)
-        #if DEBUG
-        debugResizeAnchor=anchor
-        #endif
     }
     func finishResizeLayout() {
         guard let session=resizeSession,session.protectsViewport else{return}
         layoutSubtreeIfNeeded()
-        session.isDragging=false
+        session.finishDragging()
         pendingFrame=nil
         if committed?.request.width != bounds.width || desired?.width != bounds.width {requestPresentation()}
         ResizeTrace.record("preview.release.render",
@@ -998,31 +1039,29 @@ private struct PendingPreviewFrame {
     }
     var selectedCommentAnchor:NSRect? {
         guard committed != nil,let rect=web.elementRect(".markato-comment-bubble.is-selected") else{return nil}
-        let viewport=NSRect(
-            x:web.frame.minX-surface.clip.bounds.minX+rect.minX,
-            y:web.frame.minY-surface.clip.bounds.minY+rect.minY,
-            width:rect.width,height:rect.height)
+        // Ultralight reports this absolutely positioned bubble in mounted-
+        // document coordinates, unlike normal-flow bounding rectangles.
+        let viewport=surface.viewportRect(forMountedDocumentRect:rect)
         return viewport
     }
     #if DEBUG
     var debugIsIndependentlyScrolled:Bool {detachedSourceOrigin != nil}
     var debugSelectedCommentAnchor:NSRect? {selectedCommentAnchor}
     func debugScrollViewport(by delta:CGFloat) {
-        idleAnchorLock=nil
         scrollPreview(to:independentOrigin+delta,detachFromSource:source != nil)
     }
     var debugFirstHeadingViewportY:CGFloat? {
         guard committed != nil,let rect=web.debugRect("h1",containing:"Markato") else{return nil}
-        return web.frame.minY-surface.clip.bounds.minY+rect.minY
+        return surface.viewportRect(forEngineViewportRect:rect).minY
     }
     func debugParagraphViewportY(containing text:String)->CGFloat? {
         guard committed != nil,let rect=web.debugRect("p",containing:text) else{return nil}
-        return web.frame.minY-surface.clip.bounds.minY+rect.minY
+        return surface.viewportRect(forEngineViewportRect:rect).minY
     }
     func debugHeadingViewportY(containing text:String)->CGFloat? {
         guard committed != nil,
               let rect=web.debugRect("h1, h2, h3, h4, h5, h6",containing:text) else{return nil}
-        return web.frame.minY-surface.clip.bounds.minY+rect.minY
+        return surface.viewportRect(forEngineViewportRect:rect).minY
     }
     var debugScrollMapError:CGFloat? {
         guard let committed,let source,let map=committed.map,

@@ -74,6 +74,29 @@ private final class DelayedImageServer {
     view.publish(frame);return(layout,frame)
 }
 
+@MainActor private func renderDuringEventTracking(_ entries:[RenderedEntry],in view:HTMLPreviewView,token:Int) throws
+    ->(HTMLPreviewLayout,HTMLPreviewFrame) {
+    let layoutID=PreviewLayoutID(width:Double(view.bounds.width),fontSize:15,
+        stylesheetGeneration:HTMLPreviewResources.stylesheetGeneration)
+    let request=HTMLPreviewRenderRequest(token:token,revision:token,layoutID:layoutID,entries:entries,
+        fontSize:15,baseURL:nil,viewportSize:view.bounds.size,scale:1)
+    var layout:HTMLPreviewLayout?,layoutFinished=false
+    view.requestLayout(request) {layout=$0;layoutFinished=true}
+    let layoutDeadline=Date(timeIntervalSinceNow:2)
+    while !layoutFinished && Date()<layoutDeadline {
+        _=RunLoop.current.run(mode:.eventTracking,before:Date(timeIntervalSinceNow:0.01))
+    }
+    guard let layout else{throw CheckError.failed("layout completion starved in event-tracking mode")}
+    var frame:HTMLPreviewFrame?,captureFinished=false
+    view.capture(token:token,scrollPoint:.zero) {frame=$0;captureFinished=true}
+    let captureDeadline=Date(timeIntervalSinceNow:2)
+    while !captureFinished && Date()<captureDeadline {
+        _=RunLoop.current.run(mode:.eventTracking,before:Date(timeIntervalSinceNow:0.01))
+    }
+    guard let frame else{throw CheckError.failed("capture completion starved in event-tracking mode")}
+    view.publish(frame);return(layout,frame)
+}
+
 @MainActor private func checkRenderer() async throws {
     let view=HTMLPreviewView(frame:NSRect(x:0,y:0,width:600,height:320))
     try await waitUntilReady(view)
@@ -91,6 +114,19 @@ private final class DelayedImageServer {
         throw CheckError.failed("wrapper stride invariant failed")
     }
 
+    let wrapping=RenderedEntry(id:"wrapping",fragment:.init(kind:"Paragraph",from:0,to:1,
+        html:"<p>This deliberately long preview paragraph must occupy substantially more lines when the preview pane becomes narrow, proving that a width-only resize performs browser layout rather than stretching the previous bitmap.</p>",id:"wrapping"))
+    let (wide,_)=try await render([wrapping],in:view,token:2)
+    view.setFrameSize(NSSize(width:280,height:320))
+    let (narrow,_)=try renderDuringEventTracking([wrapping],in:view,token:3)
+    guard narrow.geometry.width<wide.geometry.width-250,
+          let wideHeight=wide.geometry.items.first?.height,
+          let narrowHeight=narrow.geometry.items.first?.height,
+          narrowHeight>wideHeight+20 else {
+        throw CheckError.failed("preview did not rewrap after width change: wide=\(wide.geometry), narrow=\(narrow.geometry)")
+    }
+    view.setFrameSize(NSSize(width:600,height:320))
+
     guard let png=Data(base64Encoded:
         "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=") else {
         throw CheckError.failed("invalid fixture")
@@ -102,7 +138,7 @@ private final class DelayedImageServer {
         html:"<p>Following</p>",id:"following"))
     var resource:HTMLPreviewFrame?
     view.resourceFrame={resource=$0}
-    let (initial,_)=try await render([image,following],in:view,token:2)
+    let (initial,_)=try await render([image,following],in:view,token:4)
     for _ in 0..<500 where resource == nil {try await Task.sleep(for:.milliseconds(10))}
     guard let updated=resource,
           updated.cause == .resource,
@@ -120,7 +156,7 @@ private final class DelayedImageServer {
     let local=RenderedEntry(id:"local",fragment:.init(kind:"RawHTML",from:0,to:1,
         html:"<img src=\"\(localURL.absoluteString)\" alt=\"local image\">",id:"local"))
     resource=nil
-    _=try await render([local],in:view,token:3)
+    _=try await render([local],in:view,token:5)
     for _ in 0..<500 where resource == nil {try await Task.sleep(for:.milliseconds(10))}
     guard let localRect=view.elementRect("img"),localRect.height>100 else {
         throw CheckError.failed("absolute local image URL did not load: \(localURL.absoluteString), rect=\(String(describing:view.elementRect("img")))")
@@ -129,7 +165,7 @@ private final class DelayedImageServer {
     let details=RenderedEntry(id:"details",fragment:.init(kind:"RawHTML",from:0,to:1,
         html:"<details><summary>Expand</summary><div style=\"height:300px\">Body</div></details>",id:"details"))
     resource=nil
-    let (closed,_)=try await render([details,following],in:view,token:4)
+    let (closed,_)=try await render([details,following],in:view,token:6)
     let window=NSWindow(contentRect:view.bounds,styleMask:[.borderless],backing:.buffered,defer:false)
     window.contentView=view
     guard let summary=view.elementRect("summary") else {throw CheckError.failed("missing details summary")}

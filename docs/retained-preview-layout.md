@@ -169,14 +169,24 @@ different absolute document coordinate.
 
 ## Resizing
 
-A width change creates a new layout identity. The current frame remains visible
-and anchored while Ultralight reflows on its renderer thread. The first useful
-frame for the new width may be prioritized around the viewport; background
-work then restores a complete retained presentation at that width.
+A width change creates a new layout identity and reflows both panes in real
+time. One resize session captures the source and preview content at their
+viewport tops. Every intermediate layout resolves those same anchors, so the
+top visible content remains at the same painted coordinate while wrapping and
+document origins change.
 
-Resize release commits one coherent width, geometry, mapping, scrollbar, and
-origin. It never walks or lays out the document synchronously in response to
-the mouse event.
+Ordinary center-aligned source-to-preview mapping is suspended for the entire
+session. Mouse-up does not end the anchoring rule: the same session survives
+final TextKit measurement, final Ultralight layout, and replacement of a
+priority presentation by the complete one. It is released only by genuine
+source movement or a document revision; the next source movement resumes
+ordinary center alignment. Mouse-up must therefore produce no viewport
+correction.
+
+Each published resize frame is one coherent width, geometry, mapping,
+scrollbar, origin, and bitmap. No mouse event walks or lays out the document
+synchronously. See [Scrolling, jumping, and resizing](scrolling-algorithm.md)
+for the complete navigation contract.
 
 ## Edits
 

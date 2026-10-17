@@ -7,6 +7,15 @@ import UniformTypeIdentifiers
 /// pixels make their shared top edge visibly alternate between two positions.
 final class EditorSplitView:NSSplitView {
     override var preservesContentDuringLiveResize:Bool {false}
+    var dividerGestureChanged:((Bool)->Void)?
+    override func mouseDown(with event:NSEvent) {
+        dividerGestureChanged?(true)
+        defer {dividerGestureChanged?(false)}
+        super.mouseDown(with:event)
+    }
+    #if DEBUG
+    func debugSetDividerGestureActive(_ active:Bool) {dividerGestureChanged?(active)}
+    #endif
 }
 
 private final class CommentTextView:NSTextView {
@@ -169,6 +178,11 @@ final class EditorWindowController: NSWindowController, NSSplitViewDelegate, NSS
         DispatchQueue.main.asyncAfter(deadline:.now()+0.005,execute:work)
     }
     var hasPreparedDocument:Bool {preparedDocument.revision==markdownDocument.revision && preparedDocument.firstUnpreparedOffset(from:0)>=markdownDocument.source.count}
+    #if DEBUG
+    var debugPreparationState:String {
+        "preparedComplete=\(preparedDocument.hasCompleteFragments), backgroundRevision=\(backgroundRevision), completePending=\(String(describing:completePresentationPendingRevision)), presentationPending=\(presentationPending)"
+    }
+    #endif
     private var markdownDocument: MarkdownDocument {(document as? MarkdownDocument) ?? source.document}
     init(document:MarkdownDocument) {
         source = SourceEditor(document:document,prepared:preparedDocument,deferInitialLayout:true)
@@ -207,6 +221,9 @@ final class EditorWindowController: NSWindowController, NSSplitViewDelegate, NSS
         sidebar.isHidden=true
         workspaceSplit.setHoldingPriority(.defaultHigh,forSubviewAt:0)
         split.isVertical = true; split.dividerStyle = .thin; split.delegate = self
+        split.dividerGestureChanged = { [weak self] active in
+            if active {self?.beginViewportResize()} else {self?.finishViewportResize()}
+        }
         split.addArrangedSubview(source); split.addArrangedSubview(preview); content.addSubview(split)
         findBar.isHidden = true; content.addSubview(findBar)
         findField.placeholderString = "Find"; findField.delegate = self; findBar.addSubview(findField)
@@ -258,9 +275,14 @@ final class EditorWindowController: NSWindowController, NSSplitViewDelegate, NSS
             // A settled render frees the renderer for the latest coalesced
             // viewport even during a gesture. PreviewPane keeps the landmark
             // map frozen while it prepares and atomically anchors the new window.
-            if self.preview.displaysCompleteDocument,self.preview.displayedDocumentRevision==document.revision {
+            if self.preview.displaysCompleteDocument,
+               self.preview.displayedDocumentRevision==document.revision,
+               !self.preview.hasPendingPresentation {
                 self.presentationPending=false;self.completePresentationPendingRevision=nil
-            } else if self.presentationPending {self.showPreparedDocument(revision:document.revision)}
+            } else if self.presentationPending {
+                self.showPreparedDocument(revision:document.revision,
+                    forceViewportWindow:self.resizeSession != nil)
+            }
             else if self.completePresentationPendingRevision==document.revision {
                 self.showCompletePreparedDocument(revision:document.revision)
             }
@@ -334,19 +356,19 @@ final class EditorWindowController: NSWindowController, NSSplitViewDelegate, NSS
         super.showWindow(sender)
     }
     deinit { NotificationCenter.default.removeObserver(self) }
-    func windowWillStartLiveResize(_ notification:Notification) {
+    private func beginViewportResize() {
         source.traceResize("window.willStart.before")
         let previewAnchor=preview.captureResizeAnchor()
         let sourceAnchor=source.captureResizeAnchor()
         let session=ViewportResizeSession(sourceOffset:sourceAnchor.offset,
             sourceDisplacement:sourceAnchor.displacement,sourceOrigin:sourceAnchor.origin,
-            previewEntryID:previewAnchor.entryID,previewDisplacement:previewAnchor.displacement,
-            previewOrigin:previewAnchor.origin)
+            previewAnchor:previewAnchor)
         resizeSession=session
         preview.beginResize(session);source.beginResize(session)
+        showPreparedDocument(revision:markdownDocument.revision,forceViewportWindow:true)
         source.traceResize("window.willStart.after")
     }
-    func windowDidEndLiveResize(_ notification:Notification) {
+    private func finishViewportResize() {
         guard resizeSession != nil else{return}
         source.traceResize("window.didEnd.before")
         // A final TextKit layout can move the rendered anchor even when the
@@ -356,9 +378,14 @@ final class EditorWindowController: NSWindowController, NSSplitViewDelegate, NSS
         source.traceResize("window.didEnd.afterLayout")
         preview.finishResizeLayout()
         source.finishResizeLayout()
+        resizeSession=nil
+        presentationPending=false
+        showCompletePreparedDocument(revision:markdownDocument.revision)
         source.traceResize("window.didEnd.afterPreview")
         DispatchQueue.main.async { [weak self] in self?.source.traceResize("window.didEnd.nextTurn") }
     }
+    func windowWillStartLiveResize(_ notification:Notification) {beginViewportResize()}
+    func windowDidEndLiveResize(_ notification:Notification) {finishViewportResize()}
     func windowWillClose(_ notification:Notification) {
         finishCommentPopover(save:true)
         isClosed=true;pendingViewport=nil;openingRequested=false
@@ -526,9 +553,9 @@ final class EditorWindowController: NSWindowController, NSSplitViewDelegate, NSS
         cancelParseRetry();hideParseError();lastRequest=nil
         pendingViewport=source.visibleSourceRange;prepareViewport()
     }
-    private func showPreparedDocument(revision:Int) {
+    private func showPreparedDocument(revision:Int,forceViewportWindow:Bool=false) {
         guard !isClosed else{return}
-        if preview.displaysCompleteDocument,preview.displayedDocumentRevision==revision {
+        if !forceViewportWindow,preview.displaysCompleteDocument,preview.displayedDocumentRevision==revision {
             presentationPending=false;completePresentationPendingRevision=nil
             preview.moveViewport();return
         }
@@ -542,7 +569,8 @@ final class EditorWindowController: NSWindowController, NSSplitViewDelegate, NSS
         let requestedRange:NSRange
         let usesPreservedEditRange=preservedEditPresentationRevision==revision
         let reusesPresentedWindow:Bool
-        if usesPreservedEditRange,let presented=presentationRange,presented.0==revision,
+        if forceViewportWindow {requestedRange=visible;reusesPresentedWindow=false}
+        else if usesPreservedEditRange,let presented=presentationRange,presented.0==revision,
            presented.1.location<=visible.location,NSMaxRange(presented.1)>=NSMaxRange(visible),
            preparedDocument.entries(covering:presented.1) != nil {
             requestedRange=presented.1
@@ -610,15 +638,22 @@ final class EditorWindowController: NSWindowController, NSSplitViewDelegate, NSS
         guard !isClosed,markdownDocument.revision==revision,
               preparedDocument.revision==revision,
               preparedDocument.hasCompleteFragments else{return}
-        if source.isScrolling || preview.isRenderingPresentation {
-            completePresentationPendingRevision=revision;return
+        // Completion is a state to reach, not a one-shot render request. Keep
+        // ownership until presentationSettled observes a committed complete
+        // frame, so a transient renderer failure cannot strand a partial DOM.
+        completePresentationPendingRevision=revision
+        if source.isScrolling || preview.hasPendingPresentation {
+            return
         }
-        completePresentationPendingRevision=nil;presentationPending=false
+        presentationPending=false
         completeEditRevision=nil
         guard let document=preparedDocument.completeWindow() else{return}
         presentationRange=(revision,document.range)
         preview.show(document.entries,revision:revision,sourceRange:document.range,
             previewTop:document.previewTop,previewHeight:document.previewHeight)
+        if preview.displaysCompleteDocument,!preview.hasPendingPresentation {
+            completePresentationPendingRevision=nil
+        }
     }
     @objc func undo(_ sender:Any?) { markdownDocument.undoManager?.undo() }
     @objc func redo(_ sender:Any?) { markdownDocument.undoManager?.redo() }

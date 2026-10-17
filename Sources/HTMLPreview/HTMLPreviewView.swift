@@ -3,6 +3,10 @@ import CUltralightPreview
 import ImageIO
 import MarkdownCore
 
+private func deliverOnMainRunLoop(_ block:@escaping()->Void) {
+    RunLoop.main.perform(inModes:[.common],block:block)
+}
+
 public enum HTMLPreviewResources {
     public static let stylesheetGeneration:UInt64=2
     public static let stylesheet:String = {
@@ -718,6 +722,7 @@ private final class HTMLRendererExecutor {
     private var image:CGImage?
     private var imageSize:NSSize = .zero
     private var imageOffsetY:CGFloat=0
+    private var frameAlignmentOffsetY:CGFloat=0
     private var pixels=Data()
     private var baseURL:URL?
     private var committedToken:Int?
@@ -775,19 +780,19 @@ private final class HTMLRendererExecutor {
         hasUncommittedPresentation=true
         renderer.async {state in
             let layout=state.layout(request)
-            DispatchQueue.main.async {completion(layout)}
+            deliverOnMainRunLoop {completion(layout)}
         }
     }
     public func capture(token:Int,scrollPoint:NSPoint,completion:@escaping(HTMLPreviewFrame?)->Void) {
         renderer.async {state in
             let frame=state.capture(token:token,point:scrollPoint)
-            DispatchQueue.main.async {completion(frame)}
+            deliverOnMainRunLoop {completion(frame)}
         }
     }
     public func captureResource(token:Int,scrollPoint:NSPoint,completion:@escaping(HTMLPreviewFrame?)->Void) {
         renderer.async {state in
             let frame=state.captureResource(token:token,point:scrollPoint)
-            DispatchQueue.main.async {completion(frame)}
+            deliverOnMainRunLoop {completion(frame)}
         }
     }
     public func beginViewportGesture() {renderer.async{$0.viewportGestureActive=true}}
@@ -799,6 +804,15 @@ private final class HTMLRendererExecutor {
         baseURL=frame.baseURL
         committedToken=frame.token;committedGeometry=frame.geometry;hasUncommittedPresentation=false;needsDisplay=true
     }
+    /// NSView may quantize a large frame origin to the backing grid. Keep that
+    /// implementation detail out of document coordinates by applying the
+    /// exact remainder to the bitmap inside the view.
+    public func alignBitmap(toFrameOrigin origin:CGFloat) {
+        frameAlignmentOffsetY=origin-frame.minY
+        needsDisplay=true
+    }
+    public var frameAlignedOffsetY:CGFloat {frameAlignmentOffsetY}
+    public var paintedOffsetY:CGFloat {imageOffsetY+frameAlignmentOffsetY}
     public func discard() {hasUncommittedPresentation=false}
     public func geometry()->HTMLPreviewGeometry? {committedGeometry}
     public func elementRect(_ selector:String,containing text:String="")->NSRect? {
@@ -840,9 +854,9 @@ private final class HTMLRendererExecutor {
     public override func draw(_ dirtyRect:NSRect) {
         NSColor.textBackgroundColor.setFill();dirtyRect.fill()
         guard let image,let context=NSGraphicsContext.current?.cgContext else{return}
-        context.saveGState();context.translateBy(x:0,y:imageOffsetY);let translationY=imageSize.height
+        context.saveGState();context.translateBy(x:0,y:paintedOffsetY);let translationY=imageSize.height
         #if DEBUG
-        debugPaintedBitmapTop=translationY-imageSize.height
+        debugPaintedBitmapTop=paintedOffsetY
         debugDidDraw?()
         #endif
         context.translateBy(x:0,y:translationY);context.scaleBy(x:1,y:-1)

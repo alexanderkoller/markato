@@ -18,24 +18,29 @@ import MarkdownCore
 }
 
 final class FlippedView:NSView {override var isFlipped:Bool {true}}
+enum PreviewResizeAnchor {
+    case top
+    case block(id:String,displacement:CGFloat)
+}
 /// The two panes share one resize transaction. Anchors are captured once;
 /// geometry callbacks may update origins, while mouse-up only ends the drag.
 @MainActor final class ViewportResizeSession {
+    private enum Phase {case dragging,settling,ended}
     let sourceOffset:Int
     let sourceDisplacement:CGFloat
-    let previewEntryID:String?
-    let previewDisplacement:CGFloat
+    let previewAnchor:PreviewResizeAnchor
     var sourceOrigin:CGFloat
-    var previewOrigin:CGFloat
-    var isDragging=true
-    var protectsViewport=true
+    private var phase:Phase = .dragging
+    var isDragging:Bool {phase == .dragging}
+    var protectsViewport:Bool {phase != .ended}
     init(sourceOffset:Int,sourceDisplacement:CGFloat,sourceOrigin:CGFloat,
-         previewEntryID:String?,previewDisplacement:CGFloat,previewOrigin:CGFloat) {
+         previewAnchor:PreviewResizeAnchor) {
         self.sourceOffset=sourceOffset;self.sourceDisplacement=sourceDisplacement
         self.sourceOrigin=sourceOrigin
-        self.previewEntryID=previewEntryID;self.previewDisplacement=previewDisplacement
-        self.previewOrigin=previewOrigin
+        self.previewAnchor=previewAnchor
     }
+    func finishDragging() {if phase == .dragging {phase = .settling}}
+    func end() {phase = .ended}
 }
 private final class SourceScrollView:NSScrollView {
     override class var isCompatibleWithResponsiveScrolling:Bool {true}
@@ -295,7 +300,7 @@ final class SourceEditor:NSView,NSTextViewDelegate,NSTextStorageDelegate,ScrollS
     }
     private func clearResizePin() {
         if resizeSession != nil {traceResize("source.clearPin")}
-        resizeSession?.protectsViewport=false
+        resizeSession?.end()
         resizeSession=nil
         (scroll.contentView as? SourceClipView)?.resizeSession=nil
     }
