@@ -64,7 +64,7 @@ private final class DelayedImageServer {
     let layoutID=PreviewLayoutID(width:Double(view.bounds.width),fontSize:15,
         stylesheetGeneration:HTMLPreviewResources.stylesheetGeneration)
     let request=HTMLPreviewRenderRequest(token:token,revision:token,layoutID:layoutID,entries:entries,
-        fontSize:15,baseURL:nil,viewportSize:view.bounds.size,scale:1,scrollPoint:.zero)
+        fontSize:15,baseURL:nil,viewportSize:view.bounds.size,scale:1)
     guard let layout=await withCheckedContinuation({continuation in
         view.requestLayout(request){continuation.resume(returning:$0)}
     }) else {throw CheckError.failed("layout failed")}

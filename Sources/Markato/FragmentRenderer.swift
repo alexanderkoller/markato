@@ -210,7 +210,6 @@ private struct PendingPreviewFrame {
     private var version=0,measuredSize:NSSize = .zero
     var resizeSession:ViewportResizeSession?
     private var failedParseRevision:Int?
-    private var inspector:NSWindowController?
     private var activity:PreviewActivity = .idle
     private var renderAnchor:ViewportAnchor?
     private var pendingFrame:PendingPreviewFrame?
@@ -237,7 +236,6 @@ private struct PendingPreviewFrame {
         guard let content=committed?.request.content else{return false}
         return content.sourceRange.location==0 && NSMaxRange(content.sourceRange)>=content.sourceLength
     }
-    var isPreparingPresentation:Bool {desired != nil}
     var isRenderingPresentation:Bool {rendering != nil}
     var displayedSourceRange:NSRange? {
         committed?.request.content.sourceRange
@@ -439,7 +437,7 @@ private struct PendingPreviewFrame {
         web.endViewportGesture()
         activity = .idle
         if let pending=pendingFrame {
-            pendingFrame=nil;commitDeferredFrame(pending,anchor:nil)
+            pendingFrame=nil;commitDeferredFrame(pending)
         }
         moveViewport();preparePresentation()
     }
@@ -510,12 +508,12 @@ private struct PendingPreviewFrame {
         let scale=max(1,window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 1)
         let renderRequest=HTMLPreviewRenderRequest(token:request.id,revision:request.revision,
             layoutID:request.layoutID,entries:request.entries,fontSize:request.fontSize,baseURL:request.baseURL,
-            viewportSize:NSSize(width:request.width,height:bounds.height),scale:scale,scrollPoint:.zero)
+            viewportSize:NSSize(width:request.width,height:bounds.height),scale:scale)
         web.requestLayout(renderRequest) { [weak self] layout in self?.receiveLayout(layout,for:request) }
     }
     private func receiveLayout(_ layout:HTMLPreviewLayout?,for original:PreviewRequest) {
         guard var request=rendering,request.id==original.id else{return}
-        guard isCurrent(request) else {web.discard(nil);finishPreparation(original);return}
+        guard isCurrent(request) else {web.discard();finishPreparation(original);return}
         guard let layout else {failPreparation(original);return}
         guard layout.token==request.id,layout.revision==request.revision,layout.layoutID==request.layoutID else {
             failPreparation(original);return
@@ -535,12 +533,12 @@ private struct PendingPreviewFrame {
     private func receiveCapturedFrame(_ frame:HTMLPreviewFrame?,request original:PreviewRequest,
         position originalPosition:PresentationPosition) {
         guard var request=rendering,request.id==original.id else{return}
-        guard isCurrent(request) else {web.discard(frame);finishPreparation(original);return}
+        guard isCurrent(request) else {web.discard();finishPreparation(original);return}
         guard let frame,frame.token==request.id,frame.revision==request.revision,
               frame.layoutID==request.layoutID else {failPreparation(original);return}
         guard applyMeasurements(frame.measurements,to:&request),
               let position=presentationPosition(request,geometry:frame.geometry,anchor:renderAnchor) else {
-            web.discard(frame);failPreparation(original);return
+            web.discard();failPreparation(original);return
         }
         // Resource completion between layout and capture can alter the desired
         // local scroll point. Settle that deterministic race before publishing.
@@ -557,7 +555,7 @@ private struct PendingPreviewFrame {
     }
     private func receiveSettledFrame(_ frame:HTMLPreviewFrame?,request original:PreviewRequest) {
         guard var request=rendering,request.id==original.id else{return}
-        guard isCurrent(request) else {web.discard(frame);finishPreparation(original);return}
+        guard isCurrent(request) else {web.discard();finishPreparation(original);return}
         guard let frame,applyMeasurements(frame.measurements,to:&request),
               let position=presentationPosition(request,geometry:frame.geometry,anchor:renderAnchor) else {
             failPreparation(original);return
@@ -566,7 +564,7 @@ private struct PendingPreviewFrame {
     }
     private func finishCapturedFrame(_ frame:HTMLPreviewFrame,request:PreviewRequest,position:PresentationPosition) {
         if isScrollMappingFrozen || resizeSession?.isDragging == true {
-            pendingFrame=PendingPreviewFrame(frame:frame,request:request);web.discard(frame)
+            pendingFrame=PendingPreviewFrame(frame:frame,request:request);web.discard()
             finishPreparation(request);return
         }
         let previousRevision=committed?.request.revision
@@ -575,7 +573,7 @@ private struct PendingPreviewFrame {
            source != nil,let anchor=captureViewportAnchor() {
             idleAnchorLock=anchor
         }
-        if !accepted {web.discard(frame)}
+        if !accepted {web.discard()}
         finishPreparation(request,keepDesired:!accepted)
     }
     private func applyMeasurements(_ measurements:[PreviewBlockMeasurement],to request:inout PreviewRequest,
@@ -606,7 +604,7 @@ private struct PendingPreviewFrame {
         retainedPresentationAfterFailure = retainedPresentationAfterFailure &&
             (committed == nil || (committedFrameID>0 && loadingView.isHidden))
         #endif
-        web.discard(nil);desired=nil;rendering=nil;renderAnchor=nil;presentationSettled?()
+        web.discard();desired=nil;rendering=nil;renderAnchor=nil;presentationSettled?()
     }
     private func receiveResourceFrame(_ frame:HTMLPreviewFrame) {
         guard let committed,frame.cause == .resource,
@@ -721,7 +719,7 @@ private struct PendingPreviewFrame {
             }
         }
     }
-    private func commitDeferredFrame(_ pending:PendingPreviewFrame,anchor:ViewportAnchor?) {
+    private func commitDeferredFrame(_ pending:PendingPreviewFrame) {
         if pending.frame.cause == .resource {
             settleResourceFrame(pending,alignToSource:true)
             return
@@ -729,7 +727,7 @@ private struct PendingPreviewFrame {
         var request=pending.request
         guard preparedDocument?.revision==nil || preparedDocument?.revision==request.revision,
               applyMeasurements(pending.frame.measurements,to:&request),
-              let position=presentationPosition(request,geometry:pending.frame.geometry,anchor:anchor) else{return}
+              let position=presentationPosition(request,geometry:pending.frame.geometry,anchor:nil) else{return}
         _=commit(request,frame:pending.frame,position:position,requiresCurrent:false)
     }
     private func resourceChangesAreOutsideViewport(previous:CommittedPresentation,
@@ -1042,21 +1040,4 @@ private struct PendingPreviewFrame {
         return "mounted=\(preparedFragmentCount), windowTop=\(committed?.windowTop ?? -1), total=\(committed?.totalHeight ?? -1), height=\(committed?.geometry.height ?? 0), desired=\(String(describing:desired?.id)), rendering=\(String(describing:rendering?.id)), contentRevision=\(content?.revision ?? -1), lastRevision=\(lastRevision), measuredSource=\(source?.hasMeasuredLayout == true), sourceRevision=\(source?.contentRevision ?? -1), displayedRevision=\(displayedDocumentRevision), detached=\(detachedSourceOrigin != nil), anchor=\(String(describing:idleAnchorLock)), pendingVisible=\(pendingVisible), mapCurrent=\(hasCurrentMap), uncommitted=\(web.hasUncommittedPresentation), failures=\(presentationFailureCount), frame=\(committedFrameID), clip=\(clipOrigin), patches=\(patchCount), displayed=\(String(describing:displayedSourceRange)), visible=\(String(describing:visible))"
     }
     #endif
-    override func menu(for event:NSEvent)->NSMenu? {
-        let menu=NSMenu();menu.addItem(withTitle:"Inspect Item",action:#selector(inspect(_:)),keyEquivalent:"").target=self;return menu
-    }
-    @objc private func inspect(_ sender:Any?) {
-        guard let source,let f=committed?.request.entries.first(where:{$0.fragment.from<=source.alignmentAnchor && $0.fragment.to>=source.alignmentAnchor})?.fragment,f.kind != .pending else{return}
-        _ = showInspector(for:f)
-    }
-    func showInspector(for fragment:PreviewFragment)->NSWindowController {
-        precondition(fragment.html != nil && fragment.kind != .pending)
-        let panel=NSPanel(contentRect:NSRect(x:0,y:0,width:760,height:600),styleMask:[.titled,.closable,.resizable],backing:.buffered,defer:false)
-        panel.title=fragment.kind == .table ? "Inspect Table":"Inspect Item"
-        let pane=PreviewPane(frame:panel.contentRect(forFrameRect:panel.frame));pane.baseURL=baseURL;pane.fontSize=fontSize
-        pane.show(ParseResult(revision:0,spans:[],fragments:[fragment]))
-        panel.contentView=pane;panel.center()
-        let controller=NSWindowController(window:panel);inspector=controller;controller.showWindow(nil)
-        return controller
-    }
 }

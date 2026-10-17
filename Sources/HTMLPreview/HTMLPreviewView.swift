@@ -43,9 +43,9 @@ public final class HTMLAssetPreparer {
             } else if let source=imageSource(in:original) {
                 resolvedURL=URL(string:source,relativeTo:baseURL)?.absoluteURL
             }
-            if let url=resolvedURL,url.isFileURL,!containsDimension(in:original),let size=imageDimensions(at:url),
+            if let url=resolvedURL,url.isFileURL,let size=imageDimensions(at:url),
                let close=prepared.lastIndex(of:">") {
-                prepared.insert(contentsOf:" width=\"\(size.width)\" height=\"\(size.height)\"",at:close)
+                prepared.insert(contentsOf:dimensionAttributes(in:original,intrinsic:size),at:close)
             }
             if delayImages {prepared=deferImageSource(in:prepared)}
             if let range=Range(tagMatch.range,in:result) {result.replaceSubrange(range,with:prepared)}
@@ -75,8 +75,36 @@ public final class HTMLAssetPreparer {
         result.replaceSubrange(range,with:"src=\"\" data-astra-delayed-src=\"\(value)\"")
         return result
     }
-    private func containsDimension(in tag:String)->Bool {
-        tag.range(of:#"\b(width|height)\s*="#,options:[.regularExpression,.caseInsensitive]) != nil
+    private func dimensionAttributes(in tag:String,intrinsic:(width:Int,height:Int))->String {
+        let width=dimension("width",in:tag),height=dimension("height",in:tag)
+        let hasWidth=hasDimension("width",in:tag),hasHeight=hasDimension("height",in:tag)
+        switch (hasWidth,hasHeight) {
+        case (false,false):
+            return " width=\"\(intrinsic.width)\" height=\"\(intrinsic.height)\""
+        case (true,false):
+            guard let width else{return ""}
+            let height=max(1,Int((Double(width)*Double(intrinsic.height)/Double(intrinsic.width)).rounded()))
+            return " height=\"\(height)\""
+        case (false,true):
+            guard let height else{return ""}
+            let width=max(1,Int((Double(height)*Double(intrinsic.width)/Double(intrinsic.height)).rounded()))
+            return " width=\"\(width)\""
+        case (true,true):return ""
+        }
+    }
+    private func hasDimension(_ name:String,in tag:String)->Bool {
+        tag.range(of:"\\b\(name)\\s*=",options:[.regularExpression,.caseInsensitive]) != nil
+    }
+    private func dimension(_ name:String,in tag:String)->Int? {
+        guard let expression=try? NSRegularExpression(
+            pattern:"\\b\(name)\\s*=\\s*(?:\"\\s*([0-9]+)\\s*\"|'\\s*([0-9]+)\\s*'|([0-9]+)(?=\\s|/?>))",
+            options:[.caseInsensitive]),
+              let match=expression.firstMatch(in:tag,range:NSRange(tag.startIndex...,in:tag)) else{return nil}
+        for index in 1..<match.numberOfRanges where match.range(at:index).location != NSNotFound {
+            guard let range=Range(match.range(at:index),in:tag),let value=Int(tag[range]),value>0 else{return nil}
+            return value
+        }
+        return nil
     }
     private func imageDimensions(at url:URL)->(width:Int,height:Int)? {
         if let cached=dimensions[url] {return cached}
@@ -146,12 +174,11 @@ public struct HTMLPreviewRenderRequest:Sendable {
     public let baseURL:URL?
     public let viewportSize:NSSize
     public let scale:CGFloat
-    public let scrollPoint:NSPoint
     public init(token:Int,revision:Int,layoutID:PreviewLayoutID,entries:[RenderedEntry],fontSize:CGFloat,
-        baseURL:URL?,viewportSize:NSSize,scale:CGFloat,scrollPoint:NSPoint) {
+        baseURL:URL?,viewportSize:NSSize,scale:CGFloat) {
         self.token=token;self.revision=revision;self.layoutID=layoutID;self.entries=entries
         self.fontSize=fontSize;self.baseURL=baseURL;self.viewportSize=viewportSize
-        self.scale=scale;self.scrollPoint=scrollPoint
+        self.scale=scale
     }
 }
 
@@ -161,7 +188,6 @@ public struct HTMLPreviewLayout:Sendable {
     public let layoutID:PreviewLayoutID
     public let geometry:HTMLPreviewGeometry
     public let measurements:[PreviewBlockMeasurement]
-    public let baseURL:URL?
 }
 
 public final class HTMLPreviewFrame:@unchecked Sendable {
@@ -267,7 +293,7 @@ private final class HTMLRendererExecutor {
             } else {resourceStarted=nil;delayedImagesReadyAt=nil}
             let measurements=makeMeasurements(ids:Set(entryIDs))
             return HTMLPreviewLayout(token:request.token,revision:request.revision,layoutID:request.layoutID,
-                geometry:geometry(),measurements:measurements,baseURL:request.baseURL)
+                geometry:geometry(),measurements:measurements)
         }
 
         func capture(token:Int,point:NSPoint)->HTMLPreviewFrame? {
@@ -323,11 +349,6 @@ private final class HTMLRendererExecutor {
             guard let engine else{return false}
             return astra_ul_surface_pending_resource_count(engine)>0
         }
-        func abandonResources() {
-            if let engine {astra_ul_surface_abandon_pending_resources(engine)}
-            resourceStarted=nil;delayedImagesReadyAt=nil
-        }
-
         private func drainDirtyIDs()->Set<String> {
             guard let engine else{return []}
             var result=Set<String>()
@@ -778,7 +799,7 @@ private final class HTMLRendererExecutor {
         baseURL=frame.baseURL
         committedToken=frame.token;committedGeometry=frame.geometry;hasUncommittedPresentation=false;needsDisplay=true
     }
-    public func discard(_ frame:HTMLPreviewFrame?) {hasUncommittedPresentation=false}
+    public func discard() {hasUncommittedPresentation=false}
     public func geometry()->HTMLPreviewGeometry? {committedGeometry}
     public func elementRect(_ selector:String,containing text:String="")->NSRect? {
         guard let token=committedToken,!hasUncommittedPresentation else{return nil}

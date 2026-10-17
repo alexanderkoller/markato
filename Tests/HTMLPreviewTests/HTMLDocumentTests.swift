@@ -61,4 +61,14 @@ import Testing
     #expect(prepared.contains("src=\"\(svg.absoluteString)\""))
     #expect(prepared.contains("width=\"640\""))
     #expect(prepared.contains("height=\"360\""))
+
+    let fixedWidth=HTMLAssetPreparer().prepare(
+        "<img width=\"320\" src=\"diagram.svg\">",baseURL:directory)
+    #expect(fixedWidth.contains("width=\"320\""))
+    #expect(fixedWidth.contains("height=\"180\""))
+
+    let fixedHeight=HTMLAssetPreparer().prepare(
+        "<img src=\"diagram.svg\" height='90'>",baseURL:directory)
+    #expect(fixedHeight.contains("width=\"160\""))
+    #expect(fixedHeight.contains("height='90'"))
 }
