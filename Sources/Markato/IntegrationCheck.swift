@@ -176,6 +176,9 @@ import PDFKit
         if CommandLine.arguments.contains("--integration-delayed-image-bottom-untouched") {
             verifySampleDelayedImageBottom(controller,document:document,clickBeforeEnd:false);return
         }
+        if CommandLine.arguments.contains("--integration-source-end-navigation") {
+            verifySourceEndNavigation(controller,document:document);return
+        }
         if CommandLine.arguments.contains("--integration-scroll-throughput") {
             verifyScrollThroughput(controller);return
         }
@@ -506,6 +509,48 @@ import PDFKit
                     }
                     verifyPostCommitStability()
                 }
+            }
+        }
+    }
+
+    private static func verifySourceEndNavigation(_ controller:EditorWindowController,
+        document:MarkdownDocument) {
+        let source=controller.source
+        source.debugSetLayoutCompletionPaused(true)
+        func wait(_ remaining:Int,_ ready:@escaping()->Bool,_ failure:String,_ completion:@escaping()->Void) {
+            guard remaining>0 else{fail("\(failure): \(source.debugResizeState)")}
+            if ready() {completion()}
+            else {DispatchQueue.main.asyncAfter(deadline:.now()+0.01){wait(remaining-1,ready,failure,completion)}}
+        }
+        wait(500,{source.hasMeasuredLayout && source.contentHeight>source.bounds.height*2},
+            "Source layout did not become scrollable") {
+            let step=max(80,source.bounds.height*0.75)
+            source.beginScrollGesture()
+            for _ in 0..<24 {source.debugScrollViewport(by:step)}
+            for _ in 0..<12 {source.debugScrollViewport(by:-step)}
+            source.endScrollGesture()
+            guard let window=controller.window else{fail("Missing source integration window")}
+            check(window.makeFirstResponder(source.textView),"Could not focus source after scrolling")
+            check(clickSource(source.textView,at:NSPoint(x:120,y:source.bounds.midY)),
+                "Could not click source after scrolling")
+            DispatchQueue.main.async {source.textView.moveToEndOfDocument(nil)}
+            DispatchQueue.main.asyncAfter(deadline:.now()+0.05) {
+                check(source.debugHasPendingNavigation,
+                    "Cmd-End did not wait for its unmeasured source prefix")
+                check(source.selection.location != document.source.count,
+                    "Cmd-End moved the caret before its source prefix was measured")
+                source.debugSetLayoutCompletionPaused(false)
+            }
+            wait(500,{source.selection.location==document.source.count && source.debugHasCompleteLayout},
+                "Cmd-End did not complete after measuring the source prefix") {
+                guard document.source.count>0,
+                      let lastY=source.debugRenderedViewportY(for:document.source.count-1) else {
+                    fail("Could not locate the final source character")
+                }
+                check(lastY >= -0.01 && lastY <= source.bounds.height+0.01,
+                    "Cmd-End left the final source character outside the viewport at y=\(lastY); retainedLast=\(source.debugMeasuredPosition(for:document.source.count-1)); \(source.debugResizeState)")
+                print("SOURCE END NAVIGATION PASSED: scroll down/up, click, and Cmd-End reached visible EOF")
+                exit(EXIT_SUCCESS)
             }
         }
     }
@@ -1719,7 +1764,7 @@ import PDFKit
         guard initial != NSNotFound else{fail("Missing Section 36 click/edit regression fixture")}
         source.debugAlignViewport(at:initial,viewportY:source.bounds.height/2)
         wait(800,{preview.coversSourceViewport && preview.debugScrollMapError.map{abs($0)<0.01}==true},
-            "Mid-document viewport did not center before click/edit regression") {
+            "Mid-document viewport did not center before click/edit regression; sourceComplete=\(source.debugHasCompleteLayout); source=\(source.debugResizeState)") {
             let size=window.contentLayoutRect.size
             controller.windowWillStartLiveResize(Notification(name:NSWindow.willStartLiveResizeNotification,object:window))
             window.setContentSize(NSSize(width:size.width-96,height:size.height))
@@ -1760,7 +1805,7 @@ import PDFKit
                         let settledSourceY=source.debugRenderedViewportY(for:insertion)
                         let settledPreviewY=preview.debugParagraphViewportY(containing:"What's")
                         check(settledSourceY.flatMap{a in settledPreviewY.map{abs(a-$0)<32}}==true,
-                            "Typed paragraph moved out of alignment after painting")
+                            "Typed paragraph moved out of alignment after painting (source \(String(describing:settledSourceY)), preview \(String(describing:settledPreviewY)), complete=\(source.debugHasCompleteLayout), mapError=\(String(describing:preview.debugScrollMapError)), sourceState=\(source.debugResizeState), previewState=\(preview.debugGeometry()))")
                         if let content=window.contentView {
                             writeVisualCapture(capture(content),suffix:"after-click-edit")
                         }

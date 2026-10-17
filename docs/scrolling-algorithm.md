@@ -11,6 +11,13 @@ TextKit line measurements with estimated gaps in one source coordinate system.
 Visible or navigated regions replace estimates without rebasing the rest of
 the document.
 
+The first source viewport is measured synchronously. Bounded main-thread
+completion batches then replace the remaining estimates from the start of the
+document while preserving the current source anchor. Explicit navigation waits
+until its destination prefix is measured, so it never commits a position from
+estimated source geometry. Once completion finishes, source scrolling and
+navigation are retained-tree lookups.
+
 `PreparedDocument` retains the ordered Markdown blocks, cached HTML, syntax,
 source layout, and preview block strides. Stable block IDs let edits keep
 unchanged content and geometry.

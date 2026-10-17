@@ -24,12 +24,14 @@ public final class LayoutIndex {
         let left: Node?, right: Node?
         let length: Int, count: Int, depth: Int
         let advance: Double
+        let hasEstimates: Bool
         init(_ line:Line,_ left:Node?=nil,_ right:Node?=nil) {
             self.line=line;self.left=left;self.right=right
             length=(left?.length ?? 0)+line.length+(right?.length ?? 0)
             advance=(left?.advance ?? 0)+line.advance+(right?.advance ?? 0)
             count=(left?.count ?? 0)+1+(right?.count ?? 0)
             depth=1+max(left?.depth ?? 0,right?.depth ?? 0)
+            hasEstimates=line.estimated || (left?.hasEstimates ?? false) || (right?.hasEstimates ?? false)
         }
     }
     private var root: Node?
@@ -158,6 +160,19 @@ public final class LayoutIndex {
             return NSMaxRange(range)>lineEnd && visit(node.right,lineEnd)
         }
         return visit(root,0)
+    }
+    public func firstEstimatedRange(atOrAfter offset:Int=0)->NSRange? {
+        let requested=max(0,min(offset,length))
+        func find(_ node:Node?,_ start:Int)->NSRange? {
+            guard let node,node.hasEstimates,start+node.length>requested else{return nil}
+            let before=node.left?.length ?? 0,lineStart=start+before
+            if let found=find(node.left,start) {return found}
+            if node.line.estimated,lineStart+node.line.length>requested {
+                return NSRange(location:lineStart,length:node.line.length)
+            }
+            return find(node.right,lineStart+node.line.length)
+        }
+        return find(root,0)
     }
     /// Once TextKit has measured the document end, keep exact lines fixed and
     /// distribute the remaining height across the still-estimated regions.
