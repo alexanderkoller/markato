@@ -27,6 +27,7 @@ The ownership transitions are:
 | Event | Result |
 | --- | --- |
 | Source wheel, scrollbar, keyboard navigation, or explicit reveal | Release preview detachment and passive anchors; source synchronization owns the destination |
+| Visible source edit | Release passive ownership and place the rendered block nearest the last edited source point at the source reading position |
 | Preview wheel | Preview becomes independently positioned until the source next moves or changes revision |
 | Source gesture begins | Freeze publication that could override the gesture; keep mapping from retained source refinements current |
 | Source gesture ends | Publish deferred geometry at the final source destination, then return to source synchronization |
@@ -156,6 +157,22 @@ This anchor is semantic; an absolute document offset is only valid when the
 geometry itself is unchanged. Resize and delayed-resource settlement differ in
 when they capture and release an anchor, not in how they resolve one.
 
+A source edit uses the last non-whitespace inserted character, or the deletion
+point, as its semantic point. If the edit is inside a serialized comment, the
+controller substitutes that comment's resolved Markdown anchor because the
+record has no preview node. The renderer then treats both cases identically:
+it finds the nearest rendered block in the currently displayed preview. If
+that point is already visible, the edit leaves the preview viewport unchanged.
+Otherwise it places the point at the edited source line's current viewport
+height in one immediate navigation transaction. No source destination is
+retained after that decision. A visual viewport anchor lets passive source
+relayout and preview publication preserve the result rather than reapplying
+the source map. The next explicit source scroll discards that visual anchor
+and resumes map-driven synchronization. An edit outside the visible source
+range performs no navigation. Reflow in the source pane preserves a visible
+point outside the replacement so a long metadata rewrite cannot make nearby
+source lines jump.
+
 ## Retained geometry and complexity
 
 Parsing and full preview geometry construction happen in the background. The
@@ -225,6 +242,17 @@ In the document interior, the panes are aligned at that golden-ratio position.
 This reading-alignment rule applies only to ordinary source movement. It does
 not apply while resize anchoring or delayed-height compensation owns the
 viewport.
+
+After a visible source edit, an already-visible rendered point stays where it
+is. An invisible point is revealed at the source line's viewport height, as a
+one-shot semantic navigation analogous to sidebar navigation. The transaction
+ends with that visibility decision. Later publication and passive
+source-geometry notifications preserve the viewport at that result; they do
+not perform a second map-based correction. The next explicit source scroll
+clears that preservation and makes the current source position authoritative
+again. Cursor movement is inert while it stays inside the source viewport; if
+AppKit scrolls the source to reveal the moved cursor, that movement likewise
+resumes ordinary golden-ratio synchronization.
 
 During a source gesture, the latest source position is authoritative. At
 gesture end, deferred work is positioned against that final location; no

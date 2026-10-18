@@ -6,7 +6,6 @@ import MarkdownCore
 @MainActor final class SidebarPane:NSView,NSOutlineViewDataSource,NSOutlineViewDelegate,
                                     NSTableViewDataSource,NSTableViewDelegate {
     enum Mode:Int {case outline,comments}
-    private enum CommentFilter:Int {case open,resolved,all}
     private final class Cell:NSTableCellView {}
     private final class CommentCell:NSTableCellView {
         let card=NSView(),label=NSTextField(wrappingLabelWithString:"")
@@ -51,7 +50,6 @@ import MarkdownCore
     private let commentTable=NSTableView()
     private let commentColumn=NSTableColumn(identifier:NSUserInterfaceItemIdentifier("Comments"))
     private let commentEmpty=NSTextField(labelWithString:"No comments")
-    private let commentFilter=NSSegmentedControl(labels:["Open","Resolved","All"],trackingMode:.selectOne,target:nil,action:nil)
     private let resolveButton=NSButton(title:"Resolve",target:nil,action:nil)
 
     private var roots=[Node](),ordered=[Node](),nodes=[BlockID:Node]()
@@ -77,10 +75,6 @@ import MarkdownCore
         commentTable.action=#selector(clickSelectedComment(_:))
         commentTable.doubleAction=#selector(openSelectedComment(_:));commentTable.setAccessibilityLabel("Document comments")
         commentScroll.documentView=commentTable;configure(scroll:commentScroll);addSubview(commentScroll)
-        commentFilter.selectedSegment=CommentFilter.open.rawValue
-        commentFilter.target=self;commentFilter.action=#selector(changeCommentFilter(_:))
-        commentFilter.setAccessibilityLabel("Comment status filter");addSubview(commentFilter)
-
         resolveButton.target=self;resolveButton.action=#selector(toggleResolved(_:));resolveButton.bezelStyle = .rounded
         addSubview(resolveButton)
         for label in [outlineEmpty,commentEmpty] {
@@ -104,8 +98,7 @@ import MarkdownCore
         outlineScroll.frame=NSRect(x:0,y:top,width:bounds.width,height:max(0,bounds.height-top))
         outlineEmpty.frame=NSRect(x:16,y:top+22,width:max(0,bounds.width-32),height:20)
         outlineColumn.width=max(1,bounds.width)
-        let commentTop:CGFloat=68,controls:CGFloat=36
-        commentFilter.frame=NSRect(x:inset,y:38,width:max(1,bounds.width-inset*2),height:24)
+        let commentTop:CGFloat=36,controls:CGFloat=36
         commentScroll.frame=NSRect(x:0,y:commentTop,width:bounds.width,height:max(0,bounds.height-commentTop-controls));commentColumn.width=max(1,bounds.width)
         commentEmpty.frame=NSRect(x:16,y:commentTop+18,width:max(0,bounds.width-32),height:20)
         resolveButton.frame=NSRect(x:max(8,bounds.width-82),y:bounds.height-32,width:74,height:26)
@@ -116,7 +109,7 @@ import MarkdownCore
         mode=next;modeControl.selectedSegment=next.rawValue
         let outlineVisible=next == .outline
         outlineScroll.isHidden = !outlineVisible;outlineEmpty.isHidden = !outlineVisible || !ordered.isEmpty
-        for view in [commentFilter,commentScroll,commentEmpty,resolveButton] {view.isHidden=outlineVisible}
+        for view in [commentScroll,commentEmpty,resolveButton] {view.isHidden=outlineVisible}
         if !outlineVisible {commentEmpty.isHidden = !comments.isEmpty;updateSelectionActions()}
     }
 
@@ -143,16 +136,16 @@ import MarkdownCore
             ($0.anchorRange?.location ?? $0.comment.anchor.position ?? Int.max) <
             ($1.anchorRange?.location ?? $1.comment.anchor.position ?? Int.max)
         }
-        applyCommentFilter(preserving:selected)
+        comments=allComments;changingSelection=true;commentTable.reloadData()
+        if let selected,let row=comments.firstIndex(where:{$0.comment.id==selected}) {
+            commentTable.selectRowIndexes(IndexSet(integer:row),byExtendingSelection:false)
+        } else {commentTable.deselectAll(nil)}
+        changingSelection=false;commentEmpty.isHidden = mode != .comments || !comments.isEmpty
+        refreshCommentCards();updateSelectionActions()
         if selected != nil && selectedComment == nil {clearCommentSelection?()}
     }
     func selectHeading(id:BlockID?) {guard let id,let node=nodes[id] else{return};select(node,scroll:true)}
     func selectComment(id:String,activate:Bool=true) {
-        guard let value=allComments.first(where:{$0.comment.id==id}) else{return}
-        if !comments.contains(where:{$0.comment.id==id}) {
-            commentFilter.selectedSegment=(value.comment.status == .open ? CommentFilter.open:CommentFilter.resolved).rawValue
-            applyCommentFilter(preserving:id)
-        }
         guard let row=comments.firstIndex(where:{$0.comment.id==id}) else{return}
         showMode(.comments);changingSelection=true
         commentTable.selectRowIndexes(IndexSet(integer:row),byExtendingSelection:false);commentTable.scrollRowToVisible(row)
@@ -172,33 +165,8 @@ import MarkdownCore
         let flat=comment.comment.body.split(whereSeparator:{$0.isWhitespace}).joined(separator:" ")
         return flat.count>60 ? String(flat.prefix(57))+"...":flat
     }
-    @objc private func changeCommentFilter(_ sender:Any?) {
-        applyCommentFilter(preserving:selectedComment?.comment.id)
-        if let id=selectedComment?.comment.id {activateComment?(id,false)} else {clearCommentSelection?()}
-    }
-    private func applyCommentFilter(preserving id:String?) {
-        let filter=CommentFilter(rawValue:commentFilter.selectedSegment) ?? .open
-        comments=allComments.filter {value in
-            switch filter {
-            case .open:return value.comment.status == .open
-            case .resolved:return value.comment.status == .resolved
-            case .all:return true
-            }
-        }
-        changingSelection=true;commentTable.reloadData()
-        if let id,let row=comments.firstIndex(where:{$0.comment.id==id}) {
-            commentTable.selectRowIndexes(IndexSet(integer:row),byExtendingSelection:false)
-        } else {commentTable.deselectAll(nil)}
-        changingSelection=false
-        let label:String
-        switch filter {case .open:label="No open comments";case .resolved:label="No resolved comments";case .all:label="No comments"}
-        commentEmpty.stringValue=label;commentEmpty.isHidden = mode != .comments || !comments.isEmpty
-        refreshCommentCards();updateSelectionActions()
-    }
     private func updateSelectionActions() {
-        guard let value=selectedComment?.comment else {resolveButton.isEnabled=false;return}
-        resolveButton.title=value.status == .open ? "Resolve":"Reopen"
-        resolveButton.isEnabled=true
+        resolveButton.title="Resolve";resolveButton.isEnabled=selectedComment != nil
     }
     private func expandAncestors(of node:Node) {var parent=node.parent;while let item=parent {outline.expandItem(item);parent=item.parent}}
     private func select(_ node:Node,scroll:Bool) {
@@ -277,10 +245,7 @@ import MarkdownCore
         }
     }
     func debugSetCommentFilter(_ status:MarkdownCommentStatus?) {
-        switch status {case .some(.open):commentFilter.selectedSegment=CommentFilter.open.rawValue
-        case .some(.resolved):commentFilter.selectedSegment=CommentFilter.resolved.rawValue
-        case nil:commentFilter.selectedSegment=CommentFilter.all.rawValue}
-        applyCommentFilter(preserving:selectedComment?.comment.id)
+        _ = status
     }
     func debugSelectComment(id:String) {selectComment(id:id)}
     func debugOpenSelectedComment() {openSelectedComment(nil)}

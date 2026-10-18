@@ -195,7 +195,7 @@ private final class RenderedDocumentBuilder {
         for comment in comments.sorted(by:{($0.anchorRange?.location ?? Int.max)<($1.anchorRange?.location ?? Int.max)}) {
             let value=comment.comment
             let header=value.created.isEmpty ? value.author:"\(value.author) · \(value.created)"
-            let text="\(header)\n\n\(value.body)"
+            let text=header.isEmpty ? value.body:"\(header)\n\n\(value.body)"
             let contents=value.status == .resolved ? "[Resolved]\n\n\(text)":text
             if !value.anchor.exact.isEmpty {
                 var located:(matches:[PDFSelection],occurrence:Int)?

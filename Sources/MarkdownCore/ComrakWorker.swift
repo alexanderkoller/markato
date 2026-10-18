@@ -175,8 +175,18 @@ public final class ComrakWorker: @unchecked Sendable {
             }
         }
         let syntaxArena=SyntaxArena(spans)
+        let commentOpening=Array("<!--".utf16)
+        func isCommentRecord(_ record:AstraComrakBlockRecord)->Bool {
+            let start=record.from-base,end=min(units.count,record.to-base)
+            guard start>=0,start<end,start+commentOpening.count<=end,
+                  units[start..<(start+commentOpening.count)].elementsEqual(commentOpening) else{return false}
+            let source=String(decoding:units[start..<end],as:UTF16.self)
+                .trimmingCharacters(in:.whitespacesAndNewlines)
+            return source.hasSuffix("| "+MarkdownComments.marker+" -->")
+        }
         if view.block_count>0,let records=view.blocks {
             for (index,record) in UnsafeBufferPointer(start:records,count:view.block_count).enumerated() {
+                if isCommentRecord(record) {continue}
                 let headingTitle:String?
                 if kind(record.kind).isHeading {
                     headingTitle=record.heading_title.length>0 && record.heading_title.bytes != nil

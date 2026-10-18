@@ -234,6 +234,12 @@ private struct PendingPreviewFrame {
     private var usesDOMResizeAnchor=false
     private var pendingFrame:PendingPreviewFrame?
     private var idleAnchorLock:ViewportAnchor?
+    // An edit performs one semantic jump against the currently displayed
+    // preview. Source layout and render publication may continue afterwards,
+    // but neither is user navigation, so they must not realign that jump to a
+    // newly calculated scroll map. The next explicit source interaction clears
+    // this latch before its viewport notification arrives.
+    private var waitsForSourceNavigationAfterEdit=false
     private var resourceSettlementGeneration=0
     var isScrollMappingFrozen:Bool {sourceGestureActive}
     var presentationSettled:(()->Void)?
@@ -364,6 +370,7 @@ private struct PendingPreviewFrame {
         if resizeSession != nil,resizeSession?.protectsViewport != true {clearResizePin()}
         if resizeSession?.protectsViewport == true {updateLoadingState();return}
         resumeSourceAlignmentIfNeeded()
+        guard !waitsForSourceNavigationAfterEdit else {updateLoadingState();return}
         place()
         updateLoadingState()
     }
@@ -444,11 +451,9 @@ private struct PendingPreviewFrame {
         independentOrigin=toEnd ? max(0,committed.totalHeight-bounds.height):0;place()
     }
     func beginScrollGesture() {
-        // A resource-settlement anchor survives passive TextKit/AppKit clip
-        // corrections. Only explicit navigation intent starts a new source to
-        // preview alignment; inferring intent from a changed source origin
-        // made an active insertion point able to release the anchor.
-        clearIdleAnchorLock()
+        // This lifecycle callback can be synthesized by AppKit during edit
+        // reflow. Only SourceEditor.sourceNavigationIntent, emitted by an
+        // actual wheel/scroller interaction, may release an edit viewport.
         guard !isScrollMappingFrozen else{return}
         refreshMap()
         guard hasCurrentMap else{updateLoadingState();return}
@@ -457,6 +462,50 @@ private struct PendingPreviewFrame {
         // final source viewport rather than from where the gesture began.
         sourceGestureActive=true
         web.beginViewportGesture()
+    }
+    /// Explicit source interaction always owns synchronized scrolling. Keep
+    /// this separate from the AppKit live-scroll lifecycle so a stale or
+    /// missing notification cannot leave the preview pinned after an edit.
+    func captureSourceScrolling() {
+        waitsForSourceNavigationAfterEdit=false
+        clearResizePin()
+        clearIdleAnchorLock()
+        renderAnchor=nil
+        resumeSourceAlignment()
+    }
+    /// Make an edit visible once, without turning it into a continuing
+    /// alignment constraint. If its rendered point is already onscreen, keep
+    /// the current preview viewport; otherwise put it at the source line's
+    /// current viewport height. Later frames preserve that visual result until
+    /// explicit source navigation resumes map-driven placement.
+    func navigate(toSourceOffset offset:Int,viewportY:CGFloat) {
+        guard source != nil,let committed else{return}
+        // This is the complete edit synchronization transaction. Publication
+        // and passive TextKit geometry callbacks preserve its result; only a
+        // later explicit source navigation resumes map-driven placement.
+        waitsForSourceNavigationAfterEdit=true
+        let candidates=zip(committed.request.entries,committed.geometry.items)
+            .filter {$0.0.fragment.kind != .pending}
+        guard let (_,item)=candidates.min(by:{lhs,rhs in
+            func distance(_ entry:RenderedEntry)->Int {
+                if offset<entry.fragment.from {return entry.fragment.from-offset}
+                if offset>entry.fragment.to {return offset-entry.fragment.to}
+                return 0
+            }
+            return distance(lhs.0)<distance(rhs.0)
+        }) else{return}
+        clearResizePin();clearIdleAnchorLock();resumeSourceAlignment()
+        let end=max(0,committed.totalHeight-bounds.height)
+        let point=committed.windowTop+item.y+(item.landmark ?? 0)
+        let viewportPoint=point-surface.logicalOrigin
+        if viewportPoint<0 || viewportPoint>bounds.height {
+            moveClip(to:min(end,max(0,point-viewportY)))
+        }
+        // Capture the result, not the edit destination. Every later frame may
+        // resolve this visual anchor against its own geometry without
+        // recomputing a source-map position. Explicit source navigation clears
+        // it in captureSourceScrolling().
+        idleAnchorLock=captureViewportAnchor()
     }
     func endScrollGesture() {
         guard isScrollMappingFrozen else{return}
@@ -472,7 +521,8 @@ private struct PendingPreviewFrame {
             // TextKit refines retained source estimates while momentum is in
             // flight. Rebuild only the bounded mounted-window map so the
             // frozen preview presentation continues to track the live source.
-            refreshMap();place()
+            refreshMap()
+            if !waitsForSourceNavigationAfterEdit {place()}
         } else {moveViewport()}
         preparePresentation()
     }
@@ -494,9 +544,12 @@ private struct PendingPreviewFrame {
             previewTop:previewTop,previewHeight:previewHeight)
         guard content != next || committed?.request.content != next else{updateLoadingState();return}
         if let committed,committed.request.revision != revision {
-            // Every edit abandons resize anchoring and publishes a fresh
-            // reading-aligned map, even when the HTML pixels are unchanged.
-            clearResizePin();clearIdleAnchorLock();endScrollGesture()
+            // A new revision abandons resize anchoring. After an edit jump,
+            // however, its visual anchor survives publication until explicit
+            // source navigation resumes map-driven positioning.
+            clearResizePin()
+            if !waitsForSourceNavigationAfterEdit {clearIdleAnchorLock()}
+            endScrollGesture()
         }
         content=next;requestPresentation();updateLoadingState()
     }
@@ -535,8 +588,9 @@ private struct PendingPreviewFrame {
         }
         rendering=request
         preparedDocument?.setPreviewLayoutID(request.layoutID)
-        let preservesExistingContent=committed.map{$0.request.revision != request.revision} ?? false
-        renderAnchor=idleAnchorLock ?? (preservesExistingContent ? captureViewportAnchor():nil)
+        // Explicit navigation happens synchronously. This anchor is reserved
+        // for passive resource/layout settlement, never for source edits.
+        renderAnchor=idleAnchorLock
         #if DEBUG
         patchCount += 1
         if debugFailsNextPresentation {
@@ -611,12 +665,7 @@ private struct PendingPreviewFrame {
             pendingFrame=PendingPreviewFrame(frame:frame,request:request);web.discard()
             finishPreparation(request);return
         }
-        let previousRevision=committed?.request.revision
         let accepted=commit(request,frame:frame,position:position)
-        if accepted,previousRevision != nil,previousRevision != request.revision,
-           source != nil,let anchor=captureViewportAnchor() {
-            idleAnchorLock=anchor
-        }
         if !accepted {web.discard()}
         finishPreparation(request,keepDesired:!accepted)
     }
@@ -916,13 +965,19 @@ private struct PendingPreviewFrame {
         if debugFailsNextPosition {debugFailsNextPosition=false;return nil}
         #endif
         let extent=previewExtent(request,geometry)
+        // A revision commit preserves the viewport that exists now, not a
+        // destination remembered when the edit began. Thus an instantaneous
+        // edit jump survives ordinary publication, while any intervening
+        // source or preview scroll is preserved instead.
+        let currentAnchor=anchor ?? (committed?.request.revision != request.revision
+            ? captureViewportAnchor():nil)
         let resizeOrigin=usesDOMResizeAnchor ? resizeAnchorScrollY.map {
             min(max(0,extent.total-bounds.height),max(0,extent.top+$0))
         }:nil
         switch scrolling {
         case .independent:
             guard let origin=resizeOrigin ?? pinnedResizeOrigin(geometry:geometry,windowTop:extent.top,totalHeight:extent.total) ??
-                    resolvedOrigin(anchor,geometry:geometry,windowTop:extent.top,totalHeight:extent.total) ??
+                    resolvedOrigin(currentAnchor,geometry:geometry,windowTop:extent.top,totalHeight:extent.total) ??
                     targetOrigin(height:extent.total,map:nil) else{return nil}
             return PresentationPosition(map:nil,sourceGeometryRevision:nil,origin:origin,windowTop:extent.top,totalHeight:extent.total)
         case .synchronized(let source):
@@ -934,7 +989,7 @@ private struct PendingPreviewFrame {
                     origin:origin,windowTop:extent.top,totalHeight:extent.total)
             }
             guard let map=makeMap(request,geometry:geometry,windowTop:extent.top,totalHeight:extent.total) else{return nil}
-            guard let origin=resolvedOrigin(anchor,geometry:geometry,windowTop:extent.top,totalHeight:extent.total) ??
+            guard let origin=resolvedOrigin(currentAnchor,geometry:geometry,windowTop:extent.top,totalHeight:extent.total) ??
                     targetOrigin(height:extent.total,map:map) else{return nil}
             return PresentationPosition(map:map,sourceGeometryRevision:source.geometryRevision,origin:origin,windowTop:extent.top,totalHeight:extent.total)
         }
@@ -1082,6 +1137,9 @@ private struct PendingPreviewFrame {
     }
     #if DEBUG
     var debugIsIndependentlyScrolled:Bool {detachedSourceOrigin != nil}
+    func debugHoldViewportAtCurrentOrigin() {
+        idleAnchorLock = .absolute(origin:independentOrigin)
+    }
     var debugDOMResizeAnchorViewportY:CGFloat? {web.resizeAnchorViewportY()}
     var debugDOMResizeAnchorTargetViewportY:CGFloat? {web.resizeAnchorTargetViewportY()}
     var debugSelectedCommentAnchor:NSRect? {selectedCommentAnchor}

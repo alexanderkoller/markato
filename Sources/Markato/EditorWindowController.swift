@@ -74,7 +74,7 @@ private final class CommentPopoverViewController:NSViewController {
         editor.minSize=NSSize(width:0,height:0);editor.maxSize=NSSize(width:CGFloat.greatestFiniteMagnitude,height:CGFloat.greatestFiniteMagnitude)
         editor.textContainer?.containerSize=NSSize(width:344,height:CGFloat.greatestFiniteMagnitude)
         editor.textContainer?.widthTracksTextView=true;editor.textContainer?.heightTracksTextView=false
-        editor.setBody(comment.body);editor.setAccessibilityLabel("Comment by \(comment.author)")
+        editor.setBody(comment.body);editor.setAccessibilityLabel("Comment")
         scroll.documentView=editor;container.addSubview(header);container.addSubview(deleteButton);container.addSubview(scroll)
         NSLayoutConstraint.activate([
             header.leadingAnchor.constraint(equalTo:container.leadingAnchor,constant:12),
@@ -100,6 +100,7 @@ private final class CommentPopoverViewController:NSViewController {
         view.window?.makeFirstResponder(editor);editor.setSelectedRange(NSRange(location:editor.string.utf16.count,length:0))
     }
     private static func header(for comment:MarkdownComment)->String {
+        guard !comment.author.isEmpty else{return "Comment"}
         guard let date=ISO8601DateFormatter().date(from:comment.created) else{return comment.author}
         let formatter=DateFormatter();formatter.dateStyle = .medium;formatter.timeStyle = .short
         return "\(comment.author) · \(formatter.string(from:date))"
@@ -144,17 +145,21 @@ final class EditorWindowController: NSWindowController, NSSplitViewDelegate, NSS
     private var commentPopoverID:String?
     private var pendingCommentPopoverID:String?
     private enum CommentEditTarget {
-        case new(selection:NSRange,author:String,created:String)
+        case new(selection:NSRange)
         case existing(id:String)
     }
     private var commentEditTarget:CommentEditTarget?
     private var finishingCommentPopover=false
     private var commentRefreshGeneration=0
+    private var synchronizingCommentRecord=false
+    private var pendingCommentAnchorSyncIDs=Set<String>()
+    private var commentAnchorSyncScheduled=false
     // Prepared document content is retained. Viewport movement never evicts it.
     private let preparedDocument=PreparedDocument()
     private var backgroundRevision = -1
     private var presentationPending=false
     private var pendingRegional:(revision:Int,context:RegionalParseContext)?
+    private var pendingCommentInsertion:(body:String,selection:NSRange)?
     private var publishedOutlineGeneration = -1
     private var isClosed=false
     private var openingRequested=false
@@ -257,6 +262,7 @@ final class EditorWindowController: NSWindowController, NSSplitViewDelegate, NSS
         sidebar.toggleCommentResolved = { [weak self] id in self?.toggleCommentResolved(id) }
         source.viewportChanged = { [weak self] range in self?.viewportChanged(range) }
         source.sourceClicked = { [weak self] in self?.clearCommentSelection() }
+        source.sourceNavigationIntent = { [weak self] in self?.preview.captureSourceScrolling() }
         source.scrollGestureChanged = { [weak self] active in
             if active {self?.preview.beginScrollGesture()}else{
                 self?.preview.endScrollGesture()
@@ -303,6 +309,23 @@ final class EditorWindowController: NSWindowController, NSSplitViewDelegate, NSS
         preview.baseURL = document.fileURL?.deletingLastPathComponent()
         document.edited = { [weak self] selection,_,edit in
             guard let self,!self.isClosed else { return }
+            let inserted=edit.insertedLength>0
+                ? document.source.string(in:NSRange(location:edit.range.location,length:edit.insertedLength)):""
+            let editedComment=self.comments.first {value in
+                edit.range.length==0 ? NSLocationInRange(edit.range.location,value.recordRange)
+                    : NSIntersectionRange(edit.range,value.recordRange).length>0
+            }
+            let commentAnchor=editedComment?.anchorRange.map {
+                MarkdownComments.transformedAnchorRange($0,through:edit)
+            }.map {range in
+                range.length>0 ? NSMaxRange(range)-1:range.location
+            }
+            let editedRecord=editedComment != nil
+            let visibleBeforeEdit=self.source.visibleSourceRange
+            let editWasVisible=edit.range.length==0
+                ? edit.range.location>=visibleBeforeEdit.location &&
+                    edit.range.location<=NSMaxRange(visibleBeforeEdit)
+                : NSIntersectionRange(edit.range,visibleBeforeEdit).length>0
             if self.preparedDocument.revision==document.revision-1,
                let context=self.preparedDocument.regionalContext(for:edit,newLength:document.source.count) {
                 self.pendingRegional=(document.revision,context)
@@ -328,9 +351,27 @@ final class EditorWindowController: NSWindowController, NSSplitViewDelegate, NSS
             self.source.endScrollGesture()
             self.presentationPending=false
             self.preview.invalidate()
+            self.source.documentEdited(selection:selection,edit:edit,semanticAnchor:commentAnchor)
+            if editWasVisible {
+                self.preview.navigate(toSourceOffset:self.source.editAnchor,
+                    viewportY:self.source.editAnchorViewportY)
+            }
             self.shiftResolvedComments(for:edit)
-            self.source.documentEdited(selection:selection,edit:edit)
-            self.scheduleCommentRefresh(insertedText:edit.insertedLength>0 ? document.source.string(in:NSRange(location:edit.range.location,length:edit.insertedLength)):"")
+            if let pending=self.pendingCommentInsertion {
+                self.pendingCommentInsertion=(pending.body,
+                    MarkdownComments.transformedAnchorRange(pending.selection,through:edit))
+            }
+            if !self.synchronizingCommentRecord && (editedRecord || inserted.contains(MarkdownComments.marker)) {
+                self.scheduleCommentRefresh(insertedText:inserted,force:editedRecord)
+                if editedRecord {
+                    // Native storage is still completing its transaction here.
+                    // A next-turn refresh is the authoritative record parse,
+                    // especially when several adjacent records shift together.
+                    DispatchQueue.main.async { [weak self] in
+                        self?.scheduleCommentRefresh(force:true)
+                    }
+                }
+            }
         }
         workspaceSplit.adjustSubviews()
         workspaceSplit.setPosition(0,ofDividerAt:0)
@@ -503,6 +544,7 @@ final class EditorWindowController: NSWindowController, NSSplitViewDelegate, NSS
                 self.showPreparedDocument(revision:revision)
                 self.source.needsLayout = true
                 self.prepareDocument(rope:rope,revision:revision)
+                self.flushPendingCommentInsertionIfReady()
             case .failure(let error):
                 self.handleParseFailure(error,request:request)
             }
@@ -577,6 +619,7 @@ final class EditorWindowController: NSWindowController, NSSplitViewDelegate, NSS
         guard let window=preparedDocument.window(covering:requestedRange,before:reach,after:reach) else {
             viewportChanged(visible);return
         }
+        refreshRenderedCommentAnchors(in:window.entries)
         presentationRange=(revision,window.range)
         if usesPreservedEditRange {preservedEditPresentationRevision=nil}
         // A covered viewport with adequate reserve needs no new publication.
@@ -591,6 +634,27 @@ final class EditorWindowController: NSWindowController, NSSplitViewDelegate, NSS
         presentationPending=false
         preview.show(window.entries,revision:revision,sourceRange:window.range,
             previewTop:window.previewTop,previewHeight:window.previewHeight)
+    }
+    private func refreshRenderedCommentAnchors(in entries:[RenderedEntry]) {
+        guard !comments.isEmpty,!entries.isEmpty else{return}
+        let sourceText=markdownDocument.source.string
+        var dirty=Set<String>()
+        comments=comments.map {value in
+            guard let range=value.anchorRange,range.length>0,
+                  let entry=entries.first(where:{
+                      range.location >= $0.fragment.from && NSMaxRange(range) <= $0.fragment.to
+                  }) else{return value}
+            let comment=MarkdownComments.updateRenderedAnchor(of:value.comment,to:range,
+                in:sourceText,entry:entry)
+            guard comment != value.comment else{return value}
+            dirty.insert(comment.id)
+            return ResolvedMarkdownComment(comment:comment,recordRange:value.recordRange,anchorRange:range)
+        }
+        guard !dirty.isEmpty else{return}
+        sidebar.setComments(comments)
+        preview.comments=comments
+        pendingCommentAnchorSyncIDs.formUnion(dirty)
+        scheduleCommentAnchorSync()
     }
     private func prepareDocument(rope:TextRope,revision:Int,allowUnpresented:Bool=false) {
         guard !isClosed else{return}
@@ -683,35 +747,71 @@ final class EditorWindowController: NSWindowController, NSSplitViewDelegate, NSS
     @objc func addComment(_ sender:Any?) {
         guard canAddComment else{return}
         let selected=source.selection
-        let author=NSFullUserName().trimmingCharacters(in:.whitespacesAndNewlines)
-        let created=ISO8601DateFormatter().string(from:Date())
         let draft=MarkdownComment(anchor:MarkdownComments.anchor(in:markdownDocument.source.string,selection:selected),
-            author:author.isEmpty ? "You":author,created:created,body:"")
-        presentCommentPopover(comment:draft,target:.new(selection:selected,author:draft.author,created:created),
+            author:"",created:"",body:"")
+        presentCommentPopover(comment:draft,target:.new(selection:selected),
             relativeTo:source.commentPopoverAnchor(for:selected),of:source,focus:true)
     }
     private var canAddComment:Bool {
         guard !source.textView.hasMarkedText() else{return false}
         let selection=source.selection
-        let contentEnd=comments.map{$0.recordRange.location}.min() ?? markdownDocument.source.count
-        return selection.location>=0 && NSMaxRange(selection)<=contentEnd
+        guard selection.location>=0,NSMaxRange(selection)<=markdownDocument.source.count else{return false}
+        return !comments.contains {value in
+            selection.length==0 ? NSLocationInRange(selection.location,value.recordRange)
+                : NSIntersectionRange(selection,value.recordRange).length>0
+        }
     }
-    private func insertComment(body:String,selection:NSRange,author:String?=nil,created:String?=nil) {
+    private func insertComment(body:String,selection:NSRange) {
+        guard preparedDocument.revision==markdownDocument.revision else {
+            // A just-typed line may not exist in the retained block map yet.
+            // Queue the semantic action until that exact source revision has
+            // been parsed; using the previous block would widen the selector
+            // or place its record on the wrong side of the anchor.
+            pendingCommentInsertion=(body,selection)
+            pendingViewport=source.visibleSourceRange
+            if !viewportScheduled {
+                viewportScheduled=true
+                DispatchQueue.main.async { [weak self] in self?.prepareViewport() }
+            }
+            return
+        }
         let sourceText=markdownDocument.source.string
-        let displayAuthor=author ?? NSFullUserName().trimmingCharacters(in:.whitespacesAndNewlines)
-        let rendered=selection.length>0 ? preparedDocument.entries(covering:selection) ?? []:[]
+        let probe:NSRange
+        if selection.length>0 {probe=selection}
+        else if sourceText.isEmpty {probe=selection}
+        else {probe=NSRange(location:min(selection.location,max(0,sourceText.utf16.count-1)),length:1)}
+        let rendered=preparedDocument.entries(covering:probe) ?? []
         let comment=MarkdownComments.comment(in:sourceText,selection:selection,body:body,
-            author:displayAuthor.isEmpty ? "You":displayAuthor,
-            created:created ?? ISO8601DateFormatter().string(from:Date()),renderedEntries:rendered)
-        let insertion=MarkdownComments.insertion(for:comment,in:sourceText,newline:markdownDocument.newline)
-        markdownDocument.replace(NSRange(location:markdownDocument.source.count,length:0),with:insertion,
+            author:"",created:"",renderedEntries:rendered)
+        var location=rendered.last?.fragment.to ?? NSMaxRange(selection)
+        // Never insert one comment's metadata inside another live anchor. This
+        // matters when a short line is commented inside a multi-block comment:
+        // both records belong after the outer anchor, not between its blocks.
+        for value in comments {
+            guard let anchor=value.anchorRange,
+                  location>anchor.location,
+                  location<NSMaxRange(anchor) else{continue}
+            location=NSMaxRange(anchor)
+        }
+        let insertion=MarkdownComments.insertion(for:comment,in:sourceText,at:location,newline:markdownDocument.newline)
+        markdownDocument.replace(NSRange(location:location,length:0),with:insertion,
             selection:selection,name:"Add Comment")
+        // Anchor metadata for an enclosing comment may already have a queued
+        // refresh from the preceding keystroke. Publish one final parse after
+        // this insertion so that stale refresh cannot hide the new record.
+        DispatchQueue.main.async { [weak self] in self?.scheduleCommentRefresh(force:true) }
         // Prepare the relevant pane for the next explicit sidebar reveal, but
         // never change the user's sidebar visibility as a side effect.
         sidebar.showMode(.comments)
     }
+    private func flushPendingCommentInsertionIfReady() {
+        guard preparedDocument.revision==markdownDocument.revision,
+              let pending=pendingCommentInsertion else{return}
+        pendingCommentInsertion=nil
+        insertComment(body:pending.body,selection:pending.selection)
+    }
     private func scheduleCommentRefresh(insertedText:String="",force:Bool=false) {
-        guard force || !comments.isEmpty || insertedText.contains(MarkdownComments.marker) else{return}
+        guard force || insertedText.contains(MarkdownComments.marker) else{return}
         commentRefreshGeneration &+= 1
         let generation=commentRefreshGeneration,revision=markdownDocument.revision,rope=markdownDocument.source
         DispatchQueue.global(qos:.userInitiated).async { [weak self] in
@@ -719,16 +819,38 @@ final class EditorWindowController: NSWindowController, NSSplitViewDelegate, NSS
             DispatchQueue.main.async {
                 guard let self,!self.isClosed,self.commentRefreshGeneration==generation,
                       self.markdownDocument.revision==revision else{return}
-                self.comments=parsed;self.sidebar.setComments(parsed)
-                self.source.setCollapsedCommentRecords(parsed.map(\.recordRange))
-                let active=parsed.filter{$0.comment.status == .open}.compactMap(\.anchorRange)
-                let selectedComment=self.selectedCommentID.flatMap {id in parsed.first(where:{$0.comment.id==id})}
+                let reconciled=parsed.map {value -> ResolvedMarkdownComment in
+                    guard let previous=self.comments.first(where:{old in
+                        old.recordRange.location==value.recordRange.location ||
+                            NSIntersectionRange(old.recordRange,value.recordRange).length>0
+                    }) else{return value}
+                    var comment=value.comment;comment.id=previous.comment.id
+                    return ResolvedMarkdownComment(comment:comment,recordRange:value.recordRange,
+                        anchorRange:value.anchorRange)
+                }
+                self.comments=reconciled;self.sidebar.setComments(reconciled)
+                self.source.setCommentRecordRanges(reconciled.map(\.recordRange))
+                let active=reconciled.filter{$0.comment.status == .open}.compactMap(\.anchorRange)
+                let selectedComment=self.selectedCommentID.flatMap {id in reconciled.first(where:{$0.comment.id==id})}
                 if self.selectedCommentID != nil && selectedComment == nil {self.selectedCommentID=nil}
                 let selected=selectedComment.map {
                     $0.anchorRange ?? NSRange(location:min($0.comment.anchor.position ?? 0,self.markdownDocument.source.count),length:0)
                 }
                 self.source.setCommentRanges(active);self.source.setSelectedCommentRange(selected)
-                self.preview.comments=parsed;self.preview.selectedCommentID=self.selectedCommentID
+                self.preview.comments=reconciled;self.preview.selectedCommentID=self.selectedCommentID
+                // Migrate verbose v3 selectors in place once their full range
+                // has resolved. This is a bounded metadata replacement per
+                // affected record; the surrounding Markdown is retained.
+                let parsedSource=rope.string as NSString
+                let verboseIDs=reconciled.compactMap {value -> String? in
+                    let raw=parsedSource.substring(with:value.recordRange)
+                    let canonical=MarkdownComments.serialize(value.comment,newline:self.markdownDocument.newline)
+                    return canonical.contains(" ... ") && !raw.contains(" ... ") ? value.comment.id:nil
+                }
+                if !verboseIDs.isEmpty {
+                    self.pendingCommentAnchorSyncIDs.formUnion(verboseIDs)
+                    self.scheduleCommentAnchorSync()
+                }
             }
         }
     }
@@ -749,10 +871,53 @@ final class EditorWindowController: NSWindowController, NSSplitViewDelegate, NSS
             if edit.range.location>=NSMaxRange(range) {return range}
             return nil
         }
+        var dirty=[ResolvedMarkdownComment]()
+        let currentSource=markdownDocument.source.string
         comments=comments.map {value in
-            ResolvedMarkdownComment(comment:value.comment,
-                recordRange:shifted(value.recordRange) ?? value.recordRange,
-                anchorRange:value.anchorRange.flatMap(shifted))
+            let record:NSRange
+            if synchronizingCommentRecord,MarkdownComments.editTouchesAnchor(edit,anchor:value.recordRange) {
+                record=NSRange(location:edit.range.location,length:edit.insertedLength)
+            } else {record=shifted(value.recordRange) ?? value.recordRange}
+            guard let anchor=value.anchorRange,
+                  !MarkdownComments.editTouchesAnchor(edit,anchor:value.recordRange) else {
+                return ResolvedMarkdownComment(comment:value.comment,recordRange:record,
+                    anchorRange:value.anchorRange.flatMap(shifted))
+            }
+            let insertedBeforeAnchor:Bool
+            if edit.range.length==0,edit.range.location==anchor.location,edit.insertedLength>0 {
+                let inserted=currentSource as NSString
+                let value=inserted.substring(with:NSRange(location:edit.range.location,
+                    length:edit.insertedLength))
+                insertedBeforeAnchor=value.hasSuffix("\n") || value.hasSuffix("\r")
+            } else {insertedBeforeAnchor=false}
+            let nextRange=insertedBeforeAnchor
+                ? NSRange(location:anchor.location+edit.insertedLength,length:anchor.length)
+                : MarkdownComments.transformedAnchorRange(anchor,through:edit)
+            var comment=value.comment
+            let anchorTextChanged = !comment.anchor.exact.isEmpty &&
+                !insertedBeforeAnchor && MarkdownComments.editTouchesAnchor(edit,anchor:anchor)
+            let oldGapStart=NSMaxRange(anchor)
+            let oldGapEnd=max(oldGapStart,value.recordRange.location)
+            let oldGap=NSRange(location:oldGapStart,length:oldGapEnd-oldGapStart)
+            let gapChanged:Bool
+            if edit.range.length==0 {
+                gapChanged=edit.range.location>=oldGap.location &&
+                    edit.range.location<=NSMaxRange(oldGap)
+            } else {
+                gapChanged=NSIntersectionRange(edit.range,oldGap).length>0 ||
+                    edit.range.location==oldGap.location
+            }
+            let endpointContextChanged=comment.anchor.startExact != nil && gapChanged
+            if anchorTextChanged || endpointContextChanged {
+                let contextEnd=max(NSMaxRange(nextRange),record.location)
+                let context=NSRange(location:nextRange.location,
+                    length:contextEnd-nextRange.location)
+                comment=MarkdownComments.updateAnchor(of:comment,to:nextRange,in:currentSource,
+                    selectorContext:context)
+            }
+            let result=ResolvedMarkdownComment(comment:comment,recordRange:record,anchorRange:nextRange)
+            if anchorTextChanged || endpointContextChanged {dirty.append(result)}
+            return result
         }
         sidebar.setComments(comments)
         let active=comments.filter{$0.comment.status == .open}.compactMap(\.anchorRange)
@@ -762,6 +927,36 @@ final class EditorWindowController: NSWindowController, NSSplitViewDelegate, NSS
         }
         source.setCommentRanges(active);source.setSelectedCommentRange(selected)
         preview.comments=comments
+        guard !synchronizingCommentRecord,!dirty.isEmpty else{return}
+        pendingCommentAnchorSyncIDs.formUnion(dirty.map(\.comment.id))
+        scheduleCommentAnchorSync()
+    }
+    private func scheduleCommentAnchorSync() {
+        guard !commentAnchorSyncScheduled else{return}
+        commentAnchorSyncScheduled=true
+        // Native typing reaches this path from inside NSTextStorage's edit
+        // transaction. Rewriting the adjacent record synchronously would
+        // change the model without changing the still-open native storage.
+        DispatchQueue.main.async { [weak self] in self?.flushCommentAnchorSync() }
+    }
+    private func flushCommentAnchorSync() {
+        commentAnchorSyncScheduled=false
+        guard !isClosed else {pendingCommentAnchorSyncIDs.removeAll();return}
+        let ids=pendingCommentAnchorSyncIDs;pendingCommentAnchorSyncIDs.removeAll()
+        // Keeping this derived edit outside the user's undo registration makes
+        // one undo restore the prose while its record follows the inverse edit.
+        let values=comments.filter{ids.contains($0.comment.id)}
+            .sorted{$0.recordRange.location>$1.recordRange.location}
+        for original in values {
+            guard let value=comments.first(where:{$0.comment.id==original.comment.id}) else{continue}
+            synchronizingCommentRecord=true
+            markdownDocument.replaceMetadata(value.recordRange,
+                with:MarkdownComments.serialize(value.comment,newline:markdownDocument.newline),
+                selection:source.selection)
+            synchronizingCommentRecord=false
+        }
+        source.setCommentRecordRanges(comments.map(\.recordRange))
+        if !pendingCommentAnchorSyncIDs.isEmpty {scheduleCommentAnchorSync()}
     }
     private func revealComment(_ id:String,focusSource:Bool) {
         guard let comment=comments.first(where:{$0.comment.id==id}) else{return}
@@ -813,19 +1008,29 @@ final class EditorWindowController: NSWindowController, NSSplitViewDelegate, NSS
         finishingCommentPopover=false
         guard save,let target,let body=controller?.body else{return}
         switch target {
-        case .new(let selection,let author,let created):
+        case .new(let selection):
             guard !body.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty else{return}
-            insertComment(body:body,selection:selection,author:author,created:created)
+            insertComment(body:body,selection:selection)
         case .existing(let id):
             guard let resolved=comments.first(where:{$0.comment.id==id}),resolved.comment.body != body else{return}
             var comment=resolved.comment;comment.body=body
             let replacement=MarkdownComments.serialize(comment,newline:markdownDocument.newline)
+            if let index=comments.firstIndex(where:{$0.comment.id==id}) {
+                comments[index]=ResolvedMarkdownComment(comment:comment,recordRange:resolved.recordRange,
+                    anchorRange:resolved.anchorRange)
+            }
+            synchronizingCommentRecord=true
             markdownDocument.replace(resolved.recordRange,with:replacement,selection:source.selection,name:"Edit Comment")
+            synchronizingCommentRecord=false
+            source.setCommentRecordRanges(comments.map(\.recordRange))
         }
     }
     private func deleteCommentFromPopover() {
-        guard case .existing(let id)=commentEditTarget,
-              let resolved=comments.first(where:{$0.comment.id==id}) else{return}
+        guard case .existing(let id)=commentEditTarget else{return}
+        deleteComment(id,closingPopover:true)
+    }
+    private func deleteComment(_ id:String,closingPopover:Bool) {
+        guard let resolved=comments.first(where:{$0.comment.id==id}) else{return}
         let text=markdownDocument.source.string as NSString
         var range=resolved.recordRange
         let newline=markdownDocument.newline as NSString
@@ -833,15 +1038,15 @@ final class EditorWindowController: NSWindowController, NSSplitViewDelegate, NSS
            text.substring(with:NSRange(location:NSMaxRange(range),length:newline.length))==markdownDocument.newline {
             range.length += newline.length
         }
-        finishCommentPopover(save:false)
+        if closingPopover {finishCommentPopover(save:false)}
         pendingCommentPopoverID=nil;sidebar.deselectComment();selectedCommentID=nil
         source.setSelectedCommentRange(nil);preview.selectedCommentID=nil
         comments.removeAll{$0.comment.id==id};sidebar.setComments(comments)
-        source.setCollapsedCommentRecords(comments.map(\.recordRange))
         source.setCommentRanges(comments.filter{$0.comment.status == .open}.compactMap(\.anchorRange))
         preview.comments=comments
         let selection=source.selection
         markdownDocument.replace(range,with:"",selection:selection,undoSelection:selection,name:"Delete Comment")
+        source.setCommentRecordRanges(comments.map(\.recordRange))
     }
     func popoverWillClose(_ notification:Notification) {
         guard notification.object as? NSPopover === commentPopover else{return}
@@ -866,11 +1071,7 @@ final class EditorWindowController: NSWindowController, NSSplitViewDelegate, NSS
         popover.show(relativeTo:anchor,of:preview,preferredEdge:.minX)
     }
     private func toggleCommentResolved(_ id:String) {
-        guard let resolved=comments.first(where:{$0.comment.id==id}) else{return}
-        var comment=resolved.comment;comment.status = comment.status == .open ? .resolved:.open
-        let replacement=MarkdownComments.serialize(comment,newline:markdownDocument.newline)
-        markdownDocument.replace(resolved.recordRange,with:replacement,selection:source.selection,
-            name:comment.status == .resolved ? "Resolve Comment":"Reopen Comment")
+        deleteComment(id,closingPopover:false)
     }
     #if DEBUG
     func debugBeginAddComment(selection:NSRange) {

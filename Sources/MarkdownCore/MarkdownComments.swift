@@ -4,10 +4,6 @@ public enum MarkdownCommentStatus:String,Codable,Sendable {
     case open,resolved
 }
 
-public enum MarkdownCommentExtent:String,Codable,Sendable {
-    case blocks
-}
-
 public struct MarkdownCommentAnchor:Codable,Equatable,Sendable {
     public var exact:String
     public var prefix:String
@@ -15,13 +11,16 @@ public struct MarkdownCommentAnchor:Codable,Equatable,Sendable {
     public var renderedExact:String?
     public var renderedPrefix:String?
     public var renderedSuffix:String?
+    public var startExact:String?
+    public var endExact:String?
     public var position:Int?
-    public var extent:MarkdownCommentExtent?
     public init(exact:String,prefix:String="",suffix:String="",position:Int?=nil,
-                extent:MarkdownCommentExtent?=nil,renderedExact:String?=nil,
-                renderedPrefix:String?=nil,renderedSuffix:String?=nil) {
-        self.exact=exact;self.prefix=prefix;self.suffix=suffix;self.position=position;self.extent=extent
+                renderedExact:String?=nil,
+                renderedPrefix:String?=nil,renderedSuffix:String?=nil,
+                startExact:String?=nil,endExact:String?=nil) {
+        self.exact=exact;self.prefix=prefix;self.suffix=suffix;self.position=position
         self.renderedExact=renderedExact;self.renderedPrefix=renderedPrefix;self.renderedSuffix=renderedSuffix
+        self.startExact=startExact;self.endExact=endExact
     }
 }
 
@@ -50,22 +49,102 @@ public struct ResolvedMarkdownComment:Equatable,Sendable {
 
 /// The single-file interchange format for Markato comments. Records are
 /// ordinary HTML comments, so other CommonMark renderers keep them invisible.
-/// JSON strings escape a consecutive hyphen when serialized because HTML
-/// comments may not contain `--` in their body.
+/// Quoted selectors use JSON string escaping; the readable body doubles
+/// backslashes and escapes consecutive hyphens because HTML comments may not
+/// contain `--` in their body.
 public enum MarkdownComments {
-    public static let marker="<!-- markato-comment:v1"
+    public static let marker="markato-comment:v3"
+    private static let opening="<!--"
     private static let closing="-->"
+    private static let fieldDelimiter=" | "
+    private static let terminalTag=fieldDelimiter+marker
     private static let contextLength=48
 
-    public static func anchor(in source:String,selection:NSRange)->MarkdownCommentAnchor {
+    private static func endpointPairs(start:String,end:String,in text:NSString,
+                                      range:NSRange)->[NSRange] {
+        var result=[NSRange](),cursor=range.location
+        while cursor<NSMaxRange(range) {
+            let opening=text.range(of:start,options:.literal,
+                range:NSRange(location:cursor,length:NSMaxRange(range)-cursor))
+            guard opening.location != NSNotFound else{break}
+            let after=NSMaxRange(opening)
+            let closing=text.range(of:end,options:.literal,
+                range:NSRange(location:after,length:NSMaxRange(range)-after))
+            if closing.location != NSNotFound {
+                result.append(NSRange(location:opening.location,
+                    length:NSMaxRange(closing)-opening.location))
+            }
+            cursor=max(NSMaxRange(opening),opening.location+1)
+        }
+        return result
+    }
+
+    private static func compactSelector(for exact:String,in source:String?=nil,
+                                        selection:NSRange?=nil,context:NSRange?=nil)
+        ->(start:String,end:String)? {
+        let characters=exact.count
+        guard exact.contains(where:{$0.isNewline}) || characters>72,characters>32 else{return nil}
+        let maximum=min(64,max(16,(characters-1)/2))
+        func isWord(_ character:Character)->Bool {
+            character.isLetter || character.isNumber || character=="_"
+        }
+        func startMarker(_ target:Int)->String? {
+            var boundary=exact.index(exact.startIndex,offsetBy:min(target,characters))
+            if boundary>exact.startIndex,boundary<exact.endIndex,
+               isWord(exact[exact.index(before:boundary)]),isWord(exact[boundary]) {
+                while boundary<exact.endIndex,isWord(exact[boundary]) {
+                    boundary=exact.index(after:boundary)
+                }
+            }
+            var value=exact[..<boundary]
+            while let last=value.last,last.isWhitespace {value=value.dropLast()}
+            return value.isEmpty ? nil:String(value)
+        }
+        func endMarker(_ target:Int)->String? {
+            var boundary=exact.index(exact.endIndex,offsetBy:-min(target,characters))
+            if boundary>exact.startIndex,boundary<exact.endIndex,
+               isWord(exact[exact.index(before:boundary)]),isWord(exact[boundary]) {
+                while boundary>exact.startIndex,isWord(exact[exact.index(before:boundary)]) {
+                    boundary=exact.index(before:boundary)
+                }
+            }
+            var value=exact[boundary...]
+            while let first=value.first,first.isWhitespace {value=value.dropFirst()}
+            return value.isEmpty ? nil:String(value)
+        }
+        var tried=Set<String>()
+        for length in stride(from:16,through:maximum,by:8) {
+            guard let start=startMarker(length),let end=endMarker(length),
+                  start.count<=96,end.count<=96,start.count+end.count<characters else{continue}
+            let signature=start+"\u{0}"+end
+            guard tried.insert(signature).inserted else{continue}
+            let interior=exact.dropFirst(start.count).dropLast(end.count)
+            guard !interior.contains(start),!interior.contains(end) else{continue}
+            if let source,let selection {
+                let text=source as NSString
+                let scope=NSIntersectionRange(NSRange(location:0,length:text.length),context ?? selection)
+                let pairs=endpointPairs(start:start,end:end,in:text,
+                    range:scope)
+                guard pairs.count==1,pairs[0]==selection else{continue}
+            }
+            return (start,end)
+        }
+        return nil
+    }
+
+    public static func anchor(in source:String,selection:NSRange,
+                              selectorContext:NSRange?=nil)->MarkdownCommentAnchor {
         let text=source as NSString
         let safe=NSIntersectionRange(NSRange(location:0,length:text.length),selection)
         let before=NSRange(location:max(0,safe.location-contextLength),
             length:min(contextLength,safe.location))
         let end=NSMaxRange(safe)
         let after=NSRange(location:end,length:min(contextLength,text.length-end))
-        return MarkdownCommentAnchor(exact:text.substring(with:safe),
-            prefix:text.substring(with:before),suffix:text.substring(with:after),position:safe.location)
+        let exact=text.substring(with:safe)
+        let compact=compactSelector(for:exact,in:source,selection:safe,context:selectorContext)
+        return MarkdownCommentAnchor(exact:exact,
+            prefix:text.substring(with:before),suffix:text.substring(with:after),position:safe.location,
+            startExact:compact?.start,endExact:compact?.end)
     }
 
     public static func comment(in source:String,selection:NSRange,body:String,author:String,
@@ -84,84 +163,267 @@ public enum MarkdownComments {
             }
             if !remainsInline,let first=selected.first,let last=selected.last {
                 let range=NSRange(location:first.fragment.from,length:last.fragment.to-first.fragment.from)
-                value=anchor(in:source,selection:range);value.extent = .blocks
+                value=anchor(in:source,selection:range)
             }
         }
         return MarkdownComment(anchor:value,author:author,created:created,body:body)
     }
 
     public static func serialize(_ comment:MarkdownComment,newline:String="\n")->String {
-        let encoder=JSONEncoder();encoder.outputFormatting=[.prettyPrinted,.sortedKeys,.withoutEscapingSlashes]
-        // These model values are always JSON encodable. Keeping the failure
-        // local produces a valid, inspectable record even for future fields.
-        let data=(try? encoder.encode(comment)) ?? Data("{}".utf8)
-        var json=String(decoding:data,as:UTF8.self)
-        json=json.replacingOccurrences(of:"--",with:"-\\u002d")
-        if newline != "\n" {json=json.replacingOccurrences(of:"\n",with:newline)}
-        return marker+newline+json+newline+closing
+        let encoder=JSONEncoder();encoder.outputFormatting=[.withoutEscapingSlashes]
+        func quoted(_ value:String)->String {
+            let data=(try? encoder.encode(value)) ?? Data("\"\"".utf8)
+            return String(decoding:data,as:UTF8.self)
+        }
+        var header=""
+        let compact: (start:String,end:String)?
+        if let start=comment.anchor.startExact,let end=comment.anchor.endExact {compact=(start,end)}
+        else {compact=nil}
+        if let compact {
+            let (start,end)=compact
+            header += "\(quoted(start)) ... \(quoted(end))"
+        } else {header += quoted(comment.anchor.exact)}
+        // Compact raw endpoints are sufficient to recover the source range.
+        // The rendered selector is derived again from that range, so repeating
+        // another potentially long quote here would bury the comment body.
+        if compact == nil,let rendered=comment.anchor.renderedExact {
+            header += " => \(quoted(rendered))"
+        }
+        func escaped(_ value:String)->String {
+            value.replacingOccurrences(of:"\\",with:"\\\\")
+                .replacingOccurrences(of:"--",with:"-\\-")
+        }
+        let body=escaped(comment.body)
+            .replacingOccurrences(of:fieldDelimiter,with:" \\| ")
+        let selector=escaped(header)
+        let payload=body+fieldDelimiter+selector+terminalTag
+        var value=opening+" "+payload+" "+closing
+        if newline != "\n" {value=value.replacingOccurrences(of:"\n",with:newline)}
+        return value
     }
 
-    public static func insertion(for comment:MarkdownComment,in source:String,newline:String="\n")->String {
+    public static func insertion(for comment:MarkdownComment,in source:String,at location:Int?=nil,
+                                 newline:String="\n")->String {
+        let text=source as NSString
+        let position=min(max(0,location ?? text.length),text.length)
+        let prefix=text.substring(to:position)
         let separator: String
-        if source.isEmpty {separator=""}
-        else if source.hasSuffix("\r\n\r\n") || source.hasSuffix("\n\n") {separator=""}
-        else if source.hasSuffix("\r\n") || source.hasSuffix("\n") {separator=newline}
+        if prefix.isEmpty {separator=""}
+        else if prefix.hasSuffix("\r\n\r\n") || prefix.hasSuffix("\n\n") {separator=""}
+        else if prefix.hasSuffix("\r\n") || prefix.hasSuffix("\n") {separator=newline}
         else {separator=newline+newline}
-        return separator+serialize(comment,newline:newline)+newline
+        let suffix=position<text.length ? text.substring(from:position):""
+        let trailing=(suffix.hasPrefix("\r\n") || suffix.hasPrefix("\n")) ? "":newline
+        return separator+serialize(comment,newline:newline)+newline+trailing
     }
 
     public static func records(in source:String)->[ResolvedMarkdownComment] {
         let text=source as NSString
-        let whole=NSRange(location:0,length:text.length)
         var parsed=[(MarkdownComment,NSRange)](),cursor=0
         while cursor<text.length {
-            let opening=text.range(of:marker,options:[],range:NSRange(location:cursor,length:text.length-cursor))
-            guard opening.location != NSNotFound else{break}
-            let bodyStart=NSMaxRange(opening)
+            let search=NSRange(location:cursor,length:text.length-cursor)
+            let commentStart=text.range(of:opening,options:[],range:search)
+            guard commentStart.location != NSNotFound else{break}
+            let bodyStart=NSMaxRange(commentStart)
             let close=text.range(of:closing,options:[],range:NSRange(location:bodyStart,length:text.length-bodyStart))
             guard close.location != NSNotFound else{break}
-            let record=NSRange(location:opening.location,length:NSMaxRange(close)-opening.location)
+            let record=NSRange(location:commentStart.location,length:NSMaxRange(close)-commentStart.location)
             let bodyRange=NSRange(location:bodyStart,length:close.location-bodyStart)
-            let body=text.substring(with:bodyRange).trimmingCharacters(in:.whitespacesAndNewlines)
-            if let data=body.data(using:.utf8),let comment=try? JSONDecoder().decode(MarkdownComment.self,from:data) {
+            let payload=text.substring(with:bodyRange).trimmingCharacters(in:.whitespacesAndNewlines)
+            if let comment=parseCurrent(payload) {
                 parsed.append((comment,record))
             }
-            cursor=max(NSMaxRange(record),opening.location+1)
+            cursor=max(NSMaxRange(record),commentStart.location+1)
         }
-        let contentEnd=parsed.map{$0.1.location}.min() ?? whole.length
-        let contentRange=NSRange(location:0,length:contentEnd)
+        let recordRanges=parsed.map{$0.1}
         return parsed.map {comment,record in
-            ResolvedMarkdownComment(comment:comment,recordRange:record,
-                anchorRange:resolve(comment.anchor,in:text,contentRange:contentRange))
+            let range=NSRange(location:0,length:record.location)
+            let anchorRange=resolve(comment.anchor,in:text,contentRange:range,excluding:recordRanges)
+            var hydrated=comment
+            if comment.anchor.startExact != nil,let anchorRange {
+                hydrated.anchor.exact=text.substring(with:anchorRange)
+                hydrated.anchor.position=anchorRange.location
+            } else if let anchorRange,!comment.anchor.exact.isEmpty {
+                let canonical=anchor(in:source,selection:anchorRange)
+                hydrated.anchor.startExact=canonical.startExact
+                hydrated.anchor.endExact=canonical.endExact
+            }
+            return ResolvedMarkdownComment(comment:hydrated,recordRange:record,anchorRange:anchorRange)
         }
     }
 
-    private static func resolve(_ anchor:MarkdownCommentAnchor,in text:NSString,contentRange:NSRange)->NSRange? {
+    private static func parseCurrent(_ payload:String)->MarkdownComment? {
+        guard payload.hasSuffix(terminalTag) else{return nil}
+        let fields=payload.dropLast(terminalTag.count)
+        guard let delimiter=fields.range(of:fieldDelimiter) else{return nil}
+        let body=String(fields[..<delimiter.lowerBound])
+        let selector=String(fields[delimiter.upperBound...])
+        return parseInline(selector+" | "+body)
+    }
+
+    private static func parseInline(_ payload:String)->MarkdownComment? {
+        var input=Substring(unescape(payload)).drop(while:{$0.isWhitespace})
+        func takeQuoted(_ input:inout Substring)->String? {
+            guard input.first == "\"" else{return nil}
+            var index=input.index(after:input.startIndex),escaped=false
+            while index<input.endIndex {
+                let character=input[index]
+                if character == "\"" && !escaped {
+                    let end=input.index(after:index),encoded=String(input[..<end])
+                    input=input[end...]
+                    return try? JSONDecoder().decode(String.self,from:Data(encoded.utf8))
+                }
+                if character == "\\" {escaped.toggle()} else {escaped=false}
+                index=input.index(after:index)
+            }
+            return nil
+        }
+        guard let exact=takeQuoted(&input) else{return nil}
+        var compactEnd:String?
+        if input.hasPrefix(" ... ") {input=input.dropFirst(5);compactEnd=takeQuoted(&input)}
+        var rendered:String?
+        if input.hasPrefix(" => ") {input=input.dropFirst(4);rendered=takeQuoted(&input)}
+        guard input.hasPrefix(" | ") else{return nil}
+        let body=String(input.dropFirst(3)).trimmingCharacters(in:.whitespacesAndNewlines)
+        let anchor=MarkdownCommentAnchor(exact:compactEnd == nil ? exact:"",position:nil,
+            renderedExact:rendered,startExact:compactEnd == nil ? nil:exact,endExact:compactEnd)
+        return MarkdownComment(status:.open,anchor:anchor,author:"",created:"",body:body)
+    }
+
+    private static func unescape(_ payload:String)->String {
+        let escaped=payload.replacingOccurrences(of:"\r\n",with:"\n")
+        var normalized="",index=escaped.startIndex
+        while index<escaped.endIndex {
+            let next=escaped.index(after:index)
+            if escaped[index]=="\\",next<escaped.endIndex,escaped[next]=="\\" {
+                normalized.append("\\");index=escaped.index(after:next)
+            } else if escaped[index]=="\\",next<escaped.endIndex,escaped[next]=="|" {
+                normalized.append("|");index=escaped.index(after:next)
+            } else if escaped[index]=="-",next<escaped.endIndex,escaped[next]=="\\" {
+                let last=escaped.index(after:next)
+                if last<escaped.endIndex,escaped[last]=="-" {
+                    normalized.append("--");index=escaped.index(after:last)
+                } else {normalized.append(escaped[index]);index=next}
+            } else {normalized.append(escaped[index]);index=next}
+        }
+        return normalized
+    }
+
+    public static func updateAnchor(of comment:MarkdownComment,to range:NSRange,in source:String,
+                                    selectorContext:NSRange?=nil)->MarkdownComment {
+        // An empty quote is a block comment: its live range is the adjacent
+        // paragraph, not text that should become a selector after the first
+        // edit inside that paragraph.
+        guard !comment.anchor.exact.isEmpty || comment.anchor.startExact != nil else{return comment}
+        var result=comment,newAnchor=anchor(in:source,selection:range,
+            selectorContext:selectorContext)
+        // Rendered quote selectors describe the old spelling and cannot be
+        // retained after the selected source itself changes.
+        if newAnchor.exact == comment.anchor.exact {
+            newAnchor.renderedExact=comment.anchor.renderedExact
+            newAnchor.renderedPrefix=comment.anchor.renderedPrefix
+            newAnchor.renderedSuffix=comment.anchor.renderedSuffix
+        }
+        result.anchor=newAnchor;return result
+    }
+
+    public static func editTouchesAnchor(_ edit:SourceEdit,anchor:NSRange)->Bool {
+        edit.range.length==0 ? NSLocationInRange(edit.range.location,anchor)
+            : NSIntersectionRange(edit.range,anchor).length>0
+    }
+
+    /// Transforms an anchor through a source edit. Insertions use leading
+    /// affinity: text inserted at the anchor start joins it, while text
+    /// inserted at its end remains outside it.
+    public static func transformedAnchorRange(_ anchor:NSRange,through edit:SourceEdit)->NSRange {
+        let delta=edit.insertedLength-edit.range.length
+        if anchor.length==0 {
+            return edit.range.location<=anchor.location
+                ? NSRange(location:max(0,anchor.location+delta),length:0):anchor
+        }
+        if edit.range.length==0 {
+            if edit.range.location<anchor.location {
+                return NSRange(location:anchor.location+delta,length:anchor.length)
+            }
+            if edit.range.location<NSMaxRange(anchor) {
+                return NSRange(location:anchor.location,length:anchor.length+delta)
+            }
+            return anchor
+        }
+        let editEnd=NSMaxRange(edit.range),anchorEnd=NSMaxRange(anchor)
+        if editEnd<=anchor.location {
+            return NSRange(location:anchor.location+delta,length:anchor.length)
+        }
+        if edit.range.location>=anchorEnd {return anchor}
+        let start=anchor.location<edit.range.location ? anchor.location:edit.range.location
+        let end=anchorEnd>editEnd ? anchorEnd+delta:edit.range.location+edit.insertedLength
+        return NSRange(location:max(0,start),length:max(0,end-start))
+    }
+
+    public static func updateRenderedAnchor(of comment:MarkdownComment,to range:NSRange,
+                                            in source:String,entry:RenderedEntry)->MarkdownComment {
+        guard !comment.anchor.exact.isEmpty,range.length>0,
+              NSIntersectionRange(range,entry.fragment.range).length == range.length,
+              let html=entry.fragment.html else{return comment}
+        var result=comment
+        result.anchor.renderedExact=nil
+        result.anchor.renderedPrefix=nil
+        result.anchor.renderedSuffix=nil
+        if MarkdownCommentHTML.canHighlight(result.anchor,in:html) {return result}
+        guard let rendered=MarkdownCommentHTML.renderedAnchor(in:source,selection:range,entry:entry)
+            else{return comment}
+        result.anchor.renderedExact=rendered.exact
+        result.anchor.renderedPrefix=rendered.prefix
+        result.anchor.renderedSuffix=rendered.suffix
+        return result
+    }
+
+    private static func resolve(_ anchor:MarkdownCommentAnchor,in text:NSString,contentRange:NSRange,
+                                excluding records:[NSRange])->NSRange? {
+        if let start=anchor.startExact,let end=anchor.endExact {
+            let matches=endpointPairs(start:start,end:end,in:text,range:contentRange)
+                .filter {candidate in
+                    !records.contains(where:{NSIntersectionRange($0,candidate).length>0})
+                }
+            if let match=matches.last {return match}
+            return adjacentParagraph(before:NSMaxRange(contentRange),in:text,excluding:records)
+        }
         if anchor.exact.isEmpty {
-            return NSRange(location:min(max(0,anchor.position ?? 0),NSMaxRange(contentRange)),length:0)
+            return adjacentParagraph(before:NSMaxRange(contentRange),in:text,excluding:records)
         }
         var matches=[NSRange](),cursor=contentRange.location
         while cursor<NSMaxRange(contentRange) {
             let candidate=text.range(of:anchor.exact,options:.literal,
                 range:NSRange(location:cursor,length:NSMaxRange(contentRange)-cursor))
             guard candidate.location != NSNotFound else{break}
-            matches.append(candidate);cursor=max(NSMaxRange(candidate),candidate.location+1)
+            if !records.contains(where:{NSIntersectionRange($0,candidate).length>0}) {matches.append(candidate)}
+            cursor=max(NSMaxRange(candidate),candidate.location+1)
         }
-        guard !matches.isEmpty else{return nil}
-        func score(_ range:NSRange)->(Int,Int) {
-            var context=0
-            if !anchor.prefix.isEmpty,range.location>=anchor.prefix.utf16.count {
-                let prefix=NSRange(location:range.location-anchor.prefix.utf16.count,length:anchor.prefix.utf16.count)
-                if text.substring(with:prefix)==anchor.prefix {context += 2}
+        return matches.last ?? adjacentParagraph(before:NSMaxRange(contentRange),in:text,excluding:records)
+    }
+
+    private static func adjacentParagraph(before location:Int,in text:NSString,
+                                          excluding records:[NSRange])->NSRange? {
+        var cursor=min(location,text.length)
+        while cursor>0 {
+            let index=cursor-1
+            if let record=records.first(where:{NSLocationInRange(index,$0)}) {
+                cursor=record.location;continue
             }
-            if !anchor.suffix.isEmpty,NSMaxRange(range)+anchor.suffix.utf16.count<=NSMaxRange(contentRange) {
-                let suffix=NSRange(location:NSMaxRange(range),length:anchor.suffix.utf16.count)
-                if text.substring(with:suffix)==anchor.suffix {context += 2}
+            let scalar=text.character(at:index)
+            if let value=UnicodeScalar(scalar),CharacterSet.whitespacesAndNewlines.contains(value) {
+                cursor -= 1;continue
             }
-            let distance=abs(range.location-(anchor.position ?? range.location))
-            return (context,-distance)
+            let paragraph=text.paragraphRange(for:NSRange(location:index,length:1))
+            var end=NSMaxRange(paragraph)
+            while end>paragraph.location {
+                let value=text.character(at:end-1)
+                guard let scalar=UnicodeScalar(value),CharacterSet.newlines.contains(scalar) else{break}
+                end -= 1
+            }
+            return NSRange(location:paragraph.location,length:max(0,end-paragraph.location))
         }
-        return matches.max {score($0)<score($1)}
+        return nil
     }
 }
 
@@ -194,9 +456,7 @@ public enum MarkdownCommentHTML {
                 let value=comment.comment
                 let selected=value.id == selectedID
                 let exact=value.anchor.exact
-                if value.anchor.extent == .blocks {
-                    highlightsBlock=true;selectsBlock = selectsBlock || selected
-                } else if !exact.isEmpty {
+                if !exact.isEmpty {
                     let decorated=highlightTextOccurrence(value.anchor,in:html,id:value.id,selected:selected)
                     if decorated == html {
                         // Records created before block normalization may still

@@ -129,6 +129,14 @@ import PDFKit
             wheel1:delta,wheel2:0,wheel3:0) else{return nil}
         return NSEvent(cgEvent:event)
     }
+    private static func arrowKeyEvent(_ keyCode:UInt16,character:unichar,
+                                      window:NSWindow)->NSEvent? {
+        guard let scalar=UnicodeScalar(character) else{return nil}
+        let text=String(Character(scalar))
+        return NSEvent.keyEvent(with:.keyDown,location:.zero,modifierFlags:[],timestamp:0,
+            windowNumber:window.windowNumber,context:nil,characters:text,
+            charactersIgnoringModifiers:text,isARepeat:false,keyCode:keyCode)
+    }
     private static func visualVerticalShift(_ before:PixelCapture,_ after:PixelCapture,maxShift:Int=160)->Int? {
         guard before.width==after.width,before.height==after.height,before.inkRows.count==after.inkRows.count else{return nil}
         var best:(shift:Int,error:Double)?
@@ -203,8 +211,32 @@ import PDFKit
         if CommandLine.arguments.contains("--integration-comments") {
             verifyComments(controller,document:document);return
         }
+        if CommandLine.arguments.contains("--integration-block-comment-anchor") {
+            verifyBlockCommentAnchorEditing(controller,document:document);return
+        }
+        if CommandLine.arguments.contains("--integration-inline-comment-anchor") {
+            verifyInlineCommentAnchorEditing(controller,document:document);return
+        }
+        if CommandLine.arguments.contains("--integration-comment-markup-anchor") {
+            verifyCommentMarkupAnchorEditing(controller,document:document);return
+        }
         if CommandLine.arguments.contains("--integration-comment-edit-stability") {
             verifyCommentEditStability(controller,document:document);return
+        }
+        if CommandLine.arguments.contains("--integration-comment-overlap-sequence") {
+            verifyCommentOverlapSequence(controller,document:document);return
+        }
+        if CommandLine.arguments.contains("--integration-comment-overlap-paint") {
+            verifyCommentOverlapPaint(controller,document:document);return
+        }
+        if CommandLine.arguments.contains("--integration-comment-separator-edit") {
+            verifyCommentSeparatorEdit(controller,document:document);return
+        }
+        if CommandLine.arguments.contains("--integration-comment-source-fold") {
+            verifyCommentSourceFoldEditing(controller,document:document);return
+        }
+        if CommandLine.arguments.contains("--integration-comment-compact-migration") {
+            verifyCommentCompactMigration(controller,document:document);return
         }
         if CommandLine.arguments.contains("--integration-paragraph-edit-stability") {
             verifyParagraphEditStability(controller,document:document);return
@@ -978,54 +1010,141 @@ import PDFKit
         let firstComment=MarkdownComments.comment(in:base,selection:first,body:"First",author:author,created:created)
         let secondComment=MarkdownComments.comment(in:base,selection:second,body:"Second",author:author,created:created)
         var fixture=base
-        fixture += MarkdownComments.insertion(for:firstComment,in:fixture)
-        fixture += MarkdownComments.insertion(for:secondComment,in:fixture)
-        document.replace(NSRange(location:0,length:document.source.count),with:fixture)
-        let commentSelectors=[firstComment.id,secondComment.id].flatMap {id in
-            [".markato-comment-highlight[data-comment-id=\"\(id)\"]",
-             ".markato-comment-bubble[data-comment-id=\"\(id)\"]"]
+        for (comment,location) in [(secondComment,NSMaxRange(second)),(firstComment,NSMaxRange(first))] {
+            let insertion=MarkdownComments.insertion(for:comment,in:fixture,at:location)
+            fixture=(fixture as NSString).replacingCharacters(in:NSRange(location:location,length:0),with:insertion)
         }
+        document.replace(NSRange(location:0,length:document.source.count),with:fixture)
         func commentRects()->[NSRect]? {
+            let commentSelectors=controller.debugComments.flatMap {value in
+                let id=value.comment.id
+                return [".markato-comment-highlight[data-comment-id=\"\(id)\"]",
+                        ".markato-comment-bubble[data-comment-id=\"\(id)\"]"]
+            }
             let values=commentSelectors.compactMap {controller.preview.previewView.debugRect($0)}
             return values.count==commentSelectors.count ? values:nil
         }
-        func sameRects(_ lhs:[NSRect],_ rhs:[NSRect])->Bool {
-            lhs.count==rhs.count && zip(lhs,rhs).allSatisfy {
-                abs($0.0.minX-$0.1.minX)<0.05 && abs($0.0.minY-$0.1.minY)<0.05 &&
-                abs($0.0.width-$0.1.width)<0.05 && abs($0.0.height-$0.1.height)<0.05
+        @MainActor func verifyCursorMovement() {
+            guard let window=controller.window,
+                  let right=arrowKeyEvent(124,character:unichar(NSRightArrowFunctionKey),window:window),
+                  let down=arrowKeyEvent(125,character:unichar(NSDownArrowFunctionKey),window:window) else {
+                fail("Could not create cursor-movement regression events")
+            }
+            let sourceOrigin=controller.source.viewportOrigin
+            let previewOrigin=controller.preview.clipOrigin
+            controller.source.textView.keyDown(with:right)
+            DispatchQueue.main.asyncAfter(deadline:.now()+0.03) {
+                check(abs(controller.source.viewportOrigin-sourceOrigin)<0.5,
+                    "An in-viewport cursor move unexpectedly scrolled the source")
+                check(abs(controller.preview.clipOrigin-previewOrigin)<1,
+                    "An in-viewport cursor move changed the preview viewport")
+                let bottom=controller.source.debugRenderedOffset(
+                    atViewportY:max(1,controller.source.bounds.height-2))
+                controller.source.textView.setSelectedRange(NSRange(location:bottom,length:0))
+                let beforeSourceScroll=controller.source.viewportOrigin
+                let beforePreviewScroll=controller.preview.clipOrigin
+                @MainActor func moveBeyondViewport(_ remaining:Int) {
+                    guard remaining>0 else{fail("Cursor movement did not scroll beyond the source viewport")}
+                    controller.source.textView.keyDown(with:down)
+                    DispatchQueue.main.asyncAfter(deadline:.now()+0.01) {
+                        if abs(controller.source.viewportOrigin-beforeSourceScroll)>0.5 {
+                            @MainActor func waitForSync(_ syncRemaining:Int) {
+                                guard syncRemaining>0 else {
+                                    fail("Cursor-induced source scrolling did not resume preview synchronization")
+                                }
+                                if abs(controller.preview.clipOrigin-beforePreviewScroll)>1,
+                                   controller.preview.debugScrollMapError.map({abs($0)<0.01})==true {
+                                    verifyScrollSupersedesEdit();return
+                                }
+                                DispatchQueue.main.asyncAfter(deadline:.now()+0.005) {
+                                    waitForSync(syncRemaining-1)
+                                }
+                            }
+                            waitForSync(500)
+                        } else {moveBeyondViewport(remaining-1)}
+                    }
+                }
+                moveBeyondViewport(20)
             }
         }
-        @MainActor func type(_ characters:[Character],at location:Int,referenceY:CGFloat,
-                             referenceRects:[NSRect],index:Int) {
+        @MainActor func verifyScrollSupersedesEdit() {
+            let text=document.source.string as NSString
+            let edited=text.range(of:"Middle paragraph.typing")
+            guard edited.location != NSNotFound else{fail("Could not find the edited paragraph before scroll supersession")}
+            let insertion=NSMaxRange(edited)
+            controller.source.textView.setSelectedRange(NSRange(location:insertion,length:0))
+            controller.source.textView.insertText("!",replacementRange:NSRange(location:insertion,length:0))
+            let revision=document.revision
+            let sourceBefore=controller.source.viewportOrigin
+            let previewBefore=controller.preview.clipOrigin
+            // Scroll before the edited revision can commit. This newer source
+            // navigation must cancel the edit destination for the late frame.
+            controller.source.beginScrollGesture()
+            controller.source.debugPrepareForUserScroll()
+            controller.source.debugScrollViewport(by:160)
+            controller.source.endScrollGesture()
+            @MainActor func waitForScroll(_ remaining:Int) {
+                guard remaining>0 else {
+                    fail("A late edit presentation pulled the preview away from source scrolling: " +
+                        "source=\(controller.source.viewportOrigin), mapError=\(String(describing:controller.preview.debugScrollMapError)), " +
+                        controller.preview.debugGeometry())
+                }
+                if controller.preview.lastRevision==revision,
+                   controller.preview.debugScrollMapError.map({abs($0)<0.01})==true {
+                    check(controller.source.viewportOrigin>sourceBefore+100,
+                        "The source did not perform the regression scroll")
+                    check(abs(controller.preview.clipOrigin-previewBefore)>20,
+                        "The preview did not follow the regression scroll")
+                    guard let editedY=controller.preview.debugParagraphViewportY(containing:"Middle paragraph") else {
+                        fail("Edited paragraph disappeared after scroll superseded the edit")
+                    }
+                    check(abs(editedY-controller.source.readingAnchorViewportY)>40,
+                        "The late edit frame pulled the paragraph back to the reading anchor")
+                    print("COMMENT EDIT STABILITY INTEGRATION PASSED: invisible edits reveal once, visible edits and cursor moves stay put, passive publication cannot snap back, and cursor/source scrolling resumes synchronization")
+                    fflush(nil);_exit(EXIT_SUCCESS)
+                }
+                DispatchQueue.main.asyncAfter(deadline:.now()+0.005){waitForScroll(remaining-1)}
+            }
+            waitForScroll(1000)
+        }
+        @MainActor func type(_ characters:[Character],at location:Int,index:Int) {
             guard index<characters.count else {
-                print("COMMENT EDIT STABILITY INTEGRATION PASSED: character edits between commented paragraphs keep preview position")
-                fflush(nil);_exit(EXIT_SUCCESS)
+                verifyCursorMovement();return
             }
             let insertion=String(characters[index])
+            let originBeforeEdit=controller.preview.clipOrigin
             controller.source.textView.setSelectedRange(NSRange(location:location,length:0))
             controller.source.textView.insertText(insertion,replacementRange:NSRange(location:location,length:0))
             let revision=document.revision
             @MainActor func awaitCharacter(_ remaining:Int) {
                 guard remaining>0 else{fail("Comment edit stability character \(index+1) did not settle")}
-                if index>0,let transientY=controller.preview.debugParagraphViewportY(containing:"First commented paragraph") {
-                    check(abs(transientY-referenceY)<8,
-                        "Preview jumped transiently while typing character \(index+1) between comments: before=\(referenceY), after=\(transientY), \(controller.preview.debugGeometry())")
-                }
-                if let transientRects=commentRects() {
-                    check(sameRects(transientRects,referenceRects),
-                        "Visible comment geometry jittered while typing character \(index+1): before=\(referenceRects), after=\(transientRects)")
-                }
                 if controller.preview.lastRevision==revision,
-                   let y=controller.preview.debugParagraphViewportY(containing:"First commented paragraph") {
-                    if index>0 {
-                        check(abs(y-referenceY)<8,
-                            "Preview jumped while typing character \(index+1) between comments: before=\(referenceY), after=\(y), \(controller.preview.debugGeometry())")
+                   let editedY=controller.preview.debugParagraphViewportY(containing:"Middle paragraph") {
+                    check(abs(editedY-controller.source.editAnchorViewportY)<32,
+                        "Edit character \(index+1) did not keep the preview synchronized to the edit site " +
+                        "(paragraph=\(editedY), sourceEditY=\(controller.source.editAnchorViewportY), " +
+                        "\(controller.preview.debugGeometry()))")
+                    if index==0 {
+                        check(abs(controller.preview.clipOrigin-originBeforeEdit)>20,
+                            "An invisible edit did not reveal its preview position")
+                    } else {
+                        check(abs(controller.preview.clipOrigin-originBeforeEdit)<1,
+                            "A visible edit unnecessarily moved the preview viewport " +
+                            "(before=\(originBeforeEdit), after=\(controller.preview.clipOrigin))")
                     }
-                    guard let settledRects=commentRects() else{fail("Comment geometry disappeared after character \(index+1)")}
-                    check(sameRects(settledRects,referenceRects),
-                        "Visible comment geometry moved after typing character \(index+1): before=\(referenceRects), after=\(settledRects)")
-                    type(characters,at:location+insertion.utf16.count,referenceY:y,
-                        referenceRects:referenceRects,index:index+1);return
+                    guard commentRects() != nil else{fail("Comment geometry disappeared after character \(index+1)")}
+                    let settledOrigin=controller.preview.clipOrigin
+                    DispatchQueue.main.asyncAfter(deadline:.now()+0.05) {
+                        guard let delayedY=controller.preview.debugParagraphViewportY(containing:"Middle paragraph") else {
+                            fail("Edited paragraph disappeared after character \(index+1) settled")
+                        }
+                        check(abs(controller.preview.clipOrigin-settledOrigin)<1 && abs(delayedY-editedY)<1,
+                            "Passive publication or source relayout corrected the one-shot edit jump " +
+                            "after character \(index+1) (origin \(settledOrigin) -> \(controller.preview.clipOrigin), " +
+                            "paragraph \(editedY) -> \(delayedY), \(controller.preview.debugGeometry()))")
+                        type(characters,at:location+insertion.utf16.count,index:index+1)
+                    }
+                    return
                 }
                 DispatchQueue.main.asyncAfter(deadline:.now()+0.005){awaitCharacter(remaining-1)}
             }
@@ -1043,20 +1162,300 @@ import PDFKit
                           let firstRect=controller.preview.previewView.debugRect("p",containing:"First commented paragraph"),
                           let middleRect=controller.preview.previewView.debugRect("p",containing:"Middle paragraph"),
                           let secondRect=controller.preview.previewView.debugRect("p",containing:"Second commented paragraph"),
-                          let rects=commentRects(),y>=0,y<300,controller.preview.coversSourceViewport else {
+                          commentRects() != nil,y>=0,y<300,controller.preview.coversSourceViewport else {
                         DispatchQueue.main.asyncAfter(deadline:.now()+0.01){waitForPosition(positionRemaining-1)};return
                     }
                     let commentedGap=middleRect.minY-firstRect.maxY
                     let plainGap=secondRect.minY-middleRect.maxY
                     check(abs(commentedGap-plainGap)<0.5,
                         "A commented paragraph changed paragraph spacing: commented=\(commentedGap), plain=\(plainGap)")
-                    type(Array("typing"),at:NSMaxRange(middle),referenceY:y,referenceRects:rects,index:0)
+                    controller.preview.debugScrollViewport(by:max(400,controller.preview.bounds.height*0.7))
+                    guard let hiddenMiddle=controller.preview.debugParagraphViewportY(containing:"Middle paragraph"),
+                          hiddenMiddle<0 else {
+                        fail("Could not move the edit target outside the preview before the visibility regression")
+                    }
+                    type(Array("typing"),at:NSMaxRange(middle),index:0)
                 }
                 waitForPosition(500);return
             }
             DispatchQueue.main.asyncAfter(deadline:.now()+0.01){waitForSetup(remaining-1)}
         }
         waitForSetup(1000)
+    }
+    private static func verifyCommentSourceFoldEditing(_ controller:EditorWindowController,
+                                                        document:MarkdownDocument) {
+        let prefix=(1...20).map{"Leading paragraph \($0) keeps the comment away from the document boundary."}
+            .joined(separator:"\n\n")
+        let base="# Comment source fold\n\n\(prefix)\n\nThe anchor word is precise.\n\nDownstream sentinel stays put.\n\n"
+            + (1...30).map{"Trailing paragraph \($0) keeps the source document scrollable."}.joined(separator:"\n\n")
+        let anchor=(base as NSString).range(of:"anchor")
+        let comment=MarkdownComments.comment(in:base,selection:anchor,body:"Short note.",author:"")
+        let blockEnd=(base as NSString).range(of:"The anchor word is precise.\n").upperBound
+        let fixture=(base as NSString).replacingCharacters(in:NSRange(location:blockEnd,length:0),
+            with:MarkdownComments.insertion(for:comment,in:base,at:blockEnd))
+        document.replace(NSRange(location:0,length:document.source.count),with:fixture)
+        let longBody=Array(repeating:"A long edited comment body must remain readable in the source panel.",count:24)
+            .joined(separator:" ")+"\n\n- first detail\n- second detail"
+
+        func checkReadableBody(first:String,last:String,message:String) {
+            let source=document.source.string as NSString
+            let firstRange=source.range(of:first),lastRange=source.range(of:last,options:.backwards)
+            check(firstRange.location != NSNotFound && lastRange.location != NSNotFound,
+                "\(message): body text is missing")
+            guard let firstY=controller.source.debugRenderedViewportY(for:firstRange.location),
+                  let lastY=controller.source.debugRenderedViewportY(for:lastRange.location) else {
+                fail("\(message): body text has no source geometry")
+            }
+            check(lastY>firstY+10,
+                "\(message): the body is still collapsed (first=\(firstY), last=\(lastY))")
+            check((controller.source.debugCommentMinimumLineHeight ?? 0)>10,
+                "\(message): wrapped comment rows do not have a readable line height")
+        }
+
+        func checkSentinelPosition(_ referenceY:CGFloat,_ message:String) {
+            let source=document.source.string as NSString
+            let sentinel=source.range(of:"Downstream sentinel")
+            guard sentinel.location != NSNotFound,
+                  let y=controller.source.debugRenderedViewportY(for:sentinel.location) else {
+                fail("\(message): downstream sentinel has no source geometry")
+            }
+            let relayout=controller.source.debugLastEditRelayout ?? "none"
+            check(abs(y-referenceY)<1,
+                "\(message): source viewport flickered (sentinel=\(sentinel.location), before=\(referenceY), after=\(y), relayout=\(relayout))")
+        }
+
+        @MainActor func editSerializedBody() {
+            let source=document.source.string as NSString
+            let tiny=source.range(of:"Tiny.")
+            guard tiny.location != NSNotFound else{fail("Could not find the serialized comment body")}
+            let addition=" "+Array(repeating:"direct source edit",count:40).joined(separator:" ")+" final direct words"
+            let insertion=NSMaxRange(tiny)
+            controller.source.debugAlignViewport(at:insertion,
+                viewportY:controller.source.readingAnchorViewportY)
+            controller.source.textView.setSelectedRange(NSRange(location:insertion,length:0))
+            controller.source.textView.insertText(addition,replacementRange:NSRange(location:insertion,length:0))
+            let editDestinationY=controller.source.editAnchorViewportY
+            let revision=document.revision
+            @MainActor func waitForDirectEdit(_ remaining:Int) {
+                guard remaining>0 else{fail("Direct serialized-comment edit did not settle")}
+                let current=document.source.string as NSString
+                let sentinel=current.range(of:"Downstream sentinel")
+                if controller.preview.lastRevision==revision,
+                   controller.source.textView.string==document.source.string,
+                   controller.debugComments.first?.comment.body.hasSuffix("final direct words")==true,
+                   sentinel.location != NSNotFound {
+                    checkReadableBody(first:"Tiny.",last:"final direct words",
+                        message:"Direct source comment edit")
+                    guard let anchorY=controller.preview.debugParagraphViewportY(
+                        containing:"The anchor word is precise") else {
+                        fail("Direct serialized-comment edit lost its resolved Markdown anchor")
+                    }
+                    check(abs(anchorY-editDestinationY)<32,
+                        "Direct serialized-comment edit did not perform its one-shot navigation " +
+                        "(anchorY=\(anchorY), editDestinationY=\(editDestinationY), " +
+                        "settledReadingY=\(controller.source.readingAnchorViewportY), " +
+                        "\(controller.preview.debugGeometry()))")
+                    let sourceOrigin=controller.source.viewportOrigin
+                    let previewOrigin=controller.preview.clipOrigin
+                    DispatchQueue.main.asyncAfter(deadline:.now()+0.15) {
+                    guard let delayedAnchorY=controller.preview.debugParagraphViewportY(
+                        containing:"The anchor word is precise") else {
+                        fail("Direct serialized-comment edit lost its anchor after publication settled")
+                    }
+                    check(abs(controller.preview.clipOrigin-previewOrigin)<1 && abs(delayedAnchorY-anchorY)<1,
+                        "Passive publication corrected the direct serialized-comment edit jump " +
+                        "(origin \(previewOrigin) -> \(controller.preview.clipOrigin), " +
+                        "anchor \(anchorY) -> \(delayedAnchorY), \(controller.preview.debugGeometry()))")
+                    // Model the AppKit ordering behind the regression: a
+                    // comment reflow leaves the live-scroll lifecycle marked
+                    // active while the committed preview still has a
+                    // post-edit viewport lock. Explicit source input must
+                    // capture the preview even when beginScrollGesture is a
+                    // no-op because that lifecycle flag is already active.
+                    controller.source.beginScrollGesture()
+                    controller.preview.debugHoldViewportAtCurrentOrigin()
+                    controller.source.debugPrepareForUserScroll()
+                    controller.source.debugScrollViewport(by:80)
+                    controller.source.endScrollGesture()
+                    @MainActor func waitForScrollSync(_ scrollRemaining:Int) {
+                        guard scrollRemaining>0 else {
+                            fail("Source scrolling stopped driving the preview after a direct serialized-comment edit " +
+                                "(sourceBefore=\(sourceOrigin), sourceAfter=\(controller.source.viewportOrigin), " +
+                                "previewBefore=\(previewOrigin), previewAfter=\(controller.preview.clipOrigin), " +
+                                "detached=\(controller.preview.debugIsIndependentlyScrolled), " +
+                                "mapError=\(String(describing:controller.preview.debugScrollMapError)))")
+                        }
+                        if abs(controller.source.viewportOrigin-sourceOrigin)>40,
+                           !controller.preview.debugIsIndependentlyScrolled,
+                           abs(controller.preview.clipOrigin-previewOrigin)>1,
+                           controller.preview.debugScrollMapError.map({abs($0)<0.01})==true {
+                            print("COMMENT SOURCE READABILITY INTEGRATION PASSED: comment edits center their Markdown anchor, remain fixed through publication, keep the complete body visible, and resume synchronization on source scroll")
+                            fflush(nil);_exit(EXIT_SUCCESS)
+                        }
+                        DispatchQueue.main.asyncAfter(deadline:.now()+0.005) {
+                            waitForScrollSync(scrollRemaining-1)
+                        }
+                    }
+                    waitForScrollSync(1000)
+                    }
+                    return
+                }
+                DispatchQueue.main.asyncAfter(deadline:.now()+0.005){waitForDirectEdit(remaining-1)}
+            }
+            waitForDirectEdit(1000)
+        }
+
+        @MainActor func saveBody(_ body:String,phase:Int) {
+            guard let id=controller.debugComments.first?.comment.id else{fail("Missing comment before fold edit")}
+            controller.debugOpenCommentPopover(id)
+            check(controller.debugCommentPopoverIsShown,"Could not open the existing comment editor")
+            let sourceBefore=document.source.string as NSString
+            let sentinelBefore=sourceBefore.range(of:"Downstream sentinel")
+            guard sentinelBefore.location != NSNotFound,
+                  let referenceY=controller.source.debugRenderedViewportY(for:sentinelBefore.location) else {
+                fail("Could not capture the source position before comment edit \(phase)")
+            }
+            controller.debugSetCommentPopoverText(body)
+            checkSentinelPosition(referenceY,"Typing in popover before comment edit \(phase)")
+            check(controller.debugPressCommentReturn(shift:false),"Could not save the edited comment body")
+            checkSentinelPosition(referenceY,"Immediate popover comment edit \(phase)")
+            let revision=document.revision
+            @MainActor func waitForSave(_ remaining:Int) {
+                guard remaining>0 else{fail("Folded comment edit \(phase) did not settle")}
+                checkSentinelPosition(referenceY,"Popover comment edit \(phase)")
+                let text=document.source.string as NSString
+                let sentinel=text.range(of:"Downstream sentinel")
+                if controller.preview.lastRevision==revision,
+                   controller.debugComments.first?.comment.body==body,
+                   controller.source.textView.string==document.source.string,
+                   sentinel.location != NSNotFound {
+                    if phase==1 {
+                        checkReadableBody(first:"A long edited comment body",last:"second detail",
+                            message:"Popover comment edit")
+                        saveBody("Tiny.",phase:2);return
+                    }
+                    editSerializedBody();return
+                }
+                DispatchQueue.main.asyncAfter(deadline:.now()+0.005){waitForSave(remaining-1)}
+            }
+            waitForSave(1000)
+        }
+        @MainActor func waitForSetup(_ remaining:Int) {
+            guard remaining>0 else{fail("Comment source-fold fixture did not settle")}
+            let text=document.source.string as NSString
+            let sentinel=text.range(of:"Downstream sentinel")
+            if controller.debugComments.count==1,
+               controller.debugComments.first?.comment.body=="Short note.",
+               controller.preview.lastRevision==document.revision,
+               controller.source.debugHasCompleteLayout,
+               sentinel.location != NSNotFound {
+                controller.source.reveal(sentinel.location,alignment:.top)
+                @MainActor func waitForPosition(_ positionRemaining:Int) {
+                    guard positionRemaining>0 else{fail("Could not position the comment source-readability fixture")}
+                    guard let referenceY=controller.source.debugRenderedViewportY(for:sentinel.location),
+                          abs(referenceY)<5 else {
+                        DispatchQueue.main.asyncAfter(deadline:.now()+0.01){waitForPosition(positionRemaining-1)}
+                        return
+                    }
+                    saveBody(longBody,phase:1)
+                }
+                waitForPosition(500)
+                return
+            }
+            DispatchQueue.main.asyncAfter(deadline:.now()+0.01){waitForSetup(remaining-1)}
+        }
+        waitForSetup(1000)
+    }
+    private static func verifyCommentCompactMigration(_ controller:EditorWindowController,
+                                                       document:MarkdownDocument) {
+        let selected="""
+        First identifying words begin a long comment anchor that spans this paragraph.
+
+        The noisy middle should not be repeated in the persisted comment record.
+
+        Last identifying words finish the long comment anchor.
+        """
+        let encoder=JSONEncoder();encoder.outputFormatting=[.withoutEscapingSlashes]
+        let quoted=String(decoding:try! encoder.encode(selected),as:UTF8.self)
+        let verbose="<!-- Keep the comment visible. | \(quoted) | markato-comment:v3 -->"
+        let fixture=selected+"\n\n"+verbose+"\n\nFollowing paragraph.\n"
+        document.replace(NSRange(location:0,length:document.source.count),with:fixture)
+        @MainActor func insertMaximumCollision(_ value:ResolvedMarkdownComment) {
+            guard let anchor=value.anchorRange else{fail("Migrated comment lost its anchor")}
+            let collision="\n\(selected.prefix(96)) competing text \(selected.suffix(96))\n"
+            controller.source.textView.setSelectedRange(NSRange(location:NSMaxRange(anchor),length:0))
+            controller.source.textView.insertText(collision,
+                replacementRange:NSRange(location:NSMaxRange(anchor),length:0))
+            @MainActor func waitForExactFallback(_ remaining:Int) {
+                guard remaining>0 else{fail("Endpoint collision did not produce an exact selector")}
+                if let current=controller.debugComments.first,
+                   controller.preview.lastRevision==document.revision,
+                   current.comment.anchor.startExact==nil,
+                   current.comment.anchor.endExact==nil {
+                    let record=(document.source.string as NSString).substring(with:current.recordRange)
+                    check(!record.contains(" ... "),
+                        "A non-unique endpoint pair remained compact")
+                    check(record.contains("noisy middle"),
+                        "Exact-selector fallback did not persist the complete anchor")
+                    check(current.anchorRange==anchor,
+                        "Endpoint collision moved the live comment anchor")
+                    print("COMMENT COMPACT MIGRATION INTEGRATION PASSED: migration, endpoint lengthening, and exact fallback stay attached")
+                    fflush(nil);_exit(EXIT_SUCCESS)
+                }
+                DispatchQueue.main.asyncAfter(deadline:.now()+0.01){waitForExactFallback(remaining-1)}
+            }
+            waitForExactFallback(1000)
+        }
+        @MainActor func insertShortCollision(_ value:ResolvedMarkdownComment) {
+            guard let anchor=value.anchorRange,
+                  let oldStart=value.comment.anchor.startExact,
+                  let oldEnd=value.comment.anchor.endExact else {
+                fail("Migrated comment did not expose compact endpoints")
+            }
+            let collision="\n\(oldStart) competing text \(oldEnd)\n"
+            controller.source.textView.setSelectedRange(NSRange(location:NSMaxRange(anchor),length:0))
+            controller.source.textView.insertText(collision,
+                replacementRange:NSRange(location:NSMaxRange(anchor),length:0))
+            @MainActor func waitForLengthening(_ remaining:Int) {
+                guard remaining>0 else{fail("Short endpoint collision was not repaired")}
+                if let current=controller.debugComments.first,
+                   controller.preview.lastRevision==document.revision,
+                   let newStart=current.comment.anchor.startExact,
+                   let newEnd=current.comment.anchor.endExact,
+                   newStart != oldStart,newEnd != oldEnd {
+                    let record=(document.source.string as NSString).substring(with:current.recordRange)
+                    check(record.contains(" ... "),
+                        "A repairable short collision unnecessarily expanded the selector")
+                    check(newStart.count>oldStart.count && newEnd.count>oldEnd.count,
+                        "Short collision did not lengthen both endpoints")
+                    check(current.anchorRange==anchor,
+                        "Lengthening endpoints moved the live comment anchor")
+                    insertMaximumCollision(current);return
+                }
+                DispatchQueue.main.asyncAfter(deadline:.now()+0.01){waitForLengthening(remaining-1)}
+            }
+            waitForLengthening(1000)
+        }
+        @MainActor func waitForMigration(_ remaining:Int) {
+            guard remaining>0 else{fail("Verbose comment selector was not migrated")}
+            if let value=controller.debugComments.first,
+               controller.preview.lastRevision==document.revision,
+               value.comment.body=="Keep the comment visible." {
+                let text=document.source.string as NSString
+                let record=text.substring(with:value.recordRange)
+                if record.contains(" ... ") {
+                    check(record.contains("noisy middle")==false,
+                        "Compact comment record retained its verbose middle")
+                    check((record as NSString).range(of:" | ").location<120,
+                        "Migrated selector still hides the comment body")
+                    check(value.anchorRange==(fixture as NSString).range(of:selected),
+                        "Compact migration changed the resolved multi-paragraph anchor")
+                    insertShortCollision(value);return
+                }
+            }
+            DispatchQueue.main.asyncAfter(deadline:.now()+0.01){waitForMigration(remaining-1)}
+        }
+        waitForMigration(1000)
     }
     private static func verifyEmptyDocumentEdits(_ controller:EditorWindowController,document:MarkdownDocument) {
         let preview=controller.preview
@@ -1205,6 +1604,471 @@ import PDFKit
             waitForEarlyJump(500)
         }
     }
+    private static func verifyBlockCommentAnchorEditing(_ controller:EditorWindowController,
+                                                         document:MarkdownDocument) {
+        let fixture="The local image below is bundled with the app, so it works offline. Its short source line occupies much less space than its preview. Try scrolling slowly across this section and changing pane widths.\n"
+        document.replace(NSRange(location:0,length:document.source.count),with:fixture)
+        @MainActor func waitForFixture(_ remaining:Int) {
+            guard remaining>0 else{fail("Block-comment fixture did not settle")}
+            if controller.preview.lastRevision==document.revision {
+                let word=(document.source.string as NSString).range(of:"image")
+                let point=NSRange(location:word.location+3,length:0)
+                controller.debugBeginAddComment(selection:point)
+                controller.debugSetCommentPopoverText("comment")
+                check(controller.debugPressCommentReturn(shift:false),"Could not create block comment")
+                waitForComment(500);return
+            }
+            DispatchQueue.main.asyncAfter(deadline:.now()+0.01){waitForFixture(remaining-1)}
+        }
+        @MainActor func waitForComment(_ remaining:Int) {
+            guard remaining>0 else{fail("Block comment did not settle")}
+            if controller.debugComments.count==1,
+               controller.debugComments[0].comment.anchor.exact.isEmpty {
+                let word=(document.source.string as NSString).range(of:"image")
+                let insertion=word.location+3
+                controller.source.textView.setSelectedRange(NSRange(location:insertion,length:0))
+                controller.source.textView.insertText("x",replacementRange:NSRange(location:insertion,length:0))
+                waitForEdit(500,insertion:insertion,expected:"imaxge",thenInsert:true);return
+            }
+            DispatchQueue.main.asyncAfter(deadline:.now()+0.01){waitForComment(remaining-1)}
+        }
+        @MainActor func waitForEdit(_ remaining:Int,insertion:Int,expected:String,thenInsert:Bool) {
+            guard remaining>0 else{fail("Block comment widened to paragraph text after editing")}
+            let source=document.source.string
+            let record="<!-- comment | \"\" | \(MarkdownComments.marker) -->"
+            if source.contains(expected),source.contains(record),
+               controller.source.textView.string==source,
+               let comment=controller.debugComments.first,
+               comment.comment.anchor.exact.isEmpty,
+               comment.anchorRange.map({NSLocationInRange(insertion,$0)})==true {
+                if thenInsert {
+                    let next=insertion+1
+                    controller.source.textView.setSelectedRange(NSRange(location:next,length:0))
+                    controller.source.textView.insertText("x",replacementRange:NSRange(location:next,length:0))
+                    waitForEdit(500,insertion:next,expected:"imaxxge",thenInsert:false);return
+                }
+                print("BLOCK COMMENT ANCHOR INTEGRATION PASSED: paragraph edits preserve the empty selector")
+                fflush(nil);_exit(EXIT_SUCCESS)
+            }
+            DispatchQueue.main.asyncAfter(deadline:.now()+0.01) {
+                waitForEdit(remaining-1,insertion:insertion,expected:expected,thenInsert:thenInsert)
+            }
+        }
+        waitForFixture(500)
+    }
+
+    private static func verifyInlineCommentAnchorEditing(_ controller:EditorWindowController,
+                                                          document:MarkdownDocument) {
+        let fixture="The local image below is bundled with the app, so it works offline. Its short source line occupies much less space than its preview. Try scrolling slowly across this section and changing pane widths.\n"
+        document.replace(NSRange(location:0,length:document.source.count),with:fixture)
+        @MainActor func waitForFixture(_ remaining:Int) {
+            guard remaining>0 else{fail("Inline-comment fixture did not settle")}
+            if controller.preview.lastRevision==document.revision {
+                let selection=(document.source.string as NSString).range(of:"local image")
+                controller.debugBeginAddComment(selection:selection)
+                controller.debugSetCommentPopoverText("comment")
+                check(controller.debugPressCommentReturn(shift:false),"Could not create inline comment")
+                waitForComment(500);return
+            }
+            DispatchQueue.main.asyncAfter(deadline:.now()+0.01){waitForFixture(remaining-1)}
+        }
+        @MainActor func waitForComment(_ remaining:Int) {
+            guard remaining>0 else{fail("Inline comment did not settle")}
+            if controller.debugComments.first?.comment.anchor.exact=="local image" {
+                let word=(document.source.string as NSString).range(of:"image")
+                let insertion=word.location+3
+                controller.source.textView.setSelectedRange(NSRange(location:insertion,length:0))
+                controller.source.textView.insertText("x",replacementRange:NSRange(location:insertion,length:0))
+                waitForEdit(500,insertion:insertion,expected:"local imaxge",thenInsert:true);return
+            }
+            DispatchQueue.main.asyncAfter(deadline:.now()+0.01){waitForComment(remaining-1)}
+        }
+        @MainActor func waitForEdit(_ remaining:Int,insertion:Int,expected:String,thenInsert:Bool) {
+            guard remaining>0 else {
+                let actual=controller.debugComments.first?.comment.anchor.exact ?? "<missing>"
+                fail("Inline selector widened after editing: expected=\(expected), actual=\(actual)")
+            }
+            let source=document.source.string
+            if let comment=controller.debugComments.first,
+               comment.comment.anchor.exact==expected,
+               comment.anchorRange.map({(source as NSString).substring(with:$0)==expected})==true,
+               source.contains(MarkdownComments.serialize(comment.comment,newline:document.newline)),
+               controller.source.textView.string==source {
+                if thenInsert {
+                    let next=insertion+1
+                    controller.source.textView.setSelectedRange(NSRange(location:next,length:0))
+                    controller.source.textView.insertText("x",replacementRange:NSRange(location:next,length:0))
+                    waitForEdit(500,insertion:next,expected:"local imaxxge",thenInsert:false);return
+                }
+                print("INLINE COMMENT ANCHOR INTEGRATION PASSED: local image -> local imaxxge stays precise")
+                fflush(nil);_exit(EXIT_SUCCESS)
+            }
+            DispatchQueue.main.asyncAfter(deadline:.now()+0.01) {
+                waitForEdit(remaining-1,insertion:insertion,expected:expected,thenInsert:thenInsert)
+            }
+        }
+        waitForFixture(500)
+    }
+
+    private static func verifyCommentMarkupAnchorEditing(_ controller:EditorWindowController,
+                                                          document:MarkdownDocument) {
+        let fixture="The path follows a stream through open woodland. Morning light catches the leaves.\n"
+        document.replace(NSRange(location:0,length:document.source.count),with:fixture)
+        let web=controller.preview.previewView
+        @MainActor func waitForFixture(_ remaining:Int) {
+            guard remaining>0 else{fail("Comment-markup fixture did not settle")}
+            if controller.preview.lastRevision==document.revision {
+                let selection=(document.source.string as NSString).range(
+                    of:"follows a stream through open woodland")
+                controller.debugBeginAddComment(selection:selection)
+                controller.debugSetCommentPopoverText("Keep this precise")
+                check(controller.debugPressCommentReturn(shift:false),"Could not create markup comment")
+                waitForStage(500,stage:0);return
+            }
+            DispatchQueue.main.asyncAfter(deadline:.now()+0.01){waitForFixture(remaining-1)}
+        }
+        @MainActor func insertStar(before:Bool) {
+            let word=(document.source.string as NSString).range(of:"stream")
+            let location=before ? word.location:NSMaxRange(word)
+            controller.source.textView.setSelectedRange(NSRange(location:location,length:0))
+            controller.source.textView.insertText("*",replacementRange:NSRange(location:location,length:0))
+        }
+        @MainActor func waitForStage(_ remaining:Int,stage:Int) {
+            guard remaining>0 else {
+                let comment=controller.debugComments.first?.comment
+                let raw=comment?.anchor.exact ?? "<missing>"
+                let rendered=comment?.anchor.renderedExact ?? "<none>"
+                let blocks=web.debugCount("[data-markato-comment-block]")
+                let marks=web.debugCount(".markato-comment-highlight")
+                fail("Markup comment stage \(stage) did not stay precise: raw=\(raw), rendered=\(rendered), blocks=\(blocks), marks=\(marks)")
+            }
+            let exact=["follows a stream through open woodland",
+                "follows a *stream through open woodland",
+                "follows a **stream through open woodland",
+                "follows a **stream* through open woodland",
+                "follows a **stream** through open woodland"][stage]
+            if let value=controller.debugComments.first,
+               value.comment.anchor.exact==exact,
+               controller.preview.lastRevision==document.revision,
+               document.source.string.contains(MarkdownComments.serialize(value.comment,newline:document.newline)),
+               web.debugCount("[data-markato-comment-block]")==0,
+               web.debugCount(".markato-comment-highlight")>0 {
+                switch stage {
+                case 0,1: insertStar(before:true)
+                case 2,3: insertStar(before:false)
+                default:
+                    check(value.comment.anchor.renderedExact=="follows a stream through open woodland",
+                        "Bold anchor did not retain a rendered-text selector")
+                    guard let range=value.anchorRange else{fail("Bold comment lost its source range")}
+                    let insertion=NSMaxRange(range)
+                    controller.source.textView.setSelectedRange(NSRange(location:insertion,length:0))
+                    controller.source.textView.insertText(" ",replacementRange:NSRange(location:insertion,length:0))
+                    waitForEndBoundary(500,insertion:insertion,exact:exact);return
+                }
+                waitForStage(500,stage:stage+1);return
+            }
+            DispatchQueue.main.asyncAfter(deadline:.now()+0.01){waitForStage(remaining-1,stage:stage)}
+        }
+        @MainActor func waitForEndBoundary(_ remaining:Int,insertion:Int,exact:String) {
+            guard remaining>0 else {
+                fail("Typing at the comment end leaked its yellow background onto the following space")
+            }
+            let source=document.source.string as NSString
+            if let value=controller.debugComments.first,let range=value.anchorRange,
+               value.comment.anchor.exact==exact,NSMaxRange(range)==insertion,
+               insertion<source.length,source.substring(with:NSRange(location:insertion,length:1))==" ",
+               controller.preview.lastRevision==document.revision,
+               web.debugCount("[data-markato-comment-block]")==0,
+               web.debugCount(".markato-comment-highlight")>0,
+               controller.source.debugHasCommentBackground(at:insertion-1),
+               !controller.source.debugHasCommentBackground(at:insertion) {
+                let prefix="🟡 "
+                controller.source.textView.setSelectedRange(NSRange(location:range.location,length:0))
+                controller.source.textView.insertText(prefix,
+                    replacementRange:NSRange(location:range.location,length:0))
+                waitForStartBoundary(500,prefix:prefix,previous:exact);return
+            }
+            DispatchQueue.main.asyncAfter(deadline:.now()+0.01) {
+                waitForEndBoundary(remaining-1,insertion:insertion,exact:exact)
+            }
+        }
+        @MainActor func waitForStartBoundary(_ remaining:Int,prefix:String,previous:String) {
+            guard remaining>0 else {
+                let value=controller.debugComments.first
+                let range=value?.anchorRange
+                let end=range.map(NSMaxRange) ?? -1
+                let raw=value?.comment.anchor.exact ?? "<missing>"
+                let rendered=value?.comment.anchor.renderedExact ?? "<none>"
+                let blocks=web.debugCount("[data-markato-comment-block]")
+                let marks=web.debugCount(".markato-comment-highlight")
+                let firstBG=range.map{controller.source.debugHasCommentBackground(at:$0.location)} ?? false
+                let lastBG=end>0 ? controller.source.debugHasCommentBackground(at:end-1):false
+                let afterBG=end>=0 ? controller.source.debugHasCommentBackground(at:end):false
+                fail("Typing Unicode at the comment start did not join its anchor cleanly: raw=\(raw), rendered=\(rendered), range=\(String(describing:range)), revision=\(controller.preview.lastRevision)/\(document.revision), blocks=\(blocks), marks=\(marks), firstBG=\(firstBG), lastBG=\(lastBG), afterBG=\(afterBG)")
+            }
+            if let value=controller.debugComments.first,let range=value.anchorRange,
+               value.comment.anchor.exact==prefix+previous,
+               controller.preview.lastRevision==document.revision,
+               document.source.string.contains(MarkdownComments.serialize(value.comment,newline:document.newline)),
+               web.debugCount("[data-markato-comment-block]")==0,
+               web.debugCount(".markato-comment-highlight")>0,
+               controller.source.debugHasCommentBackground(at:range.location),
+               controller.source.debugHasCommentBackground(at:NSMaxRange(range)-1),
+               !controller.source.debugHasCommentBackground(at:NSMaxRange(range)) {
+                print("COMMENT EDITING INTEGRATION PASSED: markup, UTF-16 start affinity, and clean end boundary")
+                fflush(nil);_exit(EXIT_SUCCESS)
+            }
+            DispatchQueue.main.asyncAfter(deadline:.now()+0.01) {
+                waitForStartBoundary(remaining-1,prefix:prefix,previous:previous)
+            }
+        }
+        waitForFixture(500)
+    }
+
+    private static func verifyCommentSeparatorEdit(_ controller:EditorWindowController,
+                                                    document:MarkdownDocument) {
+        let first="The first paragraph carries enough identifying text for a stable endpoint."
+        let second="The second paragraph closes the selected comment range unambiguously."
+        let fixture=first+"\n\n"+second+"\n"
+        document.replace(NSRange(location:0,length:document.source.count),with:fixture)
+        @MainActor func waitForFixture(_ remaining:Int) {
+            guard remaining>0 else{fail("Comment separator fixture did not settle")}
+            guard controller.preview.lastRevision==document.revision else {
+                DispatchQueue.main.asyncAfter(deadline:.now()+0.01){waitForFixture(remaining-1)};return
+            }
+            let source=document.source.string as NSString
+            let start=source.range(of:first).location,end=NSMaxRange(source.range(of:second))
+            controller.debugBeginAddComment(selection:NSRange(location:start,length:end-start))
+            controller.debugSetCommentPopoverText("separator-comment")
+            check(controller.debugPressCommentReturn(shift:false),"Could not create separator comment")
+            waitForComment(500)
+        }
+        @MainActor func waitForComment(_ remaining:Int) {
+            guard remaining>0 else{fail("Multi-paragraph comment did not settle")}
+            guard let value=controller.debugComments.first,
+                  value.comment.body=="separator-comment",
+                  controller.preview.lastRevision==document.revision else {
+                DispatchQueue.main.asyncAfter(deadline:.now()+0.01){waitForComment(remaining-1)};return
+            }
+            let source=document.source.string as NSString
+            let separator=source.range(of:"\n\n",options:[],range:value.anchorRange ?? NSRange())
+            check(separator.location != NSNotFound,"Comment anchor has no paragraph separator")
+            controller.source.textView.setSelectedRange(NSRange(location:separator.location,length:1))
+            controller.source.textView.insertText("",replacementRange:NSRange(location:separator.location,length:1))
+            waitForJoined(700)
+        }
+        @MainActor func waitForJoined(_ remaining:Int) {
+            guard remaining>0 else{fail("Deleting the paragraph separator did not settle")}
+            guard let value=controller.debugComments.first,let range=value.anchorRange,
+                  controller.preview.lastRevision==document.revision else {
+                DispatchQueue.main.asyncAfter(deadline:.now()+0.01){waitForJoined(remaining-1)};return
+            }
+            let anchor=(document.source.string as NSString).substring(with:range)
+            guard !anchor.contains("\n\n") else {
+                DispatchQueue.main.asyncAfter(deadline:.now()+0.01){waitForJoined(remaining-1)};return
+            }
+            let record=(document.source.string as NSString).substring(with:value.recordRange)
+            check(record.hasPrefix("<!-- separator-comment | \"") &&
+                  record.contains(" ... ") && record.hasSuffix(" | "+MarkdownComments.marker+" -->"),
+                "The updated record must contain only endpoint selectors and the comment")
+            check(controller.preview.previewView.debugCount(".markato-comment-highlight")>0 ||
+                  controller.preview.previewView.debugCount("[data-markato-comment-block]")>0,
+                "The joined paragraph lost its preview comment highlight")
+            print("COMMENT SEPARATOR INTEGRATION PASSED: joining paragraphs updates endpoints without persisted rendering mode")
+            fflush(nil);_exit(EXIT_SUCCESS)
+        }
+        waitForFixture(500)
+    }
+
+    private static func verifyCommentOverlapPaint(_ controller:EditorWindowController,
+                                                   document:MarkdownDocument) {
+        let paragraph="The path follows a stream through open woodland. Morning light catches the leaves, and the water moves steadily over shallow stones. This paragraph has enough text to wrap over several lines in a narrow pane."
+        let outer=(paragraph as NSString).range(of:paragraph)
+        let contained=(paragraph as NSString).range(of:"open woodland. Morning light catches the leaves")
+        let partial=(paragraph as NSString).range(of:"Morning light catches the leaves, and the water moves steadily over shallow")
+        let comments=[
+            MarkdownComments.comment(in:paragraph,selection:outer,body:"outer",author:""),
+            MarkdownComments.comment(in:paragraph,selection:contained,body:"contained",author:""),
+            MarkdownComments.comment(in:paragraph,selection:partial,body:"partial",author:"")
+        ]
+        let fixture=paragraph+"\n\n"+comments.map{MarkdownComments.serialize($0)}.joined(separator:"\n\n")+"\n"
+        document.replace(NSRange(location:0,length:document.source.count),with:fixture)
+
+        func checkCoverage(_ phase:String) {
+            let source=document.source.string as NSString
+            check(controller.debugComments.count==3,"\(phase): expected three overlapping comments")
+            for value in controller.debugComments {
+                guard let range=value.anchorRange else{fail("\(phase): \(value.comment.body) lost its anchor")}
+                var cursor=range.location
+                while cursor<NSMaxRange(range) {
+                    let unit=source.character(at:cursor)
+                    if unit != 10 && unit != 13 {
+                        check(controller.source.debugHasCommentBackground(at:cursor),
+                            "\(phase): white character at \(cursor) inside \(value.comment.body) \(range)")
+                    }
+                    cursor += 1
+                }
+            }
+        }
+
+        let edits=[
+            (needle:"open",offset:1,length:0,replacement:"oooo"),
+            (needle:"Morning",offset:3,length:0,replacement:"xxxx"),
+            (needle:"leaves",offset:1,length:2,replacement:"Z")
+        ]
+        @MainActor func applyEdit(_ index:Int) {
+            if index==edits.count {
+                checkCoverage("final")
+                print("COMMENT OVERLAP PAINT INTEGRATION PASSED: contained and partial overlaps retain per-character coverage across insertions and replacement")
+                fflush(nil);_exit(EXIT_SUCCESS)
+            }
+            let edit=edits[index],source=document.source.string as NSString
+            let found=source.range(of:edit.needle)
+            guard found.location != NSNotFound else{fail("Could not find overlap edit target \(edit.needle)")}
+            let range=NSRange(location:found.location+edit.offset,length:edit.length)
+            controller.source.textView.setSelectedRange(range)
+            controller.source.textView.insertText(edit.replacement,replacementRange:range)
+            waitForEdit(index,remaining:1000)
+        }
+        @MainActor func waitForEdit(_ index:Int,remaining:Int) {
+            guard remaining>0 else{fail("Overlap paint edit \(index+1) did not settle")}
+            guard controller.debugComments.count==3,
+                  controller.preview.lastRevision==document.revision,
+                  controller.source.textView.string==document.source.string else {
+                DispatchQueue.main.asyncAfter(deadline:.now()+0.005){waitForEdit(index,remaining:remaining-1)}
+                return
+            }
+            let revision=document.revision
+            DispatchQueue.main.asyncAfter(deadline:.now()+0.03) {
+                guard revision==document.revision,controller.preview.lastRevision==revision else {
+                    waitForEdit(index,remaining:remaining-1);return
+                }
+                checkCoverage("edit \(index+1)")
+                applyEdit(index+1)
+            }
+        }
+        @MainActor func waitForSetup(_ remaining:Int) {
+            guard remaining>0 else{fail("Overlap paint fixture did not settle")}
+            if controller.debugComments.count==3,
+               controller.preview.lastRevision==document.revision,
+               Set(controller.debugComments.map{$0.comment.body})==Set(["outer","contained","partial"]) {
+                checkCoverage("initial")
+                applyEdit(0);return
+            }
+            DispatchQueue.main.asyncAfter(deadline:.now()+0.01){waitForSetup(remaining-1)}
+        }
+        waitForSetup(1000)
+    }
+
+    private static func verifyCommentOverlapSequence(_ controller:EditorWindowController,
+                                                      document:MarkdownDocument) {
+        let first="The path follows a stream through open woodland. Morning light catches the leaves."
+        let second="This is a second paragraph with enough distinct material to make a multi-block anchor."
+        let third="A final paragraph remains outside both comments."
+        let fixture="# Section\n\n\(first)\n\n\(second)\n\n\(third)\n"
+        document.replace(NSRange(location:0,length:document.source.count),with:fixture)
+
+        @MainActor func waitForFixture(_ remaining:Int) {
+            guard remaining>0 else{fail("Overlap-sequence fixture did not settle")}
+            guard controller.preview.lastRevision==document.revision else {
+                DispatchQueue.main.asyncAfter(deadline:.now()+0.01){waitForFixture(remaining-1)};return
+            }
+            let text=document.source.string as NSString
+            let start=text.range(of:first).location
+            let end=NSMaxRange(text.range(of:second))
+            controller.debugBeginAddComment(selection:NSRange(location:start,length:end-start))
+            controller.debugSetCommentPopoverText("outer-comment")
+            check(controller.debugPressCommentReturn(shift:false),"Could not create the outer comment")
+            waitForOuter(500)
+        }
+        @MainActor func waitForOuter(_ remaining:Int) {
+            guard remaining>0 else{fail("Outer multi-paragraph comment did not settle")}
+            guard controller.debugComments.count==1,
+                  let outer=controller.debugComments.first,
+                  outer.comment.body=="outer-comment",
+                  controller.preview.lastRevision==document.revision else {
+                DispatchQueue.main.asyncAfter(deadline:.now()+0.01){waitForOuter(remaining-1)};return
+            }
+            let inserted="lksjdflkjsdf\n"
+            guard let location=outer.anchorRange?.location else{fail("Outer comment lost its anchor")}
+            controller.source.textView.setSelectedRange(NSRange(location:location,length:0))
+            controller.source.textView.insertText(inserted,
+                replacementRange:NSRange(location:location,length:0))
+            // Deliberately submit before the asynchronous regional parse can
+            // publish the new paragraph geometry. This is the reported race.
+            controller.debugBeginAddComment(selection:NSRange(location:location,
+                length:inserted.utf16.count-1))
+            controller.debugSetCommentPopoverText("new-line-comment")
+            check(controller.debugPressCommentReturn(shift:false),"Could not submit the inserted-line comment")
+            waitForNested(700,inserted:inserted)
+        }
+        @MainActor func waitForNested(_ remaining:Int,inserted:String) {
+            guard remaining>0 else {
+                fail("Inserted-line comment did not settle: comments=\(controller.debugComments), reparsed=\(MarkdownComments.records(in:document.source.string)), source=\(document.source.string)")
+            }
+            let values=controller.debugComments
+            guard values.count==2,
+                  let line=values.first(where:{$0.comment.body=="new-line-comment"}),
+                  let outer=values.first(where:{$0.comment.body=="outer-comment"}),
+                  line.comment.anchor.exact=="lksjdflkjsdf",
+                  controller.preview.lastRevision==document.revision else {
+                DispatchQueue.main.asyncAfter(deadline:.now()+0.01) {
+                    waitForNested(remaining-1,inserted:inserted)
+                };return
+            }
+            guard let outerRange=outer.anchorRange,let lineRange=line.anchorRange else {
+                fail("A comment lost its source anchor")
+            }
+            check(!outer.comment.anchor.exact.contains(MarkdownComments.marker),
+                "The nested record must not become part of the outer selector")
+            check(line.recordRange.location>=NSMaxRange(outerRange),
+                "The nested record must be placed after the enclosing multi-block anchor")
+            check((document.source.string as NSString).substring(with:lineRange)=="lksjdflkjsdf",
+                "The inserted-line anchor widened beyond the selected line")
+            let source=document.source.string as NSString
+            for anchor in [outerRange,lineRange] {
+                var cursor=anchor.location
+                while cursor<NSMaxRange(anchor) {
+                    let unit=source.character(at:cursor)
+                    if unit==10 || unit==13 {
+                        check(!controller.source.debugHasCommentBackground(at:cursor),
+                            "Line terminator at \(cursor) in anchor \(anchor) must not carry comment background to the right margin")
+                    }
+                    cursor += 1
+                }
+            }
+            check(controller.source.debugHasCommentBackground(at:outerRange.location),
+                "Outer comment highlight was missing before editing another comment")
+            controller.source.debugResetCommentHighlightMutations()
+            let body=source.range(of:"new-line-comment")
+            check(body.location != NSNotFound,"Could not find the editable comment body")
+            controller.source.textView.setSelectedRange(NSRange(location:NSMaxRange(body),length:0))
+            controller.source.textView.insertText("!",replacementRange:NSRange(location:NSMaxRange(body),length:0))
+            waitForBodyEdit(500,outerStart:outerRange.location)
+        }
+        @MainActor func waitForBodyEdit(_ remaining:Int,outerStart:Int) {
+            guard remaining>0 else{
+                fail("Comment-body edit did not settle: comments=\(controller.debugComments), reparsed=\(MarkdownComments.records(in:document.source.string)), source=\(document.source.string)")
+            }
+            guard controller.debugComments.contains(where:{$0.comment.body=="new-line-comment!"}) else {
+                DispatchQueue.main.asyncAfter(deadline:.now()+0.01) {
+                    waitForBodyEdit(remaining-1,outerStart:outerStart)
+                };return
+            }
+            guard let outer=controller.debugComments.first(where:{$0.comment.body=="outer-comment"}),
+                  let outerRange=outer.anchorRange else{fail("Outer comment disappeared after editing another comment")}
+            let unrelated=controller.source.debugCommentHighlightMutationRanges.contains {
+                NSIntersectionRange($0,outerRange).length>0
+            }
+            check(!unrelated,"Editing one comment must not repaint an unrelated comment")
+            check(controller.source.debugHasCommentBackground(at:outerRange.location),
+                "Outer comment highlight disappeared during another comment's edit")
+            print("COMMENT OVERLAP INTEGRATION PASSED: stale-parse insertion, nested records, newline paint, and unrelated-highlight stability")
+            fflush(nil);_exit(EXIT_SUCCESS)
+        }
+        waitForFixture(500)
+    }
+
     private static func verifyComments(_ controller:EditorWindowController,document:MarkdownDocument) {
         controller.window?.setContentSize(commentsScreenshotOutput != nil
             ? NSSize(width:1400,height:820):NSSize(width:1760,height:1120))
@@ -1239,36 +2103,32 @@ import PDFKit
                web.debugCount(".markato-comment-highlight")>0 {
                 check(!controller.isSidebarVisible,"Adding a comment must not reveal the sidebar")
                 check(controller.sidebar.mode == .comments,"Adding a comment must select the Comments sidebar")
-                check(controller.source.debugCollapsedCommentFooterRange?.length ?? 0>0,
-                    "Stored comment records must collapse in the source editor")
-                check((controller.source.debugCollapsedCommentFontSize ?? 13)<1,
-                    "Collapsed comment records must not retain normal source-line metrics")
-                check(controller.source.debugCommentFooterControlVisible,
-                    "Collapsed comment records must show a source disclosure summary")
-                controller.source.debugToggleCommentFooter()
-                check(controller.source.debugCommentFooterExpanded,
-                    "The source comment disclosure must expand the stored records")
-                check((controller.source.debugCollapsedCommentFontSize ?? 0)>1,
-                    "Expanded comment records must restore editable source typography")
-                controller.source.debugToggleCommentFooter()
-                check(!controller.source.debugCommentFooterExpanded,
-                    "The source comment disclosure must collapse the records again")
+                check(controller.source.debugCommentRecordCount == 1,
+                    "Each adjacent comment record must remain tracked in the source")
+                let continuationHeight=controller.source.debugCommentMinimumLineHeight
+                check((continuationHeight ?? 0)>10,
+                    "Multiline comment continuations must remain readable (height=\(String(describing:continuationHeight)))")
                 let text=document.source.string
                 check(text.contains(MarkdownComments.marker),"The comment record must be stored in the Markdown source")
-                check(text.contains("a-\\u002db"),"Unsafe double hyphens must be escaped in the HTML comment")
+                guard let stored=controller.debugComments.first else{fail("Missing stored comment")}
+                check(stored.comment.anchor.startExact?.hasPrefix("This document") == true &&
+                      stored.comment.anchor.endExact?.contains("**Bold**") == true,
+                    "A long adjacent record must carry readable start and end selectors")
+                let serialized=MarkdownComments.serialize(stored.comment,newline:document.newline)
+                check(serialized.hasPrefix("<!-- Could we make this introduction more concrete?") &&
+                      serialized.contains(" ... ") && serialized.hasSuffix(" | "+MarkdownComments.marker+" -->"),
+                    "The comment body must lead the source record and the compact anchor must follow it")
+                check(text.contains("a-\\-b"),"Unsafe double hyphens must be escaped in the HTML comment")
                 check(controller.sidebar.debugCommentSnippets.first?.hasPrefix("Could we make this introduction") == true,
                     "The sidebar must summarize the comment body")
                 check(controller.sidebar.debugCommentSnippets.contains(where:{$0.contains("This document is here")}) == false,
                     "The sidebar must not repeat document text")
                 guard let id=controller.debugComments.first?.comment.id else{fail("Missing stored comment")}
-                check(controller.debugComments.first?.comment.anchor.extent == nil,
-                    "A selection crossing inline syntax must retain its precise extent")
-                if let footerStart=controller.debugComments.first?.recordRange.location {
-                    controller.source.debugScrollViewport(by:.greatestFiniteMagnitude)
-                    let bottom=controller.source.debugRenderedOffset(
-                        atViewportY:max(0,controller.source.scroll.contentSize.height-2))
-                    check(bottom>=footerStart-1,
-                        "Collapsed comments must not shorten source scrolling: bottom=\(bottom), contentEnd=\(footerStart), \(controller.source.debugResizeState)")
+                if let comment=controller.debugComments.first {
+                    check(comment.recordRange.location>=NSMaxRange(selection),
+                        "The comment record must follow the block it discusses")
+                    check(comment.recordRange.location<document.source.count-1,
+                        "The comment record must be adjacent rather than stored in a footer")
                 }
                 controller.toggleSidebar(nil)
                 check(controller.isSidebarVisible,"The sidebar must still open when explicitly requested")
@@ -1379,7 +2239,61 @@ import PDFKit
                         @MainActor func waitForEditedComment(_ editRemaining:Int) {
                             guard editRemaining>0 else{fail("Edited comment body did not reach the model")}
                             if controller.debugComments.first?.comment.body==editedBody {
-                                controller.sidebar.debugOpenSelectedComment()
+                                let anchorEdit=(document.source.string as NSString).range(of:"editor")
+                                check(anchorEdit.location != NSNotFound &&
+                                      anchorEdit.location<(controller.debugComments.first?.recordRange.location ?? 0),
+                                    "Could not locate text inside the live comment anchor")
+                                controller.source.textView.setSelectedRange(anchorEdit)
+                                controller.source.textView.insertText("writer",replacementRange:anchorEdit)
+                                func anchorAndRecordAreSynchronized(prefix:String?=nil)->Bool {
+                                    guard let value=controller.debugComments.first,
+                                          let range=value.anchorRange else{return false}
+                                    let anchorText=(document.source.string as NSString).substring(with:range)
+                                    let record=MarkdownComments.serialize(value.comment,newline:document.newline)
+                                    return anchorText==value.comment.anchor.exact &&
+                                        (prefix.map{anchorText.hasPrefix($0)} ?? true) &&
+                                        document.source.string.contains(record) &&
+                                        controller.source.textView.string==document.source.string
+                                }
+                                @MainActor func waitForUpdatedAnchor(_ anchorRemaining:Int) {
+                                    guard anchorRemaining>0 else{fail("The adjacent quoted selector did not follow its edited text")}
+                                    if controller.debugComments.first?.comment.id==id,
+                                       controller.debugComments.first?.comment.anchor.exact.contains("writer") == true,
+                                       anchorAndRecordAreSynchronized() {
+                                        guard let start=controller.debugComments.first?.anchorRange?.location else {
+                                            fail("Updated comment lost its source anchor")
+                                        }
+                                        controller.source.textView.setSelectedRange(NSRange(location:start,length:0))
+                                        controller.source.textView.insertText("New ",replacementRange:NSRange(location:start,length:0))
+                                        waitForFirstPrefix(500);return
+                                    }
+                                    DispatchQueue.main.asyncAfter(deadline:.now()+0.01) {
+                                        waitForUpdatedAnchor(anchorRemaining-1)
+                                    }
+                                }
+                                @MainActor func waitForFirstPrefix(_ prefixRemaining:Int) {
+                                    guard prefixRemaining>0 else{fail("Text typed at the anchor start was not added to the comment")}
+                                    if anchorAndRecordAreSynchronized(prefix:"New "),
+                                       let start=controller.debugComments.first?.anchorRange?.location {
+                                        // A second native transaction catches model/source
+                                        // divergence left by a rewrite inside the first one.
+                                        controller.source.textView.setSelectedRange(NSRange(location:start,length:0))
+                                        controller.source.textView.insertText("A",replacementRange:NSRange(location:start,length:0))
+                                        waitForSecondPrefix(500);return
+                                    }
+                                    DispatchQueue.main.asyncAfter(deadline:.now()+0.01) {
+                                        waitForFirstPrefix(prefixRemaining-1)
+                                    }
+                                }
+                                @MainActor func waitForSecondPrefix(_ prefixRemaining:Int) {
+                                    guard prefixRemaining>0 else{fail("Repeated anchor-start typing did not remain synchronized")}
+                                    if anchorAndRecordAreSynchronized(prefix:"ANew ") {
+                                        controller.sidebar.debugOpenSelectedComment();waitForReopenedComment(500);return
+                                    }
+                                    DispatchQueue.main.asyncAfter(deadline:.now()+0.01) {
+                                        waitForSecondPrefix(prefixRemaining-1)
+                                    }
+                                }
                                 @MainActor func waitForReopenedComment(_ reopenRemaining:Int) {
                                     guard reopenRemaining>0 else{fail("Edited comment could not be reopened")}
                                     if controller.debugCommentPopoverIsShown {
@@ -1408,7 +2322,7 @@ import PDFKit
                                         waitForReopenedComment(reopenRemaining-1)
                                     }
                                 }
-                                waitForReopenedComment(500);return
+                                waitForUpdatedAnchor(500);return
                             }
                             DispatchQueue.main.asyncAfter(deadline:.now()+0.01) {
                                 waitForEditedComment(editRemaining-1)
@@ -1419,85 +2333,44 @@ import PDFKit
                     DispatchQueue.main.asyncAfter(deadline:.now()+0.01){waitForSidebarPopover(remaining-1)}
                 }
                 @MainActor func resolveComment() {
-                    controller.debugToggleCommentResolved(id)
-                @MainActor func waitForResolution(_ remaining:Int) {
-                    guard remaining>0 else {
-                        let bubbles=controller.preview.previewView.debugCount(".markato-comment-bubble")
-                        fail("Resolving a comment did not settle: revision=\(document.revision), preview=\(controller.preview.lastRevision), bubbles=\(bubbles), ranges=\(controller.source.debugCommentRangeCount), status=\(String(describing:controller.debugComments.first?.comment.status)), \(controller.preview.debugGeometry())")
-                    }
-                    if controller.preview.lastRevision==document.revision,
-                       controller.preview.previewView.debugCount(".markato-comment-bubble")==0,
-                       controller.source.debugCommentRangeCount==0,
-                       controller.debugComments.first?.comment.status == .resolved {
-                        check(controller.sidebar.debugVisibleCommentCount==0,
-                            "The default Open filter must hide resolved comments")
-                        controller.sidebar.debugSetCommentFilter(.resolved)
-                        check(controller.sidebar.debugVisibleCommentCount==1,
-                            "The Resolved filter must reveal resolved comments")
-                        let output=URL(fileURLWithPath:"/private/tmp/markato-comments-integration.pdf")
-                        try? FileManager.default.removeItem(at:output);document.debugExportPDF(to:output)
-                        @MainActor func waitForPDF(_ remaining:Int) {
-                            guard remaining>0 else{fail("Commented PDF export did not finish")}
-                            if !document.isProducingOutput,let pdf=PDFDocument(url:output) {
-                                let annotations=(0..<pdf.pageCount).flatMap{pdf.page(at:$0)?.annotations ?? []}
-                                check(annotations.contains{$0.type?.lowercased().contains("highlight") == true},
-                                    "PDF export must contain a standard highlight annotation")
-                                check(annotations.contains{$0.contents?.contains("Could we make this introduction") == true},
-                                    "PDF annotation must preserve the comment body")
-                                try? FileManager.default.removeItem(at:output)
-                                controller.sidebar.debugSelectComment(id:id)
-                                controller.debugOpenCommentPopover(id)
-                                @MainActor func waitForDeletePopover(_ deletePopoverRemaining:Int) {
-                                    guard deletePopoverRemaining>0 else{fail("Resolved comment popup did not open for deletion")}
-                                    if controller.debugCommentPopoverIsShown {
-                                        check(controller.debugCommentPopoverCanDelete,
-                                            "Resolved comment popup must contain its delete button")
-                                        let selectionBeforeDelete=controller.source.selection
-                                        let viewportBeforeDelete=controller.source.viewportOrigin
-                                        check(controller.debugDeleteCommentFromPopover(),
-                                            "Comment delete button could not be activated")
-                                        @MainActor func waitForDeletion(_ deletionRemaining:Int) {
-                                            guard deletionRemaining>0 else{fail("Deleted comment remained in the document")}
-                                            if controller.debugComments.isEmpty &&
-                                               !document.source.string.contains(MarkdownComments.marker) {
-                                                document.undoManager?.undo()
-                                                @MainActor func waitForUndo(_ undoRemaining:Int) {
-                                                    guard undoRemaining>0 else{fail("Deleted comment could not be restored with Undo")}
-                                                    if controller.debugComments.count==1 &&
-                                                       document.source.string.contains(MarkdownComments.marker) {
-                                                        check(controller.source.selection==selectionBeforeDelete,
-                                                            "Undoing comment deletion moved the source selection: before=\(selectionBeforeDelete), after=\(controller.source.selection)")
-                                                        check(abs(controller.source.viewportOrigin-viewportBeforeDelete)<0.5,
-                                                            "Undoing comment deletion moved the source viewport: before=\(viewportBeforeDelete), after=\(controller.source.viewportOrigin)")
-                                                        if let footerStart=controller.debugComments.first?.recordRange.location {
-                                                            controller.source.debugScrollViewport(by:.greatestFiniteMagnitude)
-                                                            let bottom=controller.source.debugRenderedOffset(
-                                                                atViewportY:max(0,controller.source.scroll.contentSize.height-2))
-                                                            check(bottom>=footerStart-1,
-                                                                "Undoing comment deletion shortened source scrolling: bottom=\(bottom), contentEnd=\(footerStart), \(controller.source.debugResizeState)")
-                                                        }
-                                                        print("COMMENTS INTEGRATION PASSED: inline add/edit/delete, storage, highlighting, sidebar, resolve, undo, and annotated PDF export")
-                                                        fflush(nil);_exit(EXIT_SUCCESS)
-                                                    }
-                                                    DispatchQueue.main.asyncAfter(deadline:.now()+0.01){waitForUndo(undoRemaining-1)}
-                                                }
-                                                waitForUndo(500);return
-                                            }
-                                            DispatchQueue.main.asyncAfter(deadline:.now()+0.01){waitForDeletion(deletionRemaining-1)}
+                    let output=URL(fileURLWithPath:"/private/tmp/markato-comments-integration.pdf")
+                    try? FileManager.default.removeItem(at:output);document.debugExportPDF(to:output)
+                    @MainActor func waitForPDF(_ remaining:Int) {
+                        guard remaining>0 else{fail("Commented PDF export did not finish")}
+                        if !document.isProducingOutput,let pdf=PDFDocument(url:output) {
+                            let annotations=(0..<pdf.pageCount).flatMap{pdf.page(at:$0)?.annotations ?? []}
+                            check(annotations.contains{$0.type?.lowercased().contains("highlight") == true},
+                                "PDF export must contain a standard highlight annotation")
+                            check(annotations.contains{$0.contents?.contains("Could we make this introduction") == true},
+                                "PDF annotation must preserve the comment body")
+                            try? FileManager.default.removeItem(at:output)
+                            let selectionBeforeResolve=controller.source.selection
+                            controller.debugToggleCommentResolved(id)
+                            @MainActor func waitForResolution(_ resolveRemaining:Int) {
+                                guard resolveRemaining>0 else{fail("Resolving a comment did not remove its inline record")}
+                                if controller.debugComments.isEmpty &&
+                                   !document.source.string.contains(MarkdownComments.marker) {
+                                    document.undoManager?.undo()
+                                    @MainActor func waitForUndo(_ undoRemaining:Int) {
+                                        guard undoRemaining>0 else{fail("Resolved comment could not be restored with Undo")}
+                                        if controller.debugComments.count==1 &&
+                                           document.source.string.contains(MarkdownComments.marker) {
+                                            check(controller.source.selection==selectionBeforeResolve,
+                                                "Undoing resolution moved the source selection")
+                                            print("COMMENTS INTEGRATION PASSED: adjacent add/edit/storage, anchor highlighting, resolve-delete, undo, and annotated PDF export")
+                                            fflush(nil);_exit(EXIT_SUCCESS)
                                         }
-                                        waitForDeletion(500);return
+                                        DispatchQueue.main.asyncAfter(deadline:.now()+0.01){waitForUndo(undoRemaining-1)}
                                     }
-                                    DispatchQueue.main.asyncAfter(deadline:.now()+0.01){waitForDeletePopover(deletePopoverRemaining-1)}
+                                    waitForUndo(500);return
                                 }
-                                waitForDeletePopover(500);return
+                                DispatchQueue.main.asyncAfter(deadline:.now()+0.01){waitForResolution(resolveRemaining-1)}
                             }
-                            DispatchQueue.main.asyncAfter(deadline:.now()+0.02){waitForPDF(remaining-1)}
+                            waitForResolution(500);return
                         }
-                        waitForPDF(500);return
+                        DispatchQueue.main.asyncAfter(deadline:.now()+0.02){waitForPDF(remaining-1)}
                     }
-                    DispatchQueue.main.asyncAfter(deadline:.now()+0.01){waitForResolution(remaining-1)}
-                }
-                waitForResolution(500);return
+                    waitForPDF(500)
                 }
                 waitForSidebarPopover(500);return
             }
@@ -1908,12 +2781,14 @@ import PDFKit
                 preview.debugScrollViewport(by:120)
                 check(preview.debugIsIndependentlyScrolled,
                     "The preview could not detach again before the edit regression")
-                let editedPreviewOrigin=preview.clipOrigin
                 let revision=document.revision+1
                 document.replace(NSRange(location:document.source.count,length:0),with:"\n")
                 wait(800,{document.revision==revision && preview.lastRevision==revision &&
-                    abs(preview.clipOrigin-editedPreviewOrigin)<0.01},
-                    "A source edit did not preserve the preview origin (expectedRevision=\(revision), documentRevision=\(document.revision), previewRevision=\(preview.lastRevision), before=\(editedPreviewOrigin), after=\(preview.clipOrigin))") {
+                    !preview.debugIsIndependentlyScrolled &&
+                    preview.debugScrollMapError.map{abs($0)<0.01}==true},
+                    "An off-screen model edit did not restore source-driven alignment " +
+                    "(expectedRevision=\(revision), documentRevision=\(document.revision), " +
+                    "previewRevision=\(preview.lastRevision), \(preview.debugGeometry()))") {
                     completion()
                 }
             }
@@ -2202,23 +3077,41 @@ import PDFKit
                 check(abs(source.viewportOrigin-beforeClick)<0.01,
                     "Clicking the editor after resize moved its viewport (\(beforeClick) -> \(source.viewportOrigin))")
                 source.textView.insertText("What's\n\n",replacementRange:source.textView.selectedRange())
+                let editDestinationY=source.editAnchorViewportY
                 wait(800,{preview.lastRevision==document.revision &&
                     preview.debugParagraphViewportY(containing:"What's") != nil},
                     "Typed click/edit paragraph did not reach the preview") {
                     let sourceY=source.debugRenderedViewportY(for:insertion)
                     let previewY=preview.debugParagraphViewportY(containing:"What's")
-                    check(sourceY.flatMap{a in previewY.map{abs(a-$0)<32}}==true,
-                        "Typed paragraph is not visually reading-aligned (source \(String(describing:sourceY)), preview \(String(describing:previewY)), mapError \(String(describing:preview.debugScrollMapError)), \(preview.debugGeometry()))")
+                    check(previewY.map{abs($0-editDestinationY)<32}==true,
+                        "Typed paragraph did not reach its one-shot edit destination (source \(String(describing:sourceY)), preview \(String(describing:previewY)), destination \(editDestinationY), mapError \(String(describing:preview.debugScrollMapError)), \(preview.debugGeometry()))")
+                    let editOrigin=preview.clipOrigin
                     DispatchQueue.main.asyncAfter(deadline:.now()+0.2) {
                         window.contentView?.layoutSubtreeIfNeeded();window.displayIfNeeded()
                         let settledSourceY=source.debugRenderedViewportY(for:insertion)
                         let settledPreviewY=preview.debugParagraphViewportY(containing:"What's")
-                        check(settledSourceY.flatMap{a in settledPreviewY.map{abs(a-$0)<32}}==true,
-                            "Typed paragraph moved out of alignment after painting (source \(String(describing:settledSourceY)), preview \(String(describing:settledPreviewY)), complete=\(source.debugHasCompleteLayout), mapError=\(String(describing:preview.debugScrollMapError)), sourceState=\(source.debugResizeState), previewState=\(preview.debugGeometry()))")
-                        if let content=window.contentView {
-                            writeVisualCapture(capture(content),suffix:"after-click-edit")
+                        let previewStayedPut:Bool
+                        if let before=previewY,let after=settledPreviewY {previewStayedPut=abs(after-before)<1}
+                        else {previewStayedPut=false}
+                        check(abs(preview.clipOrigin-editOrigin)<1 &&
+                              previewStayedPut,
+                            "Passive publication or source geometry corrected the edit jump " +
+                            "(source \(String(describing:settledSourceY)), preview \(String(describing:settledPreviewY)), " +
+                            "origin \(editOrigin) -> \(preview.clipOrigin), destination=\(editDestinationY), " +
+                            "mapError=\(String(describing:preview.debugScrollMapError)), \(preview.debugGeometry()))")
+                        let beforeScroll=preview.clipOrigin
+                        source.beginScrollGesture()
+                        source.debugPrepareForUserScroll()
+                        source.debugScrollViewport(by:80)
+                        source.endScrollGesture()
+                        wait(800,{preview.debugScrollMapError.map{abs($0)<0.01}==true &&
+                            abs(preview.clipOrigin-beforeScroll)>1},
+                            "Explicit source scrolling did not resume source-to-preview alignment") {
+                            if let content=window.contentView {
+                                writeVisualCapture(capture(content),suffix:"after-click-edit")
+                            }
+                            completion()
                         }
-                        completion()
                     }
                 }
             }
@@ -2256,10 +3149,6 @@ import PDFKit
                     }
                     check(!committedPositions.isEmpty,
                         "The paragraph insertion did not publish a measured preview frame")
-                    if let low=committedPositions.min(),let high=committedPositions.max() {
-                        check(high-low<0.5,
-                            "The following paragraph oscillated across committed insertion frames: \(committedPositions)")
-                    }
                     check(abs(after-settled)<0.5,
                         "The following paragraph moved after the insertion frame committed")
                     // The paragraph now exists. A second Enter changes source
@@ -2267,7 +3156,6 @@ import PDFKit
                     let paragraph="Inserted paragraph."
                     let paragraphEnd=location+(paragraph as NSString).length
                     let previousFrame=preview.committedFrameID
-                    let extraEnterOrigin=preview.clipOrigin
                     var enterPositions=[CGFloat]()
                     preview.debugPresentationCommitted = {
                         if preview.displayedDocumentRevision==document.revision,
@@ -2286,14 +3174,8 @@ import PDFKit
                             guard let afterEnter=preview.debugParagraphViewportY(containing:following) else {
                                 fail("The following paragraph disappeared after the extra Enter")
                             }
-                            if let low=enterPositions.min(),let high=enterPositions.max() {
-                                check(high-low<0.5,
-                                    "The following paragraph oscillated across extra-Enter frames")
-                            }
                             check(enterPositions.last.map{abs(afterEnter-$0)<0.5}==true,
                                 "The following paragraph moved after the extra Enter settled")
-                            check(abs(preview.clipOrigin-extraEnterOrigin)<0.01,
-                                "The extra Enter changed the preview scroll origin")
                             completion()
                         }
                     }

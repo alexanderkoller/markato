@@ -110,12 +110,19 @@ final class SourceTextView:NSTextView {
     override func moveToBeginningOfDocument(_ sender:Any?) {owner?.reveal(0)}
     override func moveToEndOfDocument(_ sender:Any?) {if let owner {owner.reveal(owner.document.source.count)}}
     override func keyDown(with event:NSEvent) {
+        let previousRevision=owner?.document.revision
+        let previousSelection=selectedRange()
+        let previousOrigin=owner?.viewportOrigin
         owner?.prepareForUserInteraction()
         if event.modifierFlags.contains(.command),!event.modifierFlags.contains(.shift) {
             if event.keyCode==125,let owner {owner.reveal(owner.document.source.count);return}
             if event.keyCode==126 {owner?.reveal(0);return}
         }
         super.keyDown(with:event)
+        if let owner,let previousRevision,let previousOrigin {
+            owner.finishCursorMovement(fromRevision:previousRevision,
+                selection:previousSelection,viewportOrigin:previousOrigin)
+        }
     }
 }
 
@@ -135,7 +142,6 @@ final class SourceEditor:NSView,NSTextViewDelegate,NSTextStorageDelegate,ScrollS
     let scroll:NSScrollView=SourceScrollView()
     let canvas=FlippedView()
     let textView=SourceTextView(usingTextLayoutManager:false)
-    private let commentFooterButton=NSButton()
     unowned let document:MarkdownDocument
     private let prepared:PreparedDocument
     private var dirtyRange:NSRange?=NSRange(location:0,length:0)
@@ -146,9 +152,13 @@ final class SourceEditor:NSView,NSTextViewDelegate,NSTextStorageDelegate,ScrollS
     var scrollOverflow:((NSEvent)->Bool)?
     var navigationRequested:((Int)->Void)?
     var sourceClicked:(()->Void)?
+    var sourceNavigationIntent:(()->Void)?
     private(set) var isScrolling=false
     private(set) var geometryRevision=0
     private var changingLayout=false,localEdit=false
+    private var proposedNativeEdit:(range:NSRange,replacement:String)?
+    private var pendingEditViewport:(offset:Int,displacement:CGFloat,origin:CGFloat)?
+    private var latestEditAnchor=0
     private var nativeLayoutRevision:Int?
     private var layoutCompletionScheduled=false
     private var layoutCompletionPaused=false
@@ -160,9 +170,7 @@ final class SourceEditor:NSView,NSTextViewDelegate,NSTextStorageDelegate,ScrollS
     private var commentRanges=[NSRange]()
     private var paintedCommentRanges=[NSRange]()
     private var selectedCommentRange:NSRange?
-    private var collapsedCommentFooter:NSRange?
-    private var commentFooterExpanded=false
-    private var commentRecordCount=0
+    private var commentRecordRanges=[NSRange]()
     private var highlightRevision = -1
     private var deferredHighlights=[(Int,[SyntaxSpan],NSRange)]()
     private var loadedRevision = -1
@@ -171,6 +179,7 @@ final class SourceEditor:NSView,NSTextViewDelegate,NSTextStorageDelegate,ScrollS
         let range:NSRange,rect:NSRect
     }
     #if DEBUG
+    private var debugCommentHighlightMutations=[NSRange]()
     var debugHasCompleteLayout:Bool {prepared.sourceLayout.firstEstimatedRange() == nil}
     var debugHasPendingNavigation:Bool {pendingNavigation != nil}
     func debugSetLayoutCompletionPaused(_ paused:Bool) {
@@ -179,15 +188,26 @@ final class SourceEditor:NSView,NSTextViewDelegate,NSTextStorageDelegate,ScrollS
     }
     var debugCommentRangeCount:Int {commentRanges.count}
     var debugHasSelectedCommentRange:Bool {selectedCommentRange != nil}
-    var debugCollapsedCommentFooterRange:NSRange? {collapsedCommentFooter}
-    var debugCollapsedCommentFontSize:CGFloat? {
-        guard let range=collapsedCommentFooter,range.length>0,range.location<textView.textStorage!.length else{return nil}
-        let location=min(NSMaxRange(range)-1,range.location+1)
-        return (textView.textStorage!.attribute(.font,at:location,effectiveRange:nil) as? NSFont)?.pointSize
+    func debugHasCommentBackground(at location:Int)->Bool {
+        guard location>=0,location<textView.string.utf16.count else{return false}
+        return textView.layoutManager?.temporaryAttribute(.backgroundColor,
+            atCharacterIndex:location,effectiveRange:nil) != nil
     }
-    var debugCommentFooterControlVisible:Bool {!commentFooterButton.isHidden}
-    var debugCommentFooterExpanded:Bool {commentFooterExpanded}
-    func debugToggleCommentFooter() {toggleCommentFooter(nil)}
+    func debugResetCommentHighlightMutations() {debugCommentHighlightMutations.removeAll()}
+    var debugCommentHighlightMutationRanges:[NSRange] {debugCommentHighlightMutations}
+    var debugCommentRecordCount:Int {commentRecordRanges.count}
+    var debugLastEditRelayout:String?
+    var debugCommentMinimumLineHeight:CGFloat? {
+        guard let record=commentRecordRanges.first else{return nil}
+        let manager=textView.layoutManager!
+        manager.ensureLayout(forCharacterRange:record)
+        let glyphs=manager.glyphRange(forCharacterRange:record,actualCharacterRange:nil)
+        var heights=[CGFloat](),isFirst=true
+        manager.enumerateLineFragments(forGlyphRange:glyphs) {_,used,_,_,_ in
+            if isFirst {isFirst=false}else{heights.append(used.height)}
+        }
+        return heights.min() ?? manager.defaultLineHeight(for:textView.font ?? .systemFont(ofSize:13))
+    }
     func debugBeginSourceClick() {sourceClicked?()}
     var debugResizeState:String {
         return "viewport=\(viewportOrigin), clipX=\(scroll.contentView.bounds.minX), textX=\(debugTextViewportX), resizeOrigin=\(String(describing:resizeSession?.sourceOrigin)), canvas=\(canvas.frame.height), visible=\(scroll.contentSize.height), measuredWidth=\(measuredWidth), frame=\(frame.size), scrollFrame=\(scroll.frame.size)"
@@ -216,6 +236,12 @@ final class SourceEditor:NSView,NSTextViewDelegate,NSTextStorageDelegate,ScrollS
     var selection:NSRange {textView.selectedRange()}
     var documentRange:NSRange {NSRange(location:0,length:document.source.count)}
     var viewportAnchor:Int {renderedViewportAnchor}
+    var editAnchor:Int {latestEditAnchor}
+    var editAnchorViewportY:CGFloat {
+        (renderedVerticalPosition(for:latestEditAnchor) ??
+            (viewportOrigin+alignmentOffset))-viewportOrigin
+    }
+    var readingAnchorViewportY:CGFloat {alignmentOffset}
     var alignmentAnchor:Int {
         // The shared reading position may coincide exactly with the top of a
         // visual line. Sample just inside that line so TextKit cannot resolve
@@ -255,15 +281,10 @@ final class SourceEditor:NSView,NSTextViewDelegate,NSTextStorageDelegate,ScrollS
         scroll.contentView=SourceClipView()
         scroll.hasVerticalScroller=true;scroll.hasHorizontalScroller=false;scroll.autohidesScrollers=true
         let verticalScroller=SourceScroller()
-        verticalScroller.userWillScroll={ [weak self] in self?.prepareForUserInteraction() }
+        verticalScroller.userWillScroll={ [weak self] in self?.prepareForUserScroll() }
         scroll.verticalScroller=verticalScroller
         scroll.backgroundColor = .textBackgroundColor;scroll.documentView=canvas
-        addSubview(scroll);canvas.addSubview(textView);canvas.addSubview(commentFooterButton)
-        commentFooterButton.isHidden=true;commentFooterButton.bezelStyle = .inline
-        commentFooterButton.controlSize = .small;commentFooterButton.font=NSFont.systemFont(ofSize:12,weight:.semibold)
-        commentFooterButton.alignment = .left;commentFooterButton.target=self
-        commentFooterButton.action=#selector(toggleCommentFooter(_:))
-        commentFooterButton.setAccessibilityLabel("Expand comments in source")
+        addSubview(scroll);canvas.addSubview(textView)
         textView.owner=self;textView.delegate=self;textView.textStorage!.delegate=self
         textView.isRichText=false;textView.allowsUndo=false
         textView.isAutomaticQuoteSubstitutionEnabled=false;textView.isAutomaticDashSubstitutionEnabled=false
@@ -282,7 +303,7 @@ final class SourceEditor:NSView,NSTextViewDelegate,NSTextStorageDelegate,ScrollS
         scroll.contentView.postsBoundsChangedNotifications=true
         scroll.contentView.postsFrameChangedNotifications=true
         let sourceScroll=scroll as! SourceScrollView
-        sourceScroll.userWillScroll={ [weak self] in self?.prepareForUserInteraction() }
+        sourceScroll.userWillScroll={ [weak self] in self?.prepareForUserScroll() }
         sourceScroll.consumeScroll={ [weak self] event in self?.scrollOverflow?(event) ?? false }
         let center=NotificationCenter.default
         observations.append(center.addObserver(forName:NSView.boundsDidChangeNotification,object:scroll.contentView,queue:.main) { [weak self] _ in self?.clipBoundsDidChange() })
@@ -325,6 +346,20 @@ final class SourceEditor:NSView,NSTextViewDelegate,NSTextStorageDelegate,ScrollS
     }
     fileprivate func prepareForUserInteraction() {
         clearResizePin();pendingNavigation=nil;retainedNavigationPin=nil
+    }
+    private func prepareForUserScroll() {
+        prepareForUserInteraction()
+        // Explicit navigation supersedes a viewport restoration captured for
+        // an edit whose native layout has not finished yet. Letting that stale
+        // restoration run would pull the source back and make the synchronized
+        // preview appear to stutter in the opposite direction.
+        pendingEditViewport=nil
+        // AppKit's live-scroll notifications are lifecycle hints, not a
+        // reliable declaration of user intent: editing a reflowing comment
+        // record can leave a synthetic live-scroll interval open. Publish
+        // every explicit source interaction independently so it always takes
+        // ownership of the synchronized preview.
+        sourceNavigationIntent?()
     }
     func beginScrollGesture() {
         guard !isScrolling else{return}
@@ -404,7 +439,8 @@ final class SourceEditor:NSView,NSTextViewDelegate,NSTextStorageDelegate,ScrollS
         defer {TimingDiagnostics.shared.end(work,values:timingValues)}
         #endif
         let width=max(1,scroll.contentSize.width-32)
-        if abs(width-measuredWidth)>0.001 {
+        let widthChanged=abs(width-measuredWidth)>0.001
+        if widthChanged {
             if prepared.sourceLayout.hasEstimates(in:NSRange(location:0,length:prepared.sourceLayout.length)) {
                 seedEstimatedLayout(width:width)
                 let rope=document.source
@@ -485,7 +521,6 @@ final class SourceEditor:NSView,NSTextViewDelegate,NSTextStorageDelegate,ScrollS
     private func setCanvasSize(width:CGFloat,naturalHeight:CGFloat) {
         let pinnedBottom=resizeSession.flatMap{$0.protectsViewport ? $0.sourceOrigin+scroll.contentSize.height:nil} ?? 0
         canvas.frame.size=NSSize(width:width,height:max(naturalHeight,pinnedBottom))
-        updateCommentFooterControl()
     }
     func reload(preserving selection:NSRange) {
         guard !textView.hasMarkedText() else{return}
@@ -563,12 +598,18 @@ final class SourceEditor:NSView,NSTextViewDelegate,NSTextStorageDelegate,ScrollS
     }
     private var renderedViewportAnchor:Int {renderedOffset(atCanvasY:scroll.contentView.bounds.minY+3)}
     private func renderedVerticalPosition(for offset:Int)->CGFloat? {
-        if offset==document.source.count {return canvas.bounds.height}
-        guard document.source.count>0 else{return nil}
-        let character=min(max(0,offset),document.source.count-1)
+        let nativeLength=textView.textStorage?.length ?? 0
+        if offset==document.source.count,nativeLength==document.source.count {return canvas.bounds.height}
+        guard nativeLength>0 else{return nil}
+        let character=min(max(0,offset),nativeLength-1)
         guard let manager=textView.layoutManager else{return nil}
         manager.ensureLayout(forCharacterRange:NSRange(location:character,length:1))
         let glyph=manager.glyphIndexForCharacter(at:character)
+        guard glyph<manager.numberOfGlyphs else {
+            let local=NSPoint(x:textView.textContainerOrigin.x,
+                y:textView.textContainerOrigin.y+manager.extraLineFragmentRect.minY)
+            return textView.convert(local,to:canvas).y
+        }
         let line=manager.lineFragmentUsedRect(forGlyphAt:glyph,effectiveRange:nil)
         let local=NSPoint(x:textView.textContainerOrigin.x,y:textView.textContainerOrigin.y+line.minY)
         return textView.convert(local,to:canvas).y
@@ -669,6 +710,7 @@ final class SourceEditor:NSView,NSTextViewDelegate,NSTextStorageDelegate,ScrollS
     }
     func debugAlignViewport(at offset:Int,viewportY:CGFloat) {
         clearResizePin()
+        prepareForUserScroll()
         beginScrollGesture()
         let position=min(max(0,offset),document.source.count)
         refineLayout(around:NSRange(location:position,length:max(1,min(1024,document.source.count-position))))
@@ -687,6 +729,7 @@ final class SourceEditor:NSView,NSTextViewDelegate,NSTextStorageDelegate,ScrollS
         scroll.reflectScrolledClipView(scroll.contentView)
         changingLayout=false;notifyViewport()
     }
+    func debugPrepareForUserScroll() {prepareForUserScroll()}
     /// Models an AppKit clip correction caused by active-caret/layout
     /// settlement. This changes the observed source origin without expressing
     /// new user navigation intent.
@@ -732,9 +775,20 @@ final class SourceEditor:NSView,NSTextViewDelegate,NSTextStorageDelegate,ScrollS
     var alignmentOffset:CGFloat {
         CGFloat(ScrollLandmarks.alignmentOffset(at:Double(scroll.contentView.bounds.minY),sourceHeight:Double(canvas.bounds.height),viewportHeight:Double(scroll.contentSize.height)))
     }
-    private func relayoutPreservingViewport(_ change:()->Void) {
-        let anchor=renderedViewportAnchor,oldOrigin=scroll.contentView.bounds.minY
+    private func transformedViewportOffset(_ offset:Int,through edit:SourceEdit)->Int {
+        let end=NSMaxRange(edit.range),delta=edit.insertedLength-edit.range.length
+        if edit.range.length==0 {
+            return edit.range.location<offset ? offset+edit.insertedLength:offset
+        }
+        if end<=offset {return offset+delta}
+        if edit.range.location>=offset {return offset}
+        return edit.range.location+min(edit.insertedLength,max(0,offset-edit.range.location))
+    }
+    private func relayoutPreservingViewport(through edit:SourceEdit?=nil,
+                                            preferredAnchor:Int?=nil,_ change:()->Void) {
+        let anchor=preferredAnchor ?? renderedViewportAnchor,oldOrigin=scroll.contentView.bounds.minY
         let oldPosition=renderedVerticalPosition(for:anchor)
+        let restoredAnchor=edit.map{transformedViewportOffset(anchor,through:$0)} ?? anchor
         changingLayout=true;change();updateDimensions()
         if let session=resizeSession,session.protectsViewport,
            let y=renderedVerticalPosition(for:session.sourceOffset) {
@@ -742,26 +796,74 @@ final class SourceEditor:NSView,NSTextViewDelegate,NSTextStorageDelegate,ScrollS
             session.sourceOrigin=origin
             scroll.contentView.scroll(to:NSPoint(x:0,y:origin))
         } else if oldOrigin<=0.001 {scroll.contentView.scroll(to:.zero)}
-        else if let before=oldPosition,let after=renderedVerticalPosition(for:anchor) {scroll.contentView.scroll(to:NSPoint(x:0,y:max(0,after+oldOrigin-before)))}
+        else if let before=oldPosition,let after=renderedVerticalPosition(for:restoredAnchor) {
+            let restoredOrigin=max(0,after+oldOrigin-before)
+            scroll.contentView.scroll(to:NSPoint(x:0,y:restoredOrigin))
+            #if DEBUG
+            if edit != nil {
+                debugLastEditRelayout="anchor=\(anchor)->\(restoredAnchor), y=\(before)->\(after), origin=\(oldOrigin)->\(restoredOrigin)"
+            }
+            #endif
+        }
         scroll.reflectScrolledClipView(scroll.contentView)
         changingLayout=false;geometryChanged?();notifyViewport()
     }
-    func documentEdited(selection:NSRange,edit:SourceEdit) {
+    func documentEdited(selection:NSRange,edit:SourceEdit,semanticAnchor:Int?=nil) {
         // Any document edit starts a new center-synchronized positioning
         // event. Resize pinning lasts through resize completion and queued
         // resize layout only; it must not survive into an edit.
         clearResizePin()
         pendingNavigation=nil;retainedNavigationPin=nil
+        let insertedAnchor:Int = {
+            guard edit.insertedLength>0 else{return edit.range.location}
+            let source=document.source.string as NSString
+            let start=edit.range.location,end=min(source.length,start+edit.insertedLength)
+            var cursor=end
+            while cursor>start,
+                  let scalar=UnicodeScalar(source.character(at:cursor-1)),
+                  CharacterSet.whitespacesAndNewlines.contains(scalar) {cursor -= 1}
+            return max(start,cursor-1)
+        }()
+        latestEditAnchor=min(document.source.count,max(0,semanticAnchor ?? insertedAnchor))
         highlightRevision=document.revision;deferredHighlights.removeAll()
         let delta=edit.insertedLength-edit.range.length,end=NSMaxRange(edit.range)
-        if let collapsed=collapsedCommentFooter {
-            let start: Int
-            if collapsed.location>=end {start=collapsed.location+delta}
-            else {start=min(collapsed.location,edit.range.location)}
-            let oldEnd=NSMaxRange(collapsed)
-            let newEnd=oldEnd>=end ? oldEnd+delta:max(start,edit.range.location+edit.insertedLength)
-            collapsedCommentFooter=NSRange(location:max(0,start),length:max(0,newEnd-start))
+        // NSTextStorage carries temporary attributes through its edit. Keep
+        // our range bookkeeping in the same coordinates so the subsequent
+        // model reconciliation can diff highlights instead of repainting every
+        // comment in the document.
+        commentRanges=commentRanges.map {MarkdownComments.transformedAnchorRange($0,through:edit)}
+        selectedCommentRange=selectedCommentRange.map {
+            MarkdownComments.transformedAnchorRange($0,through:edit)
         }
+        paintedCommentRanges=paintedCommentRanges.map {
+            MarkdownComments.transformedAnchorRange($0,through:edit)
+        }
+        // A replacement can add or remove many wrapped rows. Pin a visible
+        // source point outside the replaced range, preferring following text,
+        // so every model-driven edit preserves the surrounding source view.
+        // This is the general form of the stability rule formerly applied
+        // only to serialized comment records.
+        let editViewportAnchor:Int? = {
+            let top=scroll.contentView.bounds.minY,bottom=top+scroll.contentSize.height
+            let oldText=textView.string as NSString
+            var following=min(oldText.length,NSMaxRange(edit.range)+(edit.range.length==0 ? 1:0))
+            while following<oldText.length,
+                  let scalar=UnicodeScalar(oldText.character(at:following)),
+                  CharacterSet.whitespacesAndNewlines.contains(scalar) {following += 1}
+            return [following,edit.range.location].first {offset in
+                guard let y=renderedVerticalPosition(for:offset) else{return false}
+                return y>=top-2 && y<=bottom+2
+            }
+        }()
+        func shiftedRecordRange(_ record:NSRange)->NSRange {
+            let start:Int
+            if record.location>=end {start=record.location+delta}
+            else {start=min(record.location,edit.range.location)}
+            let oldEnd=NSMaxRange(record)
+            let newEnd=oldEnd>=end ? oldEnd+delta:max(start,edit.range.location+edit.insertedLength)
+            return NSRange(location:max(0,start),length:max(0,newEnd-start))
+        }
+        commentRecordRanges=commentRecordRanges.map(shiftedRecordRange)
         highlightedRanges=highlightedRanges.flatMap {range -> [NSRange] in
             if NSMaxRange(range)<=edit.range.location {return [range]}
             if range.location>=end {return [NSRange(location:range.location+delta,length:range.length)]}
@@ -780,31 +882,83 @@ final class SourceEditor:NSView,NSTextViewDelegate,NSTextStorageDelegate,ScrollS
             let affected=old.paragraphRange(for:NSRange(location:start,length:end-start))
             if old.length==prepared.sourceLayout.length {dirtyRange=dirtyRange.map{NSUnionRange($0,affected)} ?? affected}
             else {dirtyRange=NSRange(location:0,length:prepared.sourceLayout.length)}
-            nativeLayoutRevision=nil;changingLayout=true
             let replacement=document.source.string(in:NSRange(location:edit.range.location,length:edit.insertedLength))
-            textView.textStorage!.replaceCharacters(in:edit.range,with:replacement)
-            loadedRevision=document.revision;textView.setSelectedRange(selection)
-            updateDimensions();changingLayout=false
-            geometryChanged?();reveal(selection.location)
-            textView.setSelectedRange(selection);notifyViewport()
+            let replaceNativeText = {
+                self.nativeLayoutRevision=nil
+                self.textView.textStorage!.replaceCharacters(in:edit.range,with:replacement)
+                self.loadedRevision=self.document.revision
+                self.textView.setSelectedRange(selection)
+            }
+            // Model-driven replacements and native typing use the same
+            // viewport-preserving reflow. The preview separately follows the
+            // semantic edit anchor; comment records need no special case.
+            relayoutPreservingViewport(through:edit,preferredAnchor:editViewportAnchor) {
+                replaceNativeText()
+            }
+            textView.setSelectedRange(selection)
         }
+        let cleared=clearInheritedCommentHighlight(around:edit)
+        let inserted=edit.insertedLength>0
+            ? document.source.string(in:NSRange(location:edit.range.location,length:edit.insertedLength)):""
+        let changesLines=edit.range.length>0 || inserted.contains("\n") || inserted.contains("\r")
+        applyCommentHighlights(repainting:cleared,rebuild:changesLines)
     }
-    private func commentPaintRange(_ range:NSRange)->NSRange? {
+    private func clearInheritedCommentHighlight(around edit:SourceEdit)->NSRange? {
+        guard let manager=textView.layoutManager else{return nil}
+        let length=textView.string.utf16.count
+        let start=max(0,min(length,edit.range.location)-1)
+        let end=min(length,edit.range.location+edit.insertedLength+1)
+        guard end>start else{return nil}
+        let cleared=NSRange(location:start,length:end-start)
+        manager.removeTemporaryAttribute(.backgroundColor,
+            forCharacterRange:cleared)
+        return cleared
+    }
+    private func commentPaintRanges(_ range:NSRange)->[NSRange] {
         let length=document.source.count
-        guard range.location>=0,range.location<=length else{return nil}
+        guard range.location>=0,range.location<=length else{return []}
         if range.length>0 {
             let clipped=NSIntersectionRange(NSRange(location:0,length:length),range)
-            return clipped.length>0 ? clipped:nil
+            guard clipped.length>0 else{return []}
+            // NSTextKit paints a background attached to a line terminator
+            // through the line-fragment remainder. Excluding CR/LF code units
+            // keeps comment yellow behind text instead of flashing to the
+            // editor's right margin.
+            let text=document.source.string as NSString
+            var result=[NSRange](),start=clipped.location,cursor=clipped.location
+            while cursor<NSMaxRange(clipped) {
+                let unit=text.character(at:cursor)
+                if unit==10 || unit==13 {
+                    if cursor>start {result.append(NSRange(location:start,length:cursor-start))}
+                    cursor += 1;start=cursor
+                } else {cursor += 1}
+            }
+            if cursor>start {result.append(NSRange(location:start,length:cursor-start))}
+            return result
         }
-        if range.location<length {return NSRange(location:range.location,length:1)}
-        if length>0 {return NSRange(location:length-1,length:1)}
-        return nil
+        if range.location<length {return [NSRange(location:range.location,length:1)]}
+        if length>0 {return [NSRange(location:length-1,length:1)]}
+        return []
+    }
+    private func mergedCommentPaintRanges(_ ranges:[NSRange])->[NSRange] {
+        let ordered=ranges.filter{$0.length>0}.sorted {
+            $0.location==$1.location ? $0.length<$1.length:$0.location<$1.location
+        }
+        var result=[NSRange]()
+        for range in ordered {
+            if let last=result.last,range.location<=NSMaxRange(last) {
+                result[result.count-1]=NSUnionRange(last,range)
+            } else {result.append(range)}
+        }
+        return result
     }
     func setCommentRanges(_ ranges:[NSRange]) {
-        commentRanges=ranges.compactMap(commentPaintRange);applyCommentHighlights()
+        if ranges==commentRanges {applyCommentHighlights(rebuild:false);return}
+        commentRanges=ranges;applyCommentHighlights()
     }
     func setSelectedCommentRange(_ range:NSRange?) {
-        selectedCommentRange=range.flatMap(commentPaintRange);applyCommentHighlights()
+        guard range != selectedCommentRange else{return}
+        selectedCommentRange=range;applyCommentHighlights()
     }
     func commentPopoverAnchor(for requested:NSRange)->NSRect {
         let length=textView.string.utf16.count
@@ -831,115 +985,85 @@ final class SourceEditor:NSView,NSTextViewDelegate,NSTextStorageDelegate,ScrollS
         }
         return textView.convert(local,to:self)
     }
-    func setCollapsedCommentRecords(_ records:[NSRange]) {
+    func setCommentRecordRanges(_ records:[NSRange]) {
         let length=document.source.count
-        let valid=records.filter{$0.location>=0 && NSMaxRange($0)<=length}
-        let next=valid.map(\.location).min().map {NSRange(location:$0,length:length-$0)}
-        commentRecordCount=valid.count
-        if next == nil {commentFooterExpanded=false}
-        guard next != collapsedCommentFooter else {
-            // Ordinary document edits before the footer move both the native
-            // attributes and this tracked range together. Reapplying fonts and
-            // paragraph metrics here would invalidate TextKit on every typed
-            // character and feed unstable source geometry back into preview
-            // synchronization.
-            reapplyCollapsedCommentFooterColor();updateCommentFooterControl();return
-        }
-        let affected:[NSRange]=[collapsedCommentFooter,next].compactMap{$0}
-        collapsedCommentFooter=next
-        guard !affected.isEmpty else{return}
-        let union=affected.dropFirst().reduce(affected[0],NSUnionRange)
-        // Folding changes font and paragraph metrics. In particular, Undo can
-        // reinsert the footer before the asynchronous comment parse tells us
-        // to collapse it again. Refresh the retained tail from its measured
-        // line boundary: that recomputes the canvas bottom without walking the
-        // unchanged document body.
-        let boundary=min(union.location,prepared.sourceLayout.length)
-        let start=prepared.sourceLayout.position(at:boundary)?.range.location ?? boundary
-        let tail=NSRange(location:start,length:prepared.sourceLayout.length-start)
-        dirtyRange=dirtyRange.map{NSUnionRange($0,tail)} ?? tail
-        relayoutPreservingViewport {self.applyCollapsedCommentFooterAppearance(restoring:union)}
+        let next=records.filter{$0.location>=0 && NSMaxRange($0)<=length}.sorted{$0.location<$1.location}
+        commentRecordRanges=next
     }
-    @objc private func toggleCommentFooter(_ sender:Any?) {
-        guard let range=collapsedCommentFooter else{return}
-        commentFooterExpanded.toggle()
-        invalidateLayout(in:range)
-        relayoutPreservingViewport {self.applyCollapsedCommentFooterAppearance(restoring:range)}
-        textView.window?.makeFirstResponder(textView)
-    }
-    private func updateCommentFooterControl() {
-        guard let range=collapsedCommentFooter,range.length>0,range.location<document.source.count,
-              let y=renderedVerticalPosition(for:range.location) else {
-            commentFooterButton.isHidden=true;return
-        }
-        commentFooterButton.isHidden=false
-        let direction=commentFooterExpanded ? "▾":"▸"
-        let noun=commentRecordCount==1 ? "comment":"comments"
-        commentFooterButton.title="\(direction) \(commentRecordCount) \(noun)"
-        commentFooterButton.setAccessibilityLabel(commentFooterExpanded
-            ? "Collapse comments in source":"Expand comments in source")
-        let width:CGFloat=142,height:CGFloat=24
-        let x=commentFooterExpanded ? max(textView.textContainerInset.width,canvas.bounds.width-width-20)
-            : textView.textContainerInset.width
-        commentFooterButton.frame=NSRect(x:x,y:y-2,width:width,height:height)
-    }
-    private func applyCollapsedCommentFooterAppearance(restoring range:NSRange?=nil) {
-        guard let storage=textView.textStorage else{return}
-        if let range,textView.layoutManager != nil {
-            let safe=NSIntersectionRange(range,NSRange(location:0,length:storage.length))
-            if safe.length>0 {textView.layoutManager?.removeTemporaryAttribute(.foregroundColor,forCharacterRange:safe)}
-        }
-        storage.beginEditing()
-        if let range {
-            let safe=NSIntersectionRange(range,NSRange(location:0,length:storage.length))
-            if safe.length>0 {
-                storage.addAttributes(baseAttributes,range:safe)
-                storage.removeAttribute(.paragraphStyle,range:safe)
-            }
-        }
-        if let collapsedCommentFooter,!commentFooterExpanded {
-            let safe=NSIntersectionRange(collapsedCommentFooter,NSRange(location:0,length:storage.length))
-            if safe.length>0 {
-                let paragraph=NSMutableParagraphStyle();paragraph.minimumLineHeight=0.1
-                paragraph.maximumLineHeight=0.1;paragraph.lineSpacing=0;paragraph.paragraphSpacing=0
-                storage.addAttributes([.font:NSFont.monospacedSystemFont(ofSize:0.1,weight:.regular),
-                    .foregroundColor:NSColor.clear,.paragraphStyle:paragraph],range:safe)
-                // Reserve one ordinary source row for the fold summary. The
-                // remaining record text stays compact but is restored verbatim
-                // when the disclosure control is expanded.
-                let summary=NSMutableParagraphStyle();summary.minimumLineHeight=22
-                summary.maximumLineHeight=22;summary.lineSpacing=0;summary.paragraphSpacing=0
-                storage.addAttributes([.font:baseAttributes[.font]!,
-                    .foregroundColor:NSColor.clear,.paragraphStyle:summary],
-                    range:NSRange(location:safe.location,length:1))
-            }
-        }
-        storage.endEditing()
-        reapplyCollapsedCommentFooterColor()
-        updateCommentFooterControl()
-    }
-    private func reapplyCollapsedCommentFooterColor() {
-        guard let range=collapsedCommentFooter,NSMaxRange(range)<=textView.string.utf16.count,
-              let manager=textView.layoutManager else{return}
-        manager.removeTemporaryAttribute(.foregroundColor,forCharacterRange:range)
-        if !commentFooterExpanded {
-            manager.addTemporaryAttribute(.foregroundColor,value:NSColor.clear,forCharacterRange:range)
-        }
-        textView.needsDisplay=true
-    }
-    private func applyCommentHighlights() {
+    private func applyCommentHighlights(repainting:NSRange?=nil,rebuild:Bool=true) {
         guard let manager=textView.layoutManager else{return}
-        for range in paintedCommentRanges where NSMaxRange(range)<=textView.string.utf16.count {
+        var semantic=commentRanges
+        if let selectedCommentRange,!semantic.contains(selectedCommentRange) {semantic.append(selectedCommentRange)}
+        let next:[NSRange]
+        if rebuild {
+            next=mergedCommentPaintRanges(semantic.flatMap(commentPaintRanges))
+        } else {next=paintedCommentRanges}
+        let length=textView.string.utf16.count
+        let old=Set(paintedCommentRanges),fresh=Set(next)
+        for range in old.subtracting(fresh) where NSMaxRange(range)<=length {
+            #if DEBUG
+            debugCommentHighlightMutations.append(range)
+            #endif
             manager.removeTemporaryAttribute(.backgroundColor,forCharacterRange:range)
         }
-        var next=commentRanges
-        if let selectedCommentRange,!next.contains(selectedCommentRange) {next.append(selectedCommentRange)}
-        paintedCommentRanges=next
         let color=NSColor.systemYellow.withAlphaComponent(0.28)
-        for range in next where NSMaxRange(range)<=textView.string.utf16.count {
+        for range in fresh.subtracting(old) where NSMaxRange(range)<=length {
+            #if DEBUG
+            debugCommentHighlightMutations.append(range)
+            #endif
             manager.addTemporaryAttribute(.backgroundColor,value:color,forCharacterRange:range)
         }
-        textView.needsDisplay=true
+        if let repainting {
+            for range in fresh where NSIntersectionRange(range,repainting).length>0 &&
+                                       NSMaxRange(range)<=length {
+                manager.addTemporaryAttribute(.backgroundColor,value:color,forCharacterRange:range)
+            }
+        }
+        // TextKit can discard an interior temporary run while repairing layout
+        // around an edit without changing our logical range set. Walk its
+        // effective runs inside each disjoint comment union and fill only the
+        // holes; checking the union's first character misses inserted text.
+        for range in fresh where range.length>0 && NSMaxRange(range)<=length {
+            var cursor=range.location
+            while cursor<NSMaxRange(range) {
+                var effective=NSRange()
+                let value=manager.temporaryAttribute(.backgroundColor,atCharacterIndex:cursor,
+                    effectiveRange:&effective)
+                var segment=NSIntersectionRange(range,effective)
+                if segment.length==0 {segment=NSRange(location:cursor,length:1)}
+                if value==nil {
+                    #if DEBUG
+                    debugCommentHighlightMutations.append(segment)
+                    #endif
+                    manager.addTemporaryAttribute(.backgroundColor,value:color,forCharacterRange:segment)
+                }
+                cursor=max(cursor+1,NSMaxRange(segment))
+            }
+        }
+        for range in next {
+            let boundary=NSMaxRange(range)
+            guard boundary<length else{continue}
+            manager.removeTemporaryAttribute(.backgroundColor,
+                forCharacterRange:NSRange(location:boundary,length:1))
+        }
+        // Be explicit even if an older TextKit run or insertion inheritance
+        // left color on a terminator. A newline background paints the unused
+        // remainder of its line fragment.
+        let text=document.source.string as NSString
+        let newlineScopes=rebuild ? semantic:repainting.map{[$0]} ?? []
+        for range in newlineScopes where range.length>0 {
+            let clipped=NSIntersectionRange(NSRange(location:0,length:length),range)
+            var cursor=clipped.location
+            while cursor<NSMaxRange(clipped) {
+                let unit=text.character(at:cursor)
+                if unit==10 || unit==13 {
+                    manager.removeTemporaryAttribute(.backgroundColor,
+                        forCharacterRange:NSRange(location:cursor,length:1))
+                }
+                cursor += 1
+            }
+        }
+        paintedCommentRanges=next
     }
     fileprivate func drawSelectedCommentOutline() {
         guard let range=selectedCommentRange,range.length>0,
@@ -1060,27 +1184,58 @@ final class SourceEditor:NSView,NSTextViewDelegate,NSTextStorageDelegate,ScrollS
     }
     func textView(_ textView:NSTextView,shouldChangeTextIn range:NSRange,replacementString:String?)->Bool {
         // Mark geometry unavailable before AppKit begins its character batch.
-        if !changingLayout {nativeLayoutRevision=document.revision}
+        if !changingLayout {
+            nativeLayoutRevision=document.revision
+            proposedNativeEdit=(range,replacementString ?? "")
+            let capture=captureResizeAnchor()
+            pendingEditViewport=(capture.offset,capture.displacement,capture.origin)
+        }
         return true
     }
     func textStorage(_ storage:NSTextStorage,didProcessEditing mask:NSTextStorageEditActions,range editedRange:NSRange,changeInLength delta:Int) {
         guard !changingLayout,mask.contains(.editedCharacters) else{return}
         // An edit is a new synchronization event, not continuation of a resize.
         clearResizePin()
-        // Observe actual native character transactions, including provisional
-        // marked text. Delegate proposals can refer to an uncommitted IME range
-        // and are not a reliable edit against the document model.
         precondition(document.source.count==storage.length-delta)
-        let original=NSRange(location:editedRange.location,length:editedRange.length-delta)
-        let replacement=(storage.string as NSString).substring(with:editedRange)
+        let proposal=proposedNativeEdit;proposedNativeEdit=nil
+        let original:NSRange,replacement:String
+        if let proposal,
+           proposal.range.location>=0,NSMaxRange(proposal.range)<=document.source.count,
+           proposal.replacement.utf16.count-proposal.range.length==delta {
+            let inserted=NSRange(location:proposal.range.location,length:proposal.replacement.utf16.count)
+            if NSMaxRange(inserted)<=storage.length,
+               (storage.string as NSString).substring(with:inserted)==proposal.replacement {
+                original=proposal.range;replacement=proposal.replacement
+            } else {
+                original=NSRange(location:editedRange.location,length:editedRange.length-delta)
+                replacement=(storage.string as NSString).substring(with:editedRange)
+            }
+        } else {
+            // IME transactions can bypass or supersede a delegate proposal.
+            // Their processed character range remains the authoritative
+            // fallback once its length is reconciled with the reported delta.
+            original=NSRange(location:editedRange.location,length:editedRange.length-delta)
+            replacement=(storage.string as NSString).substring(with:editedRange)
+        }
         nativeLayoutRevision=document.revision+1
         invalidateLayout(in:original)
+        if var pin=pendingEditViewport {
+            pin.offset=transformedViewportOffset(pin.offset,
+                through:SourceEdit(range:original,insertedLength:replacement.utf16.count))
+            pendingEditViewport=pin
+        }
         localEdit=true;document.replace(original,with:replacement);localEdit=false
         DispatchQueue.main.async { [weak self] in self?.finishNativeLayout()}
     }
     private func finishNativeLayout() {
         guard let revision=nativeLayoutRevision,revision==document.revision,!changingLayout else{return}
+        let pin=pendingEditViewport;pendingEditViewport=nil
         changingLayout=true;scroll.frame=bounds;updateDimensions();changingLayout=false
+        if let pin,let y=renderedVerticalPosition(for:pin.offset) {
+            let origin=max(0,y+pin.displacement)
+            scroll.contentView.scroll(to:NSPoint(x:0,y:origin))
+            scroll.reflectScrolledClipView(scroll.contentView)
+        }
         nativeLayoutRevision=nil
         needsLayout=true
         geometryChanged?();notifyViewport();applyDeferredHighlights()
@@ -1088,6 +1243,30 @@ final class SourceEditor:NSView,NSTextViewDelegate,NSTextStorageDelegate,ScrollS
     func textViewDidChangeSelection(_ notification:Notification) {
         // AppKit can announce selection inside a still-open native text batch.
         DispatchQueue.main.async { [weak self] in self?.notifyViewport() }
+    }
+    fileprivate func finishCursorMovement(fromRevision revision:Int,selection:NSRange,
+                                           viewportOrigin origin:CGFloat) {
+        DispatchQueue.main.async { [weak self] in
+            self?.finishCursorMovementCheck(revision:revision,selection:selection,
+                viewportOrigin:origin,remaining:3)
+        }
+    }
+    private func finishCursorMovementCheck(revision:Int,selection:NSRange,
+                                            viewportOrigin origin:CGFloat,remaining:Int) {
+        guard document.revision==revision,textView.selectedRange() != selection else{return}
+        if abs(viewportOrigin-origin)>0.5 {
+            // A selection change is inert while it remains visible. If AppKit
+            // had to scroll the source to reveal the new insertion point, that
+            // is explicit navigation and resumes ordinary golden-ratio sync.
+            sourceNavigationIntent?();notifyViewport()
+        } else if remaining>0 {
+            // TextKit may reveal the insertion point one run-loop turn after
+            // announcing its selection change.
+            DispatchQueue.main.asyncAfter(deadline:.now()+0.005) { [weak self] in
+                self?.finishCursorMovementCheck(revision:revision,selection:selection,
+                    viewportOrigin:origin,remaining:remaining-1)
+            }
+        }
     }
     func hasAppliedHighlights(in range:NSRange)->Bool {
         highlightRevision==document.revision && highlightedRanges.contains{ $0.location<=range.location && NSMaxRange($0)>=NSMaxRange(range) }
@@ -1170,7 +1349,6 @@ final class SourceEditor:NSView,NSTextViewDelegate,NSTextStorageDelegate,ScrollS
                 manager.addTemporaryAttribute(.foregroundColor,value:color,forCharacterRange:range)
             }
         }
-        reapplyCollapsedCommentFooterColor()
         textView.needsDisplay=true
     }
 }

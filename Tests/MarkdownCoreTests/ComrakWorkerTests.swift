@@ -14,6 +14,15 @@ private func applying(_ change:PreparedBlockChange,to blocks:[PreparedBlock])->[
     })
     return result
 }
+@Test func markatoCommentRecordsDoNotCreatePreviewBlocks() async throws {
+    let text="First paragraph.\n\n<!-- Explain this. | \"First paragraph.\" | markato-comment:v3 -->\n\nSecond paragraph.\n"
+    let result=try await parse(ComrakWorker(),TextRope(text),1)
+    let blocks=try #require(result.blocks)
+    #expect(blocks.count==2)
+    #expect(blocks.compactMap{$0.html?.string()}.joined().contains("markato-comment")==false)
+    #expect(blocks.first?.from==0)
+    #expect(blocks.last?.from==(text as NSString).range(of:"Second paragraph.").location)
+}
 @Test func coalescedEditsMatchFreshParse() async throws {
     let worker = ComrakWorker()
     var rope = TextRope("# Title\n\nFirst **bold** paragraph.\n\nAnother *italic* paragraph.\n")

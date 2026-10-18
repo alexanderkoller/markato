@@ -45,6 +45,16 @@ final class MarkdownDocument: NSDocument {
         parser.record(edit,revision:revision)
         edited?(selection ?? NSRange(location:range.location+text.utf16.count,length:0),text,edit)
     }
+    /// Rewrites derived, in-file metadata without creating a second undo item
+    /// or changing the document's dirty state. The user edit that caused this
+    /// rewrite already owns both of those responsibilities.
+    func replaceMetadata(_ range:NSRange,with text:String,selection:NSRange) {
+        sourceLock.lock();storedSource=storedSource.replacing(range,with:text);initialDecodedText=nil;sourceLock.unlock()
+        revision += 1
+        let edit=SourceEdit(range:range,insertedLength:text.utf16.count)
+        parser.record(edit,revision:revision)
+        edited?(selection,text,edit)
+    }
     func setInitialText(_ text: String) {
         let oldCount = source.count
         let nextRevision=revision+1

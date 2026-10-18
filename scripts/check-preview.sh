@@ -13,7 +13,15 @@ dist/debug/Markato.app/Contents/MacOS/Markato --integration-test --integration-m
 dist/debug/Markato.app/Contents/MacOS/Markato --integration-test --integration-highlighting
 dist/debug/Markato.app/Contents/MacOS/Markato --integration-test --integration-empty-edits
 dist/debug/Markato.app/Contents/MacOS/Markato --integration-test --integration-comments
+dist/debug/Markato.app/Contents/MacOS/Markato --integration-test --integration-block-comment-anchor
+dist/debug/Markato.app/Contents/MacOS/Markato --integration-test --integration-inline-comment-anchor
+dist/debug/Markato.app/Contents/MacOS/Markato --integration-test --integration-comment-markup-anchor
 dist/debug/Markato.app/Contents/MacOS/Markato --integration-test --integration-comment-edit-stability
+dist/debug/Markato.app/Contents/MacOS/Markato --integration-test --integration-comment-overlap-sequence
+dist/debug/Markato.app/Contents/MacOS/Markato --integration-test --integration-comment-overlap-paint
+dist/debug/Markato.app/Contents/MacOS/Markato --integration-test --integration-comment-separator-edit
+dist/debug/Markato.app/Contents/MacOS/Markato --integration-test --integration-comment-source-fold
+dist/debug/Markato.app/Contents/MacOS/Markato --integration-test --integration-comment-compact-migration
 dist/debug/Markato.app/Contents/MacOS/Markato --integration-test --integration-paragraph-edit-stability
 dist/debug/Markato.app/Contents/MacOS/Markato --integration-test --integration-height-stability
 dist/debug/Markato.app/Contents/MacOS/Markato --integration-test --integration-delayed-image-stability
