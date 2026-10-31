@@ -256,6 +256,9 @@ import PDFKit
         if CommandLine.arguments.contains("--integration-source-end-navigation") {
             verifySourceEndNavigation(controller,document:document);return
         }
+        if CommandLine.arguments.contains("--integration-render-ahead") {
+            verifyRenderAhead(controller);return
+        }
         if CommandLine.arguments.contains("--integration-scroll-throughput") {
             verifyScrollThroughput(controller);return
         }
@@ -487,6 +490,59 @@ import PDFKit
                 deadline:DispatchTime(uptimeNanoseconds:started+UInt64(index+1)*period)){step(index+1)}
         }
         step(0)
+    }
+
+    private static func verifyRenderAhead(_ controller:EditorWindowController) {
+        let preview=controller.preview,source=controller.source
+        func wait(_ remaining:Int,_ ready:@escaping()->Bool,_ completion:@escaping()->Void) {
+            guard remaining>0 else{fail("Render-ahead did not settle: \(preview.debugGeometry())")}
+            if ready() {completion()}
+            else {DispatchQueue.main.asyncAfter(deadline:.now()+0.01){wait(remaining-1,ready,completion)}}
+        }
+        wait(3000,{controller.hasMeasuredPreviewDocument && !preview.hasPendingPresentation}) {
+            var worstLag:CGFloat=0,lagged=0,samples=0
+            var lagStarted:UInt64?,longestLag:Double=0
+            let started=DispatchTime.now().uptimeNanoseconds
+            let initialHits=preview.previewView.debugRenderAheadHits
+            let initialPaints=preview.previewView.debugRenderAheadPaints
+            source.beginScrollGesture()
+            @MainActor func sample() {
+                let rect=preview.convert(preview.previewView.bounds,from:preview.previewView)
+                check(rect.minY<=1 && rect.maxY>=preview.bounds.height-1,
+                    "Render-ahead exposed unpainted viewport: \(rect)")
+                let lag=abs(preview.clipOrigin-preview.debugPresentedOrigin)
+                worstLag=max(worstLag,lag);samples += 1
+                let now=DispatchTime.now().uptimeNanoseconds
+                if lag>1 {
+                    lagged += 1
+                    if lagStarted==nil {lagStarted=now}
+                    longestLag=max(longestLag,Double(now-lagStarted!)/1e9)
+                } else {lagStarted=nil}
+            }
+            @MainActor func step(_ index:Int) {
+                if index==180 {source.endScrollGesture()}
+                guard index<360 else {
+                    wait(1500,{!preview.hasPendingPresentation && abs(preview.clipOrigin-preview.debugPresentedOrigin)<1}) {
+                        let hits=preview.previewView.debugRenderAheadHits-initialHits
+                        let paints=preview.previewView.debugRenderAheadPaints-initialPaints
+                        check(hits>180,"Render-ahead did not reuse painted pixels")
+                        check(longestLag<0.25 && lagged<samples/5,
+                            "Render-ahead lagged excessively: duration=\(longestLag), max=\(worstLag), samples=\(lagged)/\(samples)")
+                        print("RENDER AHEAD PASSED: samples=\(samples), lagged=\(lagged), maxLag=\(worstLag), longestLagMS=\(longestLag*1000), cacheHits=\(hits), paints=\(paints), pixelBytes=\(preview.previewView.debugPixelBytes)")
+                        fflush(nil);_exit(EXIT_SUCCESS)
+                    }
+                    return
+                }
+                let delta:CGFloat=(index%180)<90 ? 120:-120
+                if index<180 {source.debugScrollViewport(by:delta)}
+                else {preview.debugScrollViewport(by:delta)}
+                sample()
+                DispatchQueue.main.asyncAfter(deadline:DispatchTime(uptimeNanoseconds:started+UInt64(index+1)*16_666_667)) {
+                    sample();step(index+1)
+                }
+            }
+            step(0)
+        }
     }
 
     private static func verifyScrollThroughput(_ controller:EditorWindowController) {

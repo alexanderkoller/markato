@@ -36,25 +36,31 @@ private final class PreviewClipView:NSClipView {
     }
     func size(contentHeight:CGFloat,windowTop:CGFloat=0,width:CGFloat,viewportHeight:CGFloat) {
         self.windowTop=windowTop
-        // Keep the viewport-sized renderer's outer coordinate system fixed;
+        // Keep the buffered renderer's outer coordinate system fixed;
         // moving both the view and clip by `viewportHeight` caused AppKit to
         // visibly present that relocation during every live-resize frame.
         let paintedOrigin=windowTop+(localOrigin ?? max(0,logicalOrigin-windowTop))
-        let frame=NSRect(x:0,y:paintedOrigin,width:max(1,width),height:max(1,viewportHeight))
+        let frame=NSRect(x:0,y:paintedOrigin,width:max(1,width),height:max(1,max(viewportHeight,web.paintedSize.height)))
         if web.frame != frame {web.frame=frame}
         web.alignBitmap(toFrameOrigin:paintedOrigin)
         let size=NSSize(width:max(1,width),height:max(viewportHeight,max(contentHeight,frame.maxY)))
         if canvas.frame.size != size {canvas.frame.size=size}
-        clip.move(to:logicalOrigin)
+        presentCoveredViewport()
+    }
+    private func presentCoveredViewport() {
+        // If input outruns painted pixels, retain a complete frame until the
+        // destination arrives rather than exposing the canvas background.
+        let first=web.frame.minY,last=max(first,web.frame.maxY-clip.bounds.height)
+        clip.move(to:min(last,max(first,logicalOrigin)))
     }
     func scroll(to origin:CGFloat) {
         if abs(origin-logicalOrigin)<0.01 {
-            clip.move(to:logicalOrigin)
+            presentCoveredViewport()
             return
         }
         logicalOrigin=origin
         let local=max(0,origin-windowTop)
-        clip.move(to:origin)
+        presentCoveredViewport()
         if requestedLocalOrigin.map({abs($0-local)>=0.01}) ?? true {
             requestedLocalOrigin=local;web.scroll(to:NSPoint(x:0,y:local))
         }
@@ -62,12 +68,14 @@ private final class PreviewClipView:NSClipView {
     func applyPaintedScroll(_ localOrigin:CGFloat) {
         self.localOrigin=localOrigin
         let paintedOrigin=windowTop+localOrigin
+        web.setFrameSize(NSSize(width:web.frame.width,height:max(clip.bounds.height,web.paintedSize.height)))
         web.setFrameOrigin(NSPoint(x:0,y:paintedOrigin))
         web.alignBitmap(toFrameOrigin:paintedOrigin)
+        presentCoveredViewport()
     }
-    var paintedViewportOffset:CGFloat {web.frame.minY+web.paintedOffsetY-logicalOrigin}
+    var paintedViewportOffset:CGFloat {web.frame.minY+web.paintedOffsetY-clip.bounds.minY}
     private var geometryViewportOffset:CGFloat {
-        web.frame.minY+web.frameAlignedOffsetY-logicalOrigin
+        web.frame.minY+web.frameAlignedOffsetY-clip.bounds.minY
     }
     var bitmapAlignmentError:CGFloat {
         let paintedOrigin=windowTop+(localOrigin ?? max(0,logicalOrigin-windowTop))
@@ -81,7 +89,7 @@ private final class PreviewClipView:NSClipView {
             width:rect.width,height:rect.height)
     }
     func viewportRect(forMountedDocumentRect rect:NSRect)->NSRect {
-        NSRect(x:rect.minX,y:windowTop+rect.minY-logicalOrigin,
+        NSRect(x:rect.minX,y:windowTop+rect.minY-clip.bounds.minY,
             width:rect.width,height:rect.height)
     }
     func publish(at origin:CGFloat,paintedLocalOrigin:CGFloat) {
@@ -91,7 +99,8 @@ private final class PreviewClipView:NSClipView {
         localOrigin=paintedLocalOrigin
         web.setFrameOrigin(NSPoint(x:0,y:paintedOrigin))
         web.alignBitmap(toFrameOrigin:paintedOrigin)
-        clip.move(to:origin)
+        presentCoveredViewport()
+        web.didPresentViewport(at:NSPoint(x:0,y:max(0,origin-windowTop)))
     }
 }
 
@@ -314,7 +323,7 @@ private struct PendingPreviewFrame {
         return needsBefore || needsAfter
     }
     var isShowingLoadingState:Bool {!loadingView.isHidden}
-    var clipOrigin:CGFloat {clip.bounds.minY}
+    var clipOrigin:CGFloat {surface.logicalOrigin}
     var previewView:HTMLPreviewView {web}
     var visibleWebRange:ClosedRange<CGFloat> {
         let top=surface.logicalOrigin-(committed?.windowTop ?? 0)
@@ -653,7 +662,7 @@ private struct PendingPreviewFrame {
         rendering=nil;renderAnchor=nil
     }
     private func preparePresentation() {
-        guard !isScrollMappingFrozen,rendering==nil,let request=desired,web.isEngineReady,
+        guard (!isScrollMappingFrozen || needsWindowReplenishment || !coversSourceViewport),rendering==nil,let request=desired,web.isEngineReady,
               request.width>0.5,bounds.height>0.5 else{return}
         guard request.entries.allSatisfy({$0.fragment.html != nil}),Set(request.entries.map(\.id)).count==request.entries.count else {
             NSLog("Preview request contains incomplete or duplicate fragments")
@@ -734,7 +743,7 @@ private struct PendingPreviewFrame {
         finishCapturedFrame(frame,request:request,position:position)
     }
     private func finishCapturedFrame(_ frame:HTMLPreviewFrame,request:PreviewRequest,position:PresentationPosition) {
-        if isScrollMappingFrozen {
+        if isScrollMappingFrozen,coversSourceViewport,!needsWindowReplenishment {
             pendingFrame=PendingPreviewFrame(frame:frame,request:request);web.discard()
             finishPreparation(request);return
         }
@@ -900,8 +909,10 @@ private struct PendingPreviewFrame {
     private func resourceChangesAreOutsideViewport(previous:CommittedPresentation,
         changedBlocks:Set<BlockID>)->Bool {
         guard !changedBlocks.isEmpty else{return false}
-        let top=surface.logicalOrigin-previous.windowTop
-        let bottom=top+bounds.height
+        // Offscreen pixels are now reusable. A resource inside the painted
+        // reserve must update that reserve as well as the visible viewport.
+        let top=web.frame.minY+web.paintedOffsetY-previous.windowTop
+        let bottom=top+web.paintedSize.height
         let changed=zip(previous.request.entries,previous.geometry.items).filter {
             changedBlocks.contains($0.0.blockID)
         }
@@ -1150,7 +1161,7 @@ private struct PendingPreviewFrame {
     }
     func captureResizeAnchor()->PreviewResizeAnchor {
         web.cancelPendingScroll()
-        usesDOMResizeAnchor=web.captureResizeAnchor()
+        usesDOMResizeAnchor=web.captureResizeAnchor(at:surface.logicalOrigin-surface.windowTop)
         let origin=surface.logicalOrigin
         guard let committed,origin>0.5 else{return .top}
         let local=origin-committed.windowTop
@@ -1222,6 +1233,7 @@ private struct PendingPreviewFrame {
         return viewport
     }
     #if DEBUG
+    var debugPresentedOrigin:CGFloat {clip.bounds.minY}
     var debugIsIndependentlyScrolled:Bool {detachedSourceOrigin != nil}
     var debugScrollbarValue:Double {verticalScroller.doubleValue}
     var debugScrollbarProportion:CGFloat {verticalScroller.knobProportion}

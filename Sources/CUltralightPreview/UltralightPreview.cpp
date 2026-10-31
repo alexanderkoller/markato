@@ -133,7 +133,7 @@ struct AstraULSurface {
     return String(text.c_str(), text.size()).utf16().length();
   }
 
-  bool capture_text_anchor(const dom::Node& node) {
+  bool capture_text_anchor(const dom::Node& node, double viewport_top) {
     // KaTeX places its clipped, 1x1 accessibility MathML tree before the
     // painted HTML tree. Its text has a DOM rectangle, but that rectangle is
     // not the glyph position users see and does not reflow like the painted
@@ -147,7 +147,7 @@ struct AstraULSurface {
       range.setStart(node, 0);
       range.setEnd(node, length);
       const auto whole = range.getBoundingClientRect();
-      if (whole.width <= 0 || whole.height <= 0 || whole.bottom() <= 0) return false;
+      if (whole.width <= 0 || whole.height <= 0 || whole.bottom() <= viewport_top) return false;
       // Character rectangles are vertically monotonic within a text node.
       // Locate the first visible character without scanning a potentially
       // very large paragraph one UTF-16 unit at a time.
@@ -156,14 +156,14 @@ struct AstraULSurface {
         const size_t middle = low + (high - low) / 2;
         range.setStart(node, middle);
         range.setEnd(node, middle + 1);
-        if (range.getBoundingClientRect().bottom() > 0) high = middle;
+        if (range.getBoundingClientRect().bottom() > viewport_top) high = middle;
         else low = middle + 1;
       }
       while (low < length) {
         range.setStart(node, low);
         range.setEnd(node, low + 1);
         const auto candidate = range.getBoundingClientRect();
-        if (candidate.height > 0 && candidate.width > 0 && candidate.bottom() > 0) break;
+        if (candidate.height > 0 && candidate.width > 0 && candidate.bottom() > viewport_top) break;
         ++low;
       }
       if (low >= length) return false;
@@ -172,21 +172,22 @@ struct AstraULSurface {
       const auto rect = range.getBoundingClientRect();
       resize_anchor_node = node;
       resize_anchor_offset = low;
-      resize_anchor_target_viewport_y = rect.y;
+      resize_anchor_target_viewport_y = rect.y - viewport_top;
       has_resize_anchor = true;
       return true;
     }
     for (auto child = node.firstChild(); child; child = child.nextSibling())
-      if (capture_text_anchor(child)) return true;
+      if (capture_text_anchor(child, viewport_top)) return true;
     return false;
   }
 
-  bool capture_resize_anchor() {
+  bool capture_resize_anchor(double visible_origin) {
     has_resize_anchor = false;
+    const double viewport_top = visible_origin - document.defaultView().scrollY();
     for (const auto& entry : entries) {
       const auto rect = entry.element.getBoundingClientRect();
-      if (rect.bottom() <= 0) continue;
-      if (capture_text_anchor(entry.element)) return true;
+      if (rect.bottom() <= viewport_top) continue;
+      if (capture_text_anchor(entry.element, viewport_top)) return true;
     }
     return false;
   }
@@ -486,8 +487,8 @@ double astra_ul_surface_scroll_y(AstraULSurface* surface) {
   return surface->document.defaultView().scrollY();
 }
 
-bool astra_ul_surface_capture_resize_anchor(AstraULSurface* surface) {
-  return surface && surface->capture_resize_anchor();
+bool astra_ul_surface_capture_resize_anchor(AstraULSurface* surface, double visible_origin) {
+  return surface && surface->capture_resize_anchor(visible_origin);
 }
 
 bool astra_ul_surface_resize_anchor_scroll_y(AstraULSurface* surface,
