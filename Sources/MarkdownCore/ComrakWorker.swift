@@ -84,8 +84,8 @@ public final class ComrakWorker: @unchecked Sendable {
                 let cached=changes.isEmpty && initial?.revision==revision ? initial?.result:nil
                 lock.unlock()
                 if let cached {result=cached}
-                else if changes.count==1,let context=regionalContext,
-                        let regional=try regionalResult(rope:rope,revision:revision,edit:changes[0],context:context) {
+                else if !changes.isEmpty,let context=regionalContext,
+                        let regional=try regionalResult(rope:rope,revision:revision,context:context) {
                     result=regional
                 } else {
                     #if DEBUG
@@ -202,12 +202,13 @@ public final class ComrakWorker: @unchecked Sendable {
         return ParseResult(revision:Int(view.revision),spans:spans,blocks:blocks,
                            from:view.from,to:view.to,hasReferences:view.has_references)
     }
-    private func regionalResult(rope:TextRope,revision:Int,edit:SourceEdit,
+    private func regionalResult(rope:TextRope,revision:Int,
                                 context:RegionalParseContext)throws->ParseResult? {
         #if DEBUG
         let native=TimingDiagnostics.shared.begin("parse.comrak")
         defer {TimingDiagnostics.shared.end(native,values:["regional":1,"parsedCharacters":Double(context.range.length)])}
         #endif
+        let edit=context.edit
         let parsed=try parse(units:rope.units(in:context.range),base:context.range.location,revision:revision)
         guard parsed.hasReferences != true,let blocks=parsed.blocks else{return nil}
         var used=Set<BlockID>(),mapped=[BlockID:BlockID]()
@@ -221,6 +222,11 @@ public final class ComrakWorker: @unchecked Sendable {
             if offset>=NSMaxRange(edit.range) {return offset+context.shift}
             return edit.range.location+edit.insertedLength
         }
+        // First retain unmodified guards and neighbours by exact rendered
+        // content. Then match the genuinely edited blocks by kind and nearest
+        // transformed coordinates. This lets Ultralight update one existing
+        // element instead of removing and reinserting it on every keystroke,
+        // while splits and insertions still receive fresh identities.
         for block in blocks {
             let html=block.html?.string() ?? ""
             let old=context.blocks.filter{!used.contains($0.id) && $0.kind==block.kind && $0.html==html}.min {
@@ -228,11 +234,16 @@ public final class ComrakWorker: @unchecked Sendable {
                 let right=abs(shiftedStart($1.from)-block.from)+abs(shiftedEnd($1.to)-block.to)
                 return left<right
             }
-            if let old {
-                mapped[block.id]=old.id;used.insert(old.id)
-            } else {
-                mapped[block.id]=allocateBlockID()
+            if let old {mapped[block.id]=old.id;used.insert(old.id)}
+        }
+        for block in blocks where mapped[block.id] == nil {
+            let old=context.blocks.filter{!used.contains($0.id) && $0.kind==block.kind}.min {
+                let left=abs(shiftedStart($0.from)-block.from)+abs(shiftedEnd($0.to)-block.to)
+                let right=abs(shiftedStart($1.from)-block.from)+abs(shiftedEnd($1.to)-block.to)
+                return left<right
             }
+            if let old {mapped[block.id]=old.id;used.insert(old.id)}
+            else {mapped[block.id]=allocateBlockID()}
         }
         if let guardID=context.firstGuardID,!used.contains(guardID) {return nil}
         if let guardID=context.lastGuardID,!used.contains(guardID) {return nil}

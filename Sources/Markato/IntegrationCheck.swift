@@ -259,11 +259,17 @@ import PDFKit
         if CommandLine.arguments.contains("--integration-scroll-throughput") {
             verifyScrollThroughput(controller);return
         }
+        if CommandLine.arguments.contains("--integration-preview-scroll") {
+            verifyPreviewWindowScrolling(controller,document:document);return
+        }
         if CommandLine.arguments.contains("--integration-preview-rewrap") {
             verifyPreviewRewrap(controller,document:document);return
         }
         if CommandLine.arguments.contains("--integration-large-profile") {
             profileLargeDocument(controller,document:document);return
+        }
+        if CommandLine.arguments.contains("--integration-typing-profile") {
+            profileTypingLatency(controller,document:document);return
         }
         if CommandLine.arguments.contains("--integration-preview-jump") {
             let started=DispatchTime.now().uptimeNanoseconds
@@ -301,6 +307,72 @@ import PDFKit
             awaitComplete(3000);return
         }
         verifyUltralightPreview(controller,document:document)
+    }
+
+    private static func profileTypingLatency(_ controller:EditorWindowController,
+        document:MarkdownDocument) {
+        let preview=controller.preview,source=controller.source
+        var serial=[Double]()
+        func wait(_ remaining:Int,_ ready:@escaping()->Bool,_ failure:String,
+            _ completion:@escaping()->Void) {
+            guard remaining>0 else{fail("\(failure): \(preview.debugGeometry())")}
+            if ready(){completion()}
+            else {DispatchQueue.main.asyncAfter(deadline:.now()+0.001) {
+                wait(remaining-1,ready,failure,completion)
+            }}
+        }
+        func finish(_ burstMs:Double,burstInsertionMs:Double) {
+            let sorted=serial.sorted()
+            func percentile(_ value:Double)->Double {
+                sorted[min(sorted.count-1,Int(Double(sorted.count-1)*value))]
+            }
+            let result:[String:Any]=[
+                "status":"complete","serialCount":serial.count,
+                "serialMedianMs":percentile(0.5),"serialP95Ms":percentile(0.95),
+                "serialMaxMs":sorted.last!,"burstMs":burstMs,
+                "burstInsertionMs":burstInsertionMs,
+                "finalRevision":document.revision
+            ]
+            try? TimingDiagnostics.shared.snapshot().json().write(
+                to:URL(fileURLWithPath:"/private/tmp/markato-typing-profile-timings.json"))
+            let data=try! JSONSerialization.data(withJSONObject:result,options:[.sortedKeys])
+            print(String(data:data,encoding:.utf8)!);fflush(nil);_exit(EXIT_SUCCESS)
+        }
+        func burst() {
+            let characters=Array(" burstpreview")
+            source.textView.insertText(String(characters[0]),replacementRange:source.textView.selectedRange())
+            wait(1_000,{preview.isRenderingPresentation || preview.previewView.hasUncommittedPresentation},
+                "Burst rendering did not start") {
+                let started=DispatchTime.now().uptimeNanoseconds
+                for character in characters.dropFirst() {
+                    source.textView.insertText(String(character),replacementRange:source.textView.selectedRange())
+                }
+                let insertionMs=Double(DispatchTime.now().uptimeNanoseconds-started)/1_000_000
+                let revision=document.revision
+                wait(1_000,{preview.lastRevision==revision},"Burst did not reach the preview") {
+                    finish(Double(DispatchTime.now().uptimeNanoseconds-started)/1_000_000,
+                        burstInsertionMs:insertionMs)
+                }
+            }
+        }
+        let characters=Array(repeating:Character("x"),count:40)
+        func type(_ index:Int) {
+            guard index<characters.count else {burst();return}
+            let started=DispatchTime.now().uptimeNanoseconds
+            source.textView.insertText(String(characters[index]),replacementRange:source.textView.selectedRange())
+            let revision=document.revision
+            wait(1_000,{preview.lastRevision==revision},"Serial edit did not reach the preview") {
+                serial.append(Double(DispatchTime.now().uptimeNanoseconds-started)/1_000_000)
+                DispatchQueue.main.asyncAfter(deadline:.now()+0.01){type(index+1)}
+            }
+        }
+        wait(12_000,{controller.hasPreparedDocument && controller.hasMeasuredPreviewDocument
+                && preview.lastRevision==document.revision && !preview.hasPendingPresentation},
+            "Typing profile did not settle") {
+            source.reveal(document.source.count,alignment:.minimalReveal)
+            source.textView.setSelectedRange(NSRange(location:document.source.count,length:0))
+            type(0)
+        }
     }
 
     private static func profileLargeDocument(_ controller:EditorWindowController,
@@ -436,7 +508,8 @@ import PDFKit
             preview.previewView.debugDidDraw={draws.append(DispatchTime.now().uptimeNanoseconds)}
             source.reveal(0,alignment:.top)
             wait(300,{abs(preview.visibleWebRange.lowerBound)<0.01 &&
-                preview.debugScrollMapError.map{abs($0)<1}==true},
+                preview.debugScrollMapError.map{abs($0)<1}==true &&
+                !preview.hasPendingPresentation},
                 "Preview did not reach the scroll benchmark start") {
                 publications.removeAll(keepingCapacity:true)
                 draws.removeAll(keepingCapacity:true)
@@ -456,6 +529,7 @@ import PDFKit
                             preview.debugScrollMapError.map{abs($0)<1}==true},
                             "Preview did not settle at the latest source viewport " +
                             "(expected=\(expected), published=\(String(describing:lastPoint?.y)), " +
+                            "publications=\(publications.count), draws=\(draws.count), " +
                             "mapError=\(String(describing:preview.debugScrollMapError)))") {
                             preview.previewView.debugScrollPublished=nil
                             preview.previewView.debugDidDraw=nil
@@ -2095,7 +2169,12 @@ import PDFKit
         check(controller.debugPressCommentReturn(shift:false),"Could not send Return to the comment editor")
         check(!controller.debugCommentPopoverIsShown,"Return must close the new-comment editor")
         @MainActor func waitForComment(_ remaining:Int) {
-            guard remaining>0 else{fail("Comment UI did not settle: comments=\(controller.sidebar.debugCommentCount), \(controller.preview.debugGeometry())")}
+            guard remaining>0 else {
+                let web=controller.preview.previewView
+                let bubbles=web.debugCount(".markato-comment-bubble")
+                let highlights=web.debugCount(".markato-comment-highlight")
+                fail("Comment UI did not settle: comments=\(controller.sidebar.debugCommentCount), sourceRanges=\(controller.source.debugCommentRangeCount), bubbles=\(bubbles), highlights=\(highlights), \(controller.preview.debugGeometry())")
+            }
             let web=controller.preview.previewView
             if controller.sidebar.debugCommentCount==1,controller.source.debugCommentRangeCount==1,
                controller.preview.lastRevision==document.revision,
@@ -2706,7 +2785,7 @@ import PDFKit
             let releaseFormulaY=preview.debugElementViewportRect(formulaSelector)?.minY
             let releaseFrame=preview.committedFrameID
             wait(800,{preview.lastRevision==document.revision && !preview.displaysCompleteDocument &&
-                !preview.isRenderingPresentation && preview.committedFrameID>releaseFrame &&
+                !preview.isRenderingPresentation &&
                 abs((preview.previewView.geometry()?.width ?? 0)-preview.bounds.width)<1},
                 "Final-width bounded presentation did not settle after mouse-up") {
                 window.contentView?.layoutSubtreeIfNeeded();window.displayIfNeeded()
@@ -2722,6 +2801,8 @@ import PDFKit
                     "Final-width bounded publication left a bitmap alignment residual")
                 DispatchQueue.main.asyncAfter(deadline:.now()+0.2) {
                     window.contentView?.layoutSubtreeIfNeeded();window.displayIfNeeded()
+                    check(preview.committedFrameID==releaseFrame,
+                        "Background measurement published an unrelated post-release frame")
                     check(preview.debugDOMResizeAnchorViewportY.flatMap { y in
                         preview.debugDOMResizeAnchorTargetViewportY.map{abs(y-$0)<1}
                     }==true,
@@ -2740,6 +2821,73 @@ import PDFKit
             }
         }
     }
+    private static func verifyPreviewWindowScrolling(_ controller:EditorWindowController,document:MarkdownDocument) {
+        let preview=controller.preview,source=controller.source
+        func wait(_ remaining:Int,_ ready:@escaping()->Bool,_ completion:@escaping()->Void) {
+            guard remaining>0 else{fail("Preview scrolling did not settle: \(preview.debugGeometry())")}
+            if ready() {completion()}
+            else {DispatchQueue.main.asyncAfter(deadline:.now()+0.01){wait(remaining-1,ready,completion)}}
+        }
+        func settled()->Bool {
+            let rect=preview.convert(preview.previewView.bounds,from:preview.previewView)
+            // Scroll painting runs asynchronously even when no DOM window is
+            // being replaced. Allow it to catch up before inspecting coverage.
+            return !preview.hasPendingPresentation && rect.minY<=1 && rect.maxY>=preview.bounds.height-1
+        }
+        func wheel(_ delta:Int32) {
+            let point=preview.convert(NSPoint(x:preview.bounds.midX,y:preview.bounds.midY),to:preview.superview)
+            guard let target=preview.hitTest(point),let event=scrollWheelEvent(units:.pixel,delta:delta) else {
+                fail("Missing hit-tested preview wheel receiver")
+            }
+            target.scrollWheel(with:event)
+        }
+        wait(1500,{controller.hasPreparedDocument && !preview.hasPendingPresentation && preview.lastRevision==document.revision}) {
+            let sourceOrigin=source.viewportOrigin
+            let initialRange=preview.displayedSourceRange!
+            @MainActor func step(_ index:Int) {
+                if index==180 {
+                    check(preview.clipOrigin<1,"Reverse preview scrolling did not return to the top")
+                    // Outrun asynchronous publication in one event, then reverse
+                    // through hit testing while the old bitmap is out of view.
+                    wheel(-12000)
+                    let beforeReverse=preview.clipOrigin
+                    wheel(160)
+                    check(abs(preview.clipOrigin-(beforeReverse-160))<1,
+                        "Exposed preview canvas swallowed a reverse wheel event")
+                    wait(800,{settled()}) {
+                        let rect=preview.convert(preview.previewView.bounds,from:preview.previewView)
+                        check(rect.minY<=1 && rect.maxY>=preview.bounds.height-1,
+                            "A large independent scroll did not load its destination")
+                        check(abs(source.viewportOrigin-sourceOrigin)<0.01,"A large preview scroll moved the editor")
+                        source.debugScrollViewport(by:80)
+                        wait(800,{!preview.debugIsIndependentlyScrolled && preview.coversSourceViewport &&
+                            preview.debugScrollMapError.map{abs($0)<0.01}==true}) {
+                            print("PREVIEW WINDOW SCROLL INTEGRATION PASSED");fflush(nil);_exit(EXIT_SUCCESS)
+                        }
+                    }
+                    return
+                }
+                if index==90 {
+                    check((preview.displayedSourceRange?.location ?? 0)>initialRange.location,
+                        "Preview scrolling never replenished its mounted window")
+                }
+                wheel(index<90 ? -160:160)
+                DispatchQueue.main.asyncAfter(deadline:.now()+0.06) {
+                    wait(800,{settled()}) {
+                        let rect=preview.convert(preview.previewView.bounds,from:preview.previewView)
+                        check(rect.minY<=1 && rect.maxY>=preview.bounds.height-1,
+                            "Preview scrolled past its mounted HTML: rect=\(rect), \(preview.debugGeometry())")
+                        check(!preview.isShowingLoadingState,"Independent preview exposed source-coverage loading state")
+                        check(abs(source.viewportOrigin-sourceOrigin)<0.01,"Preview scrolling moved the editor")
+                        check(!preview.displaysCompleteDocument,"Preview scrolling mounted the entire document")
+                        step(index+1)
+                    }
+                }
+            }
+            step(0)
+        }
+    }
+
     private static func verifyPreviewSideScrolling(_ controller:EditorWindowController,document:MarkdownDocument,
         wait:@escaping(Int,@escaping()->Bool,String,@escaping()->Void)->Void,completion:@escaping()->Void) {
         let source=controller.source,preview=controller.preview
@@ -3190,8 +3338,40 @@ import PDFKit
         source.textView.setSelectedRange(NSRange(location:document.source.count,length:0))
         let characters=Array(" flickercheck")
         var expected=""
+        func verifyBurst() {
+            let burst=Array(" burstpreview")
+            let initialRevision=document.revision
+            let retainedFrame=preview.committedFrameID
+            let crossRevisionCommits=preview.crossRevisionCommitCount
+            expected.append(burst[0])
+            source.textView.insertText(String(burst[0]),replacementRange:source.textView.selectedRange())
+            wait(800,{preview.isRenderingPresentation || preview.previewView.hasUncommittedPresentation},
+                "A burst's leading keystroke did not start preview presentation") {
+                let started=DispatchTime.now().uptimeNanoseconds
+                for character in burst.dropFirst() {
+                    expected.append(character)
+                    source.textView.insertText(String(character),replacementRange:source.textView.selectedRange())
+                }
+                check(document.revision==initialRevision+burst.count,
+                    "A typing burst must preserve every source revision")
+                check(preview.committedFrameID==retainedFrame,
+                    "A typing burst must retain the old coherent frame until the latest revision is ready")
+                let latestRevision=document.revision
+                wait(800,{preview.lastRevision==latestRevision && preview.previewView.debugText.contains(expected)},
+                    "The latest typing-burst revision did not reach the preview") {
+                    let latencyMs=Double(DispatchTime.now().uptimeNanoseconds-started)/1_000_000
+                    check(preview.crossRevisionCommitCount==crossRevisionCommits+1,
+                        "Obsolete typing-burst revisions must not be presented before the latest edit")
+                    check(preview.committedFrameID==retainedFrame+1,
+                        "A typing burst must publish exactly one replacement frame")
+                    check(latencyMs<100,
+                        "Latest-edit preview latency was \(latencyMs) ms; obsolete work delayed publication")
+                    completion()
+                }
+            }
+        }
         func step(_ index:Int) {
-            guard index<characters.count else {completion();return}
+            guard index<characters.count else {verifyBurst();return}
             let previousRevision=document.revision
             let retainedFrame=preview.committedFrameID
             let crossRevisionCommits=preview.crossRevisionCommitCount

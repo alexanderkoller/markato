@@ -226,3 +226,20 @@ private let previewLayout=PreviewLayoutID(width:640,fontSize:15,stylesheetGenera
     #expect(doc.previewLayout(for:"a")?.stride==47)
     #expect(doc.previewLayout(for:"a")?.state==measured.state)
 }
+
+@Test func previewViewportLookupTracksMeasurementsAndShiftedSourceRanges() {
+    let doc=PreparedDocument()
+    doc.adopt((0..<6).map{PreparedBlock(id:"\($0)",kind:"Paragraph",from:$0*10,to:($0+1)*10)},
+        revision:1,length:60)
+    measure(doc,["0":10,"1":20,"2":30,"3":40,"4":50,"5":60],revision:1)
+    #expect(doc.sourceRange(previewTop:0,height:0)==NSRange(location:0,length:10))
+    #expect(doc.sourceRange(previewTop:62,height:29)==NSRange(location:20,length:10))
+    #expect(doc.sourceRange(previewTop:61,height:31)==NSRange(location:10,length:30))
+    #expect(doc.sourceRange(previewTop:10000,height:100)==NSRange(location:50,length:10))
+    measure(doc,["0":110],revision:1)
+    #expect(doc.sourceRange(previewTop:162,height:29)==NSRange(location:20,length:10))
+    doc.adopt((0..<6).map{PreparedBlock(id:"\($0)",kind:"Paragraph",from:5+$0*10,to:5+($0+1)*10)},
+        revision:2,length:65)
+    #expect(doc.sourceRange(previewTop:162,height:29)==NSRange(location:25,length:10))
+    #expect(PreparedDocument().sourceRange(previewTop:0,height:100)==nil)
+}

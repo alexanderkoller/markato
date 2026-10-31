@@ -182,6 +182,48 @@ public struct SourceEdit:Sendable {
     public let range:NSRange
     public let insertedLength:Int
     public init(range:NSRange,insertedLength:Int) {self.range=range;self.insertedLength=insertedLength}
+
+    /// Conservatively combines a later edit, whose coordinates are in this
+    /// edit's result, into one replacement expressed in the original source.
+    /// Unchanged text between disjoint edits is deliberately included: the
+    /// parser may reprocess that bounded interval without losing the retained
+    /// prefix or suffix.
+    public func composed(with next:SourceEdit)->SourceEdit {
+        let oldStart=range.location,oldEnd=NSMaxRange(range)
+        let currentStart=oldStart,currentEnd=oldStart+insertedLength
+        let shift=insertedLength-range.length
+
+        func originalStart(_ position:Int)->Int {
+            if position<=currentStart {return position}
+            if position>=currentEnd {return position-shift}
+            return oldStart
+        }
+        func originalEnd(_ position:Int)->Int {
+            if position<currentStart {return position}
+            if position>=currentEnd {return position-shift}
+            return oldEnd
+        }
+        let combinedOldStart=min(oldStart,originalStart(next.range.location))
+        let combinedOldEnd=max(oldEnd,originalEnd(NSMaxRange(next.range)))
+
+        let nextShift=next.insertedLength-next.range.length
+        func transformedStart(_ position:Int)->Int {
+            if position<=next.range.location {return position}
+            if position>=NSMaxRange(next.range) {return position+nextShift}
+            return next.range.location
+        }
+        func transformedEnd(_ position:Int)->Int {
+            if position<next.range.location {return position}
+            if position>=NSMaxRange(next.range) {return position+nextShift}
+            return next.range.location+next.insertedLength
+        }
+        let combinedCurrentStart=min(transformedStart(currentStart),next.range.location)
+        let combinedCurrentEnd=max(transformedEnd(currentEnd),next.range.location+next.insertedLength)
+        precondition(combinedCurrentStart==combinedOldStart)
+        return SourceEdit(range:NSRange(location:combinedOldStart,
+            length:max(0,combinedOldEnd-combinedOldStart)),
+            insertedLength:max(0,combinedCurrentEnd-combinedCurrentStart))
+    }
 }
 public struct RegionalBlock:Sendable {
     public let id:BlockID
@@ -193,12 +235,13 @@ public struct RegionalBlock:Sendable {
     }
 }
 public struct RegionalParseContext:Sendable {
+    public let edit:SourceEdit
     public let range:NSRange
     public let prefix:Int,suffix:Int,shift:Int
     public let firstGuardID:BlockID?,lastGuardID:BlockID?
     public let blocks:[RegionalBlock]
-    public init(range:NSRange,prefix:Int,suffix:Int,shift:Int,firstGuardID:BlockID?,lastGuardID:BlockID?,blocks:[RegionalBlock]) {
-        self.range=range;self.prefix=prefix;self.suffix=suffix;self.shift=shift
+    public init(edit:SourceEdit,range:NSRange,prefix:Int,suffix:Int,shift:Int,firstGuardID:BlockID?,lastGuardID:BlockID?,blocks:[RegionalBlock]) {
+        self.edit=edit;self.range=range;self.prefix=prefix;self.suffix=suffix;self.shift=shift
         self.firstGuardID=firstGuardID;self.lastGuardID=lastGuardID;self.blocks=blocks
     }
 }

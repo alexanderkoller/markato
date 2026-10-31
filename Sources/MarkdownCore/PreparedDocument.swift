@@ -339,7 +339,7 @@ public final class PreparedDocument {
             blocks.append(RegionalBlock(id:node.block.id,kind:node.block.kind,
                 from:node.block.from,to:node.block.to,html:html))
         }
-        return RegionalParseContext(range:NSRange(location:newFrom,length:newTo-newFrom),
+        return RegionalParseContext(edit:edit,range:NSRange(location:newFrom,length:newTo-newFrom),
             prefix:first,suffix:count-last-1,shift:delta,
             firstGuardID:first<firstOwner ? blocks.first?.id:nil,
             lastGuardID:last>lastOwner ? blocks.last?.id:nil,blocks:blocks)
@@ -620,6 +620,23 @@ public final class PreparedDocument {
     }
     /// Returns cached blocks around a source viewport. The tree supplies the
     /// global preview extent; no document-sized placeholder enters the HTML engine.
+    /// Locate a preview viewport in the retained height tree in O(log n).
+    public func sourceRange(previewTop:Double,height:Double)->NSRange? {
+        func block(at y:Double)->BlockNode? {
+            var current=root,position=max(0,y-32)
+            while let node=current {
+                node.push()
+                let left=node.left?.previewSum ?? 0
+                if position<left {current=node.left}
+                else if position<left+node.effectivePreviewHeight || node.right == nil {return node}
+                else {position -= left+node.effectivePreviewHeight;current=node.right}
+            }
+            return nil
+        }
+        guard let first=block(at:previewTop),let last=block(at:previewTop+max(0,height)) else{return nil}
+        return NSRange(location:first.start,length:max(0,last.end-first.start))
+    }
+
     public func window(covering range:NSRange,before:Double,after:Double)->RenderedWindow? {
         var blocks=selected(range)
         if blocks.isEmpty,length==0 {

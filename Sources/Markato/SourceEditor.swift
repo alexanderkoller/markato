@@ -814,15 +814,16 @@ final class SourceEditor:NSView,NSTextViewDelegate,NSTextStorageDelegate,ScrollS
         // resize layout only; it must not survive into an edit.
         clearResizePin()
         pendingNavigation=nil;retainedNavigationPin=nil
+        let insertedText=edit.insertedLength>0
+            ? document.source.string(in:NSRange(location:edit.range.location,length:edit.insertedLength)):""
         let insertedAnchor:Int = {
             guard edit.insertedLength>0 else{return edit.range.location}
-            let source=document.source.string as NSString
-            let start=edit.range.location,end=min(source.length,start+edit.insertedLength)
-            var cursor=end
-            while cursor>start,
-                  let scalar=UnicodeScalar(source.character(at:cursor-1)),
+            let inserted=insertedText as NSString
+            var cursor=inserted.length
+            while cursor>0,
+                  let scalar=UnicodeScalar(inserted.character(at:cursor-1)),
                   CharacterSet.whitespacesAndNewlines.contains(scalar) {cursor -= 1}
-            return max(start,cursor-1)
+            return edit.range.location+max(0,cursor-1)
         }()
         latestEditAnchor=min(document.source.count,max(0,semanticAnchor ?? insertedAnchor))
         highlightRevision=document.revision;deferredHighlights.removeAll()
@@ -843,6 +844,9 @@ final class SourceEditor:NSView,NSTextViewDelegate,NSTextStorageDelegate,ScrollS
         // so every model-driven edit preserves the surrounding source view.
         // This is the general form of the stability rule formerly applied
         // only to serialized comment records.
+        #if DEBUG
+        let viewportAnchorWork=TimingDiagnostics.shared.begin("source.edit.anchor")
+        #endif
         let editViewportAnchor:Int? = {
             let top=scroll.contentView.bounds.minY,bottom=top+scroll.contentSize.height
             let oldText=textView.string as NSString
@@ -855,6 +859,9 @@ final class SourceEditor:NSView,NSTextViewDelegate,NSTextStorageDelegate,ScrollS
                 return y>=top-2 && y<=bottom+2
             }
         }()
+        #if DEBUG
+        TimingDiagnostics.shared.end(viewportAnchorWork,values:["revision":Double(document.revision)])
+        #endif
         func shiftedRecordRange(_ record:NSRange)->NSRange {
             let start:Int
             if record.location>=end {start=record.location+delta}
@@ -897,11 +904,22 @@ final class SourceEditor:NSView,NSTextViewDelegate,NSTextStorageDelegate,ScrollS
             }
             textView.setSelectedRange(selection)
         }
+        #if DEBUG
+        let commentPaintWork=TimingDiagnostics.shared.begin("source.edit.comment-paint")
+        #endif
+        if commentRanges.isEmpty,selectedCommentRange==nil,paintedCommentRanges.isEmpty {
+            #if DEBUG
+            TimingDiagnostics.shared.end(commentPaintWork,values:["revision":Double(document.revision),
+                "skipped":1])
+            #endif
+            return
+        }
         let cleared=clearInheritedCommentHighlight(around:edit)
-        let inserted=edit.insertedLength>0
-            ? document.source.string(in:NSRange(location:edit.range.location,length:edit.insertedLength)):""
-        let changesLines=edit.range.length>0 || inserted.contains("\n") || inserted.contains("\r")
+        let changesLines=edit.range.length>0 || insertedText.contains("\n") || insertedText.contains("\r")
         applyCommentHighlights(repainting:cleared,rebuild:changesLines)
+        #if DEBUG
+        TimingDiagnostics.shared.end(commentPaintWork,values:["revision":Double(document.revision)])
+        #endif
     }
     private func clearInheritedCommentHighlight(around edit:SourceEdit)->NSRange? {
         guard let manager=textView.layoutManager else{return nil}

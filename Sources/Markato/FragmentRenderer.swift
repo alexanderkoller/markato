@@ -180,6 +180,12 @@ private struct PendingPreviewFrame {
         clearIdleAnchorLock()
         sourceLayoutChanged()
     }}
+    var independentViewportChanged:(()->Void)?
+    var followsIndependentViewport:Bool {source == nil || detachedSourceOrigin != nil}
+    var independentSourceRange:NSRange? {
+        guard followsIndependentViewport else{return nil}
+        return preparedDocument?.sourceRange(previewTop:Double(independentOrigin),height:Double(bounds.height))
+    }
     var openAnchor:((String)->Void)?
     var openComment:((String,NSView,NSRect)->Void)?
     var commentAnchorChanged:((NSRect?)->Void)?
@@ -213,6 +219,8 @@ private struct PendingPreviewFrame {
     private let loadingLabel=NSTextField(labelWithString:"Loading preview…")
     #if DEBUG
     private var loadingWait:TimingDiagnostics.Interval?
+    private var editPresentationWait:(revision:Int,inserted:Int,removed:Int,
+        interval:TimingDiagnostics.Interval)?
     #endif
     private var committed:CommittedPresentation?
     private var content:PreviewContent?
@@ -288,11 +296,15 @@ private struct PendingPreviewFrame {
         let sourceRange=committed.request.content.sourceRange
         let visibleSource=source.visibleSourceRange
         let visiblePreview=visibleWebRange
-        // Begin replacing the bounded browser window while a substantial
-        // rendered runway remains. At the sustained fast-scroll test rate this
-        // covers the renderer's long-tail patch and paint latency without making the
-        // mounted DOM depend on document length.
-        let reserve=max(1,bounds.height)*12
+        // Replenish before the viewport reaches the edge, but keep the runway
+        // small enough that a jump never leaves a hundred-block DOM update in
+        // front of the next keystroke.
+        let reserve=max(1,bounds.height)*2
+        if followsIndependentViewport {
+            return (sourceRange.location>0 && visiblePreview.lowerBound<reserve) ||
+                (NSMaxRange(sourceRange)<committed.request.content.sourceLength &&
+                    visiblePreview.upperBound>committed.geometry.height-reserve)
+        }
         let needsBefore=sourceRange.location>0 && visibleSource.location>sourceRange.location
             && visiblePreview.lowerBound<reserve
         let needsAfter=NSMaxRange(sourceRange)<committed.request.content.sourceLength
@@ -377,6 +389,9 @@ private struct PendingPreviewFrame {
     private var hasCurrentMap:Bool {
         guard let committed else{return false}
         guard let source else{return true}
+        // Independent movement uses preview coordinates; source coverage and
+        // source layout freshness become relevant again when the editor moves.
+        if followsIndependentViewport {return source.contentRevision==committed.request.revision}
         return source.hasMeasuredLayout && source.contentRevision==committed.request.revision &&
             source.geometryRevision==committed.sourceGeometryRevision && committed.viewportHeight==bounds.height
     }
@@ -395,7 +410,7 @@ private struct PendingPreviewFrame {
             // requiring them for stale content briefly exposed the loading
             // view on every edit.
             hidden=committed != nil && web.isEngineReady &&
-                (replacingContent || (coversSourceViewport && hasCurrentMap))
+                (replacingContent || ((followsIndependentViewport || coversSourceViewport) && hasCurrentMap))
         }
         #if DEBUG
         if !hidden,loadingWait==nil {loadingWait=TimingDiagnostics.shared.begin("preview.loading")}
@@ -403,6 +418,8 @@ private struct PendingPreviewFrame {
         #endif
         loadingView.isHidden=hidden
     }
+    // Wheel events over exposed canvas still bubble to this stationary pane.
+    override func scrollWheel(with event:NSEvent) {web.scrollWheel(with:event)}
     private func handleVerticalScroll(_ event:NSEvent) {
         let delta=event.hasPreciseScrollingDeltas ? event.scrollingDeltaY :
             event.scrollingDeltaY*(source?.verticalLineScroll ?? max(1,fontSize*1.5))
@@ -424,6 +441,7 @@ private struct PendingPreviewFrame {
             detachedSourceRevision=source.contentRevision
         }
         independentOrigin=origin;place()
+        if needsWindowReplenishment {independentViewportChanged?()}
     }
     private func resumeSourceAlignmentIfNeeded() {
         guard let origin=detachedSourceOrigin,let revision=detachedSourceRevision,let source,
@@ -529,8 +547,17 @@ private struct PendingPreviewFrame {
     func invalidate() {
         failedParseRevision=nil
         clearResizePin()
-        endScrollGesture();version += 1;content=nil;desired=nil;updateLoadingState()
+        endScrollGesture();version += 1;content=nil;desired=nil
+        cancelRenderingPresentation()
+        updateLoadingState()
     }
+    #if DEBUG
+    func beginEditTiming(revision:Int,edit:SourceEdit) {
+        editPresentationWait=TimingDiagnostics.shared.begin("edit.to.preview").map{
+            (revision:revision,inserted:edit.insertedLength,removed:edit.range.length,interval:$0)
+        }
+    }
+    #endif
     func show(_ result:ParseResult) {
         let existing=Dictionary((content?.entries ?? []).map{($0.fragment.from,$0.blockID)},uniquingKeysWith:{first,_ in first})
         show(result.fragments.map{RenderedEntry(id:$0.id ?? existing[$0.from] ?? BlockID(UInt64.random(in:1...UInt64.max)),fragment:$0)},revision:result.revision)
@@ -578,6 +605,11 @@ private struct PendingPreviewFrame {
             previewTop:content.previewTop,previewHeight:content.previewHeight)
         desired=PreviewRequest(id:version,content:presented,fontSize:fontSize,baseURL:baseURL,width:bounds.width)
         preparePresentation()
+    }
+    private func cancelRenderingPresentation() {
+        guard let request=rendering else{return}
+        web.cancelPresentation(token:request.id)
+        rendering=nil;renderAnchor=nil
     }
     private func preparePresentation() {
         guard !isScrollMappingFrozen,rendering==nil,let request=desired,web.isEngineReady,
@@ -849,7 +881,7 @@ private struct PendingPreviewFrame {
     private func finishPreparation(_ request:PreviewRequest,keepDesired:Bool=false) {
         guard rendering?.id==request.id else{return}
         rendering=nil;renderAnchor=nil
-        if !keepDesired,desired?.id==request.id,coversSourceViewport {desired=nil}
+        if !keepDesired,desired?.id==request.id,(followsIndependentViewport || coversSourceViewport) {desired=nil}
         presentationSettled?()
         if desired?.id != request.id {preparePresentation()}
     }
@@ -965,22 +997,22 @@ private struct PendingPreviewFrame {
         if debugFailsNextPosition {debugFailsNextPosition=false;return nil}
         #endif
         let extent=previewExtent(request,geometry)
-        // A revision commit preserves the viewport that exists now, not a
-        // destination remembered when the edit began. Thus an instantaneous
-        // edit jump survives ordinary publication, while any intervening
-        // source or preview scroll is preserved instead.
-        let currentAnchor=anchor ?? (committed?.request.revision != request.revision
-            ? captureViewportAnchor():nil)
+        // Preserve the instantaneous edit reveal only until explicit source
+        // navigation resumes synchronized scrolling. If the source moved
+        // before this revision finished, its live map owns the late commit;
+        // capturing the old preview viewport here would undo that scroll.
+        let currentAnchor=anchor ?? (followsIndependentViewport ? captureViewportAnchor():nil) ?? (committed?.request.revision != request.revision &&
+            waitsForSourceNavigationAfterEdit ? captureViewportAnchor():nil)
         let resizeOrigin=usesDOMResizeAnchor ? resizeAnchorScrollY.map {
             min(max(0,extent.total-bounds.height),max(0,extent.top+$0))
         }:nil
-        switch scrolling {
-        case .independent:
+        if followsIndependentViewport {
             guard let origin=resizeOrigin ?? pinnedResizeOrigin(geometry:geometry,windowTop:extent.top,totalHeight:extent.total) ??
                     resolvedOrigin(currentAnchor,geometry:geometry,windowTop:extent.top,totalHeight:extent.total) ??
                     targetOrigin(height:extent.total,map:nil) else{return nil}
             return PresentationPosition(map:nil,sourceGeometryRevision:nil,origin:origin,windowTop:extent.top,totalHeight:extent.total)
-        case .synchronized(let source):
+        }
+        if let source {
             guard covers(request.content,visible:source.visibleSourceRange) else{return nil}
             if resizeSession?.protectsViewport == true {
                 guard let origin=resizeOrigin ?? pinnedResizeOrigin(geometry:geometry,windowTop:extent.top,
@@ -993,6 +1025,7 @@ private struct PendingPreviewFrame {
                     targetOrigin(height:extent.total,map:map) else{return nil}
             return PresentationPosition(map:map,sourceGeometryRevision:source.geometryRevision,origin:origin,windowTop:extent.top,totalHeight:extent.total)
         }
+        return nil
     }
     @discardableResult private func commit(_ request:PreviewRequest,frame:HTMLPreviewFrame,
         position:PresentationPosition,requiresCurrent:Bool=true,preservePixels:Bool=false)->Bool {
@@ -1002,12 +1035,12 @@ private struct PendingPreviewFrame {
            committed?.request.revision==request.revision {return false}
         if let source {
             guard source.contentRevision==request.revision,
-                  covers(request.content,visible:source.visibleSourceRange) else{return false}
+                  (followsIndependentViewport || covers(request.content,visible:source.visibleSourceRange)) else{return false}
             // A pinned resize position is derived only from the retained preview
             // anchor. Source and preview reflow independently during the gesture,
             // so source geometry freshness is neither required nor meaningful
             // until finishResizeLayout rebuilds their scroll map.
-            if resizeSession?.protectsViewport != true,
+            if !followsIndependentViewport,resizeSession?.protectsViewport != true,
                position.sourceGeometryRevision != source.geometryRevision {return false}
         }
         #if DEBUG
@@ -1022,6 +1055,12 @@ private struct PendingPreviewFrame {
             preservedImageOffsetY:preservePixels ? previousPaintedOffset-nextPaintedOffset:0)
         #if DEBUG
         committedFrameID += 1
+        if let wait=editPresentationWait,wait.revision==request.revision {
+            TimingDiagnostics.shared.end(wait.interval,values:["revision":Double(request.revision),
+                "mountedBlocks":Double(request.entries.count),"inserted":Double(wait.inserted),
+                "removed":Double(wait.removed)])
+            editPresentationWait=nil
+        }
         #endif
         committed=CommittedPresentation(request:request,geometry:frame.geometry,map:position.map,sourceGeometryRevision:position.sourceGeometryRevision,viewportHeight:bounds.height,windowTop:position.windowTop,totalHeight:position.totalHeight)
         if desired?.id==request.id {desired=nil}
@@ -1104,7 +1143,7 @@ private struct PendingPreviewFrame {
     private func place() {
         guard let committed else{return}
         if let source,source.contentRevision != committed.request.revision {return}
-        if !isScrollMappingFrozen {refreshMap()}
+        if !isScrollMappingFrozen,!followsIndependentViewport {refreshMap()}
         guard hasCurrentMap,let current=self.committed else{return}
         let anchored=idleAnchorLock.flatMap {
             resolvedOrigin($0,geometry:current.geometry,windowTop:current.windowTop,totalHeight:current.totalHeight)

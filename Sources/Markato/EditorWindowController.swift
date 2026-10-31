@@ -158,7 +158,7 @@ final class EditorWindowController: NSWindowController, NSSplitViewDelegate, NSS
     private let preparedDocument=PreparedDocument()
     private var backgroundRevision = -1
     private var presentationPending=false
-    private var pendingRegional:(revision:Int,context:RegionalParseContext)?
+    private var pendingRegional:(revision:Int,edit:SourceEdit,context:RegionalParseContext)?
     private var pendingCommentInsertion:(body:String,selection:NSRange)?
     private var publishedOutlineGeneration = -1
     private var isClosed=false
@@ -280,13 +280,17 @@ final class EditorWindowController: NSWindowController, NSSplitViewDelegate, NSS
             self.showCommentPopover(id:id,relativeTo:self.preview.selectedCommentAnchor ?? stableAnchor)
         }
         preview.commentAnchorChanged = { [weak self] anchor in self?.commentAnchorDidChange(anchor) }
+        preview.independentViewportChanged = { [weak self] in
+            guard let self else{return}
+            self.showPreparedDocument(revision:self.markdownDocument.revision)
+        }
         preview.presentationSettled = { [weak self] in
             guard let self,!self.isClosed,let document=self.document as? MarkdownDocument else{return}
             if self.openingRequested {self.showWindow(nil)}
             // A settled render frees the renderer for the latest coalesced
             // viewport even during a gesture. PreviewPane keeps the landmark
             // map frozen while it prepares and atomically anchors the new window.
-            if self.presentationPending {
+            if self.presentationPending || (self.preview.followsIndependentViewport && self.preview.needsWindowReplenishment) {
                 self.showPreparedDocument(revision:document.revision,
                     forceViewportWindow:self.resizeSession != nil)
             }
@@ -309,6 +313,11 @@ final class EditorWindowController: NSWindowController, NSSplitViewDelegate, NSS
         preview.baseURL = document.fileURL?.deletingLastPathComponent()
         document.edited = { [weak self] selection,_,edit in
             guard let self,!self.isClosed else { return }
+            #if DEBUG
+            let editCallbackWork=TimingDiagnostics.shared.begin("editor.edit.callback")
+            defer {TimingDiagnostics.shared.end(editCallbackWork,values:["revision":Double(document.revision)])}
+            self.preview.beginEditTiming(revision:document.revision,edit:edit)
+            #endif
             let inserted=edit.insertedLength>0
                 ? document.source.string(in:NSRange(location:edit.range.location,length:edit.insertedLength)):""
             let editedComment=self.comments.first {value in
@@ -326,9 +335,15 @@ final class EditorWindowController: NSWindowController, NSSplitViewDelegate, NSS
                 ? edit.range.location>=visibleBeforeEdit.location &&
                     edit.range.location<=NSMaxRange(visibleBeforeEdit)
                 : NSIntersectionRange(edit.range,visibleBeforeEdit).length>0
-            if self.preparedDocument.revision==document.revision-1,
-               let context=self.preparedDocument.regionalContext(for:edit,newLength:document.source.count) {
-                self.pendingRegional=(document.revision,context)
+            let regionalEdit:SourceEdit?
+            if self.preparedDocument.revision==document.revision-1 {regionalEdit=edit}
+            else if let pending=self.pendingRegional,pending.revision==document.revision-1 {
+                regionalEdit=pending.edit.composed(with:edit)
+            } else {regionalEdit=nil}
+            if let regionalEdit,
+               let context=self.preparedDocument.regionalContext(for:regionalEdit,
+                    newLength:document.source.count) {
+                self.pendingRegional=(document.revision,regionalEdit,context)
             } else {self.pendingRegional=nil}
             self.cancelParseRetry();self.hideParseError()
             if let presented=self.presentationRange {
@@ -350,11 +365,31 @@ final class EditorWindowController: NSWindowController, NSSplitViewDelegate, NSS
             self.lastRequest = nil
             self.source.endScrollGesture()
             self.presentationPending=false
+            #if DEBUG
+            let invalidateWork=TimingDiagnostics.shared.begin("editor.edit.invalidate")
+            #endif
             self.preview.invalidate()
+            #if DEBUG
+            TimingDiagnostics.shared.end(invalidateWork,values:["revision":Double(document.revision)])
+            let sourceWork=TimingDiagnostics.shared.begin("editor.edit.source")
+            #endif
             self.source.documentEdited(selection:selection,edit:edit,semanticAnchor:commentAnchor)
-            if editWasVisible {
+            #if DEBUG
+            TimingDiagnostics.shared.end(sourceWork,values:["revision":Double(document.revision)])
+            #endif
+            // Persisting a derived rendered-text selector is not a user edit
+            // destination. It may finish after the user has already scrolled;
+            // treating it as one would reacquire the edit viewport and pull
+            // the preview back to the comment record.
+            if editWasVisible && !self.synchronizingCommentRecord {
+                #if DEBUG
+                let navigationWork=TimingDiagnostics.shared.begin("editor.edit.navigation")
+                #endif
                 self.preview.navigate(toSourceOffset:self.source.editAnchor,
                     viewportY:self.source.editAnchorViewportY)
+                #if DEBUG
+                TimingDiagnostics.shared.end(navigationWork,values:["revision":Double(document.revision)])
+                #endif
             }
             self.shiftResolvedComments(for:edit)
             if let pending=self.pendingCommentInsertion {
@@ -439,6 +474,7 @@ final class EditorWindowController: NSWindowController, NSSplitViewDelegate, NSS
         source.scrollGestureChanged=nil;source.navigationRequested=nil
         source.scrollOverflow=nil
         preview.presentationSettled=nil
+        preview.independentViewportChanged=nil
         sidebar.activateHeading=nil
         sidebar.activateComment=nil;sidebar.openComment=nil;sidebar.clearCommentSelection=nil;sidebar.toggleCommentResolved=nil
         preview.openComment=nil;preview.commentAnchorChanged=nil
@@ -596,29 +632,45 @@ final class EditorWindowController: NSWindowController, NSSplitViewDelegate, NSS
             presentationPending=true
             return
         }
-        let visible=source.visibleSourceRange
+        let independentRange=preview.independentSourceRange
+        let visible=independentRange ?? source.visibleSourceRange
         let requestedRange:NSRange
         let usesPreservedEditRange=preservedEditPresentationRevision==revision
         let reusesPresentedWindow:Bool
-        if forceViewportWindow {requestedRange=visible;reusesPresentedWindow=false}
+        let selectionKind:Double
+        if forceViewportWindow || independentRange != nil {requestedRange=visible;reusesPresentedWindow=false;selectionKind=1}
         else if usesPreservedEditRange,let presented=presentationRange,presented.0==revision,
            presented.1.location<=visible.location,NSMaxRange(presented.1)>=NSMaxRange(visible),
            preparedDocument.entries(covering:presented.1) != nil {
             requestedRange=presented.1
             reusesPresentedWindow=true
+            selectionKind=2
         } else if let request=lastRequest,request.revision==revision,
            request.range.location<=visible.location,NSMaxRange(request.range)>=NSMaxRange(visible) {
             requestedRange=request.range
             reusesPresentedWindow=false
-        } else {requestedRange=visible;reusesPresentedWindow=false}
+            selectionKind=3
+        } else {requestedRange=visible;reusesPresentedWindow=false;selectionKind=0}
         // presentationRange already includes the scroll reserve. Re-expanding
         // it after every edit changes the DOM shape and prevents the renderer
         // from replacing only the changed block at its stable index.
-        // Twelve viewports on each side give a roughly 24-viewport runway.
-        let reach=reusesPresentedWindow ? 0 : max(1,Double(preview.bounds.height))*12
+        // Three viewports on each side keep ordinary scrolling prepared while
+        // bounding a destination layout tightly enough for immediate edits.
+        let reach=reusesPresentedWindow ? 0 : max(1,Double(preview.bounds.height))*3
         guard let window=preparedDocument.window(covering:requestedRange,before:reach,after:reach) else {
             viewportChanged(visible);return
         }
+        #if DEBUG
+        let selectionWork=TimingDiagnostics.shared.begin("preview.window.select")
+        TimingDiagnostics.shared.end(selectionWork,values:[
+            "revision":Double(revision),"kind":selectionKind,
+            "usesPreserved":usesPreservedEditRange ? 1:0,
+            "visibleLocation":Double(visible.location),"visibleLength":Double(visible.length),
+            "requestedLocation":Double(requestedRange.location),"requestedLength":Double(requestedRange.length),
+            "reach":reach,"windowLocation":Double(window.range.location),
+            "windowLength":Double(window.range.length),"entries":Double(window.entries.count)
+        ])
+        #endif
         refreshRenderedCommentAnchors(in:window.entries)
         presentationRange=(revision,window.range)
         if usesPreservedEditRange {preservedEditPresentationRevision=nil}
@@ -635,9 +687,9 @@ final class EditorWindowController: NSWindowController, NSSplitViewDelegate, NSS
         preview.show(window.entries,revision:revision,sourceRange:window.range,
             previewTop:window.previewTop,previewHeight:window.previewHeight)
     }
-    private func refreshRenderedCommentAnchors(in entries:[RenderedEntry]) {
+    private func refreshRenderedCommentAnchors(in entries:[RenderedEntry],sourceText:String?=nil) {
         guard !comments.isEmpty,!entries.isEmpty else{return}
-        let sourceText=markdownDocument.source.string
+        let sourceText=sourceText ?? markdownDocument.source.string
         var dirty=Set<String>()
         comments=comments.map {value in
             guard let range=value.anchorRange,range.length>0,
@@ -716,13 +768,16 @@ final class EditorWindowController: NSWindowController, NSSplitViewDelegate, NSS
         let layoutID=preview.currentLayoutID
         guard let window=preparedDocument.measurementWindow(from:cursor,layoutID:layoutID,
             // Ultralight layout is non-preemptible on its thread. Keep each
-            // background slice below a frame budget so a newly queued visible
-            // scroll never waits behind a large measurement transaction.
-            maximumBlocks:32) else {
+            // background slice comfortably below a frame budget. Queued slices
+            // are discarded by a new visible revision; at most this in-flight
+            // slice can delay it.
+            maximumBlocks:4) else {
             previewMeasurementRevision = -1
             completedPreviewMeasurementRevision=revision
-            if source.isScrolling || preview.isRenderingPresentation {presentationPending=true}
-            else {showPreparedDocument(revision:revision,forceViewportWindow:true)}
+            // Measurement refines retained offscreen geometry only. Replacing
+            // the visible window here used to turn completion of background
+            // work into a second, unrelated presentation after every edit.
+            // The next navigation or scroll consumes the refined geometry.
             return
         }
         let expected=Dictionary(uniqueKeysWithValues:window.entries.map{($0.blockID,$0.contentVersion)})
@@ -828,7 +883,13 @@ final class EditorWindowController: NSWindowController, NSSplitViewDelegate, NSS
                     return ResolvedMarkdownComment(comment:comment,recordRange:value.recordRange,
                         anchorRange:value.anchorRange)
                 }
-                self.comments=reconciled;self.sidebar.setComments(reconciled)
+                self.comments=reconciled
+                if let presented=self.presentationRange,
+                   presented.0==revision,
+                   let entries=self.preparedDocument.entries(covering:presented.1) {
+                    self.refreshRenderedCommentAnchors(in:entries,sourceText:rope.string)
+                }
+                self.sidebar.setComments(self.comments)
                 self.source.setCommentRecordRanges(reconciled.map(\.recordRange))
                 let active=reconciled.filter{$0.comment.status == .open}.compactMap(\.anchorRange)
                 let selectedComment=self.selectedCommentID.flatMap {id in reconciled.first(where:{$0.comment.id==id})}
@@ -837,7 +898,7 @@ final class EditorWindowController: NSWindowController, NSSplitViewDelegate, NSS
                     $0.anchorRange ?? NSRange(location:min($0.comment.anchor.position ?? 0,self.markdownDocument.source.count),length:0)
                 }
                 self.source.setCommentRanges(active);self.source.setSelectedCommentRange(selected)
-                self.preview.comments=reconciled;self.preview.selectedCommentID=self.selectedCommentID
+                self.preview.comments=self.comments;self.preview.selectedCommentID=self.selectedCommentID
                 // Migrate verbose v3 selectors in place once their full range
                 // has resolved. This is a bounded metadata replacement per
                 // affected record; the surrounding Markdown is retained.

@@ -284,18 +284,48 @@ private final class HTMLRendererExecutor {
             if width != pixelSize.width || height != pixelSize.height || scale != pixelSize.scale {
                 pixelSize=(width,height,scale);astra_ul_surface_resize(engine,width,height,scale)
             }
+            #if DEBUG
+            let entriesWork=TimingDiagnostics.shared.begin("renderer.layout.entries")
+            #endif
             astra_ul_surface_begin_update(engine,request.entries.count,request.fontSize)
             for entry in request.entries {
-                guard let html=entry.fragment.html else{return nil}
+                guard let html=entry.fragment.html else {
+                    #if DEBUG
+                    TimingDiagnostics.shared.end(entriesWork)
+                    #endif
+                    return nil
+                }
                 let prepared=assets.prepare(html,baseURL:request.baseURL)
                 entry.id.withCString {id in prepared.withCString {body in
                     astra_ul_surface_add_entry(engine,id,body,entry.fragment.from==0)
                 }}
             }
-            guard astra_ul_surface_commit_update(engine) else{return nil}
+            #if DEBUG
+            let previousIDs=Set(entryIDs),nextIDs=Set(request.entries.map(\.id))
+            TimingDiagnostics.shared.end(entriesWork,values:["revision":Double(request.revision),
+                "mountedBlocks":Double(request.entries.count)])
+            let commitWork=TimingDiagnostics.shared.begin("renderer.layout.dom")
+            #endif
+            let committed=astra_ul_surface_commit_update(engine)
+            #if DEBUG
+            TimingDiagnostics.shared.end(commitWork,values:["revision":Double(request.revision),
+                "mountedBlocks":Double(request.entries.count),
+                "retainedBlocks":Double(previousIDs.intersection(nextIDs).count),
+                "insertedBlocks":Double(nextIDs.subtracting(previousIDs).count),
+                "removedBlocks":Double(previousIDs.subtracting(nextIDs).count)])
+            #endif
+            guard committed else{return nil}
             committedPaintToken=request.token
             entries=request.entries;entryIDs=request.entries.map(\.id)
-            guard updateGeometry(ids:Set(entryIDs)) else{return nil}
+            #if DEBUG
+            let geometryWork=TimingDiagnostics.shared.begin("renderer.layout.geometry")
+            #endif
+            let updatedGeometry=updateGeometry(ids:Set(entryIDs))
+            #if DEBUG
+            TimingDiagnostics.shared.end(geometryWork,values:["revision":Double(request.revision),
+                "mountedBlocks":Double(request.entries.count)])
+            #endif
+            guard updatedGeometry else{return nil}
             _=drainDirtyIDs()
             if astra_ul_surface_pending_resource_count(engine)>0 {
                 let now=Date();resourceStarted=now
@@ -308,13 +338,33 @@ private final class HTMLRendererExecutor {
         }
 
         func capture(token:Int,point:NSPoint)->HTMLPreviewFrame? {
-            guard let engine,request?.token==token else{return nil}
+            guard let engine,let request,request.token==token else{return nil}
             let mustPaint=committedPaintToken==token
+            #if DEBUG
+            let paintWork=TimingDiagnostics.shared.begin("renderer.capture.paint")
+            #endif
             scrollAndRender(engine,to:point,forcePaint:mustPaint)
+            #if DEBUG
+            TimingDiagnostics.shared.end(paintWork,values:["revision":Double(request.revision)])
+            let geometryWork=TimingDiagnostics.shared.begin("renderer.capture.geometry")
+            #endif
             let dirty=drainDirtyIDs()
-            if !dirty.isEmpty,!updateGeometry(ids:dirty) {return nil}
+            let updatedGeometry=dirty.isEmpty || updateGeometry(ids:dirty)
+            #if DEBUG
+            TimingDiagnostics.shared.end(geometryWork,values:["revision":Double(request.revision),
+                "dirtyBlocks":Double(dirty.count)])
+            #endif
+            if !updatedGeometry {return nil}
             if astra_ul_surface_pending_resource_count(engine)>0,resourceStarted==nil {resourceStarted=Date()}
-            guard let bitmap=makeBitmap() else{return nil}
+            #if DEBUG
+            let bitmapWork=TimingDiagnostics.shared.begin("renderer.capture.bitmap")
+            #endif
+            let bitmap=makeBitmap()
+            #if DEBUG
+            TimingDiagnostics.shared.end(bitmapWork,values:["revision":Double(request.revision),
+                "pixelBytes":Double(pixelData.count)])
+            #endif
+            guard let bitmap else{return nil}
             if mustPaint {committedPaintToken=nil}
             paintedScrollPoint=point
             return makeFrame(bitmap:bitmap,measuredIDs:dirty.isEmpty ? Set(entryIDs):dirty,cause:.request)
@@ -603,6 +653,23 @@ private final class HTMLRendererExecutor {
     }
 
     private final class QueueState {
+        /// Foreground presentation is latest-wins. A source edit can replace a
+        /// request while its layout or bitmap copy is still queued; checking
+        /// this gate on the renderer thread keeps obsolete work from delaying
+        /// the next visible revision.
+        final class PresentationGate {
+            private let lock=NSLock()
+            private var token:Int?
+            func begin(_ token:Int) {lock.lock();self.token=token;lock.unlock()}
+            func cancel(_ token:Int?=nil) {
+                lock.lock()
+                if token == nil || self.token == token {self.token=nil}
+                lock.unlock()
+            }
+            func isCurrent(_ token:Int)->Bool {
+                lock.lock();defer{lock.unlock()};return self.token==token
+            }
+        }
         private struct ScrollWork {
             let generation:Int
             let token:Int
@@ -610,9 +677,19 @@ private final class HTMLRendererExecutor {
             let settles:Bool
             let completion:(HTMLPreviewPaintResult?)->Void
         }
+        struct QueuedTask {
+            let presentationToken:Int?
+            let run:(ThreadState)->Void
+            let cancel:()->Void
+        }
+        struct MeasurementTask {
+            let revision:Int
+            let run:(ThreadState)->Void
+            let cancel:()->Void
+        }
         let condition=NSCondition()
-        var tasks=[(ThreadState)->Void]()
-        var measurementTasks=[(ThreadState)->Void]()
+        private var tasks=[QueuedTask]()
+        private var measurementTasks=[MeasurementTask]()
         private var pendingScroll:ScrollWork?
         private var latestScrollGeneration=0
         let sdkRoot:String,css:String
@@ -635,7 +712,7 @@ private final class HTMLRendererExecutor {
             if let callback {DispatchQueue.main.async(execute:callback)}
             while true {
                 if activeScroll == nil,renderer.needsResourceTicks,Date()>=nextResourceTick {
-                    let frame=autoreleasepool(invoking:{renderer.resourceTick()})
+                    let frame=autoreleasepool(invoking:{timedResourceTick(renderer)})
                     nextResourceTick=Date(timeIntervalSinceNow:1/60)
                     if let frame {DispatchQueue.main.async { [weak self] in self?.resourceFrame?(frame) }}
                     continue
@@ -659,7 +736,7 @@ private final class HTMLRendererExecutor {
                     !renderer.needsResourceTicks && !measurementTasks.isEmpty
                     ? measurementTasks.removeFirst():nil
                 condition.unlock()
-                if let task {autoreleasepool {task(renderer)}}
+                if let task {autoreleasepool {task.run(renderer)}}
                 else if let scroll {
                     if scroll.settles {
                         let result=autoreleasepool(invoking:{renderer.settleScrollPaint(scroll.point,token:scroll.token)})
@@ -685,12 +762,53 @@ private final class HTMLRendererExecutor {
                     }
                 }
                 else if renderer.needsResourceTicks {
-                    let frame=autoreleasepool(invoking:{renderer.resourceTick()})
+                    let frame=autoreleasepool(invoking:{timedResourceTick(renderer)})
                     nextResourceTick=Date(timeIntervalSinceNow:1/60)
                     if let frame {DispatchQueue.main.async { [weak self] in self?.resourceFrame?(frame) }}
                 }
-                else if let measurement {autoreleasepool {measurement(measurer)}}
+                else if let measurement {autoreleasepool {measurement.run(measurer)}}
             }
+        }
+        func enqueue(_ task:QueuedTask) {
+            condition.lock();tasks.append(task);condition.signal();condition.unlock()
+        }
+        func enqueueMeasurement(_ task:MeasurementTask) {
+            condition.lock();measurementTasks.append(task);condition.signal();condition.unlock()
+        }
+        /// A visible revision supersedes every queued visible operation and
+        /// every background measurement from an older snapshot. Measurement
+        /// of the same revision survives viewport presentations: it populates
+        /// retained geometry that those presentations consume. Work already
+        /// inside Ultralight is bounded and its result is rejected by its
+        /// revision/generation gate.
+        func beginPresentation(_ token:Int,revision:Int) {
+            condition.lock()
+            let obsolete=tasks.filter{$0.presentationToken != nil && $0.presentationToken != token}
+            tasks.removeAll{$0.presentationToken != nil && $0.presentationToken != token}
+            let measurements=measurementTasks.filter{$0.revision != revision}
+            measurementTasks.removeAll{$0.revision != revision}
+            condition.signal();condition.unlock()
+            obsolete.forEach{$0.cancel()};measurements.forEach{$0.cancel()}
+        }
+        func cancelPresentation(_ token:Int?) {
+            condition.lock()
+            let obsolete=tasks.filter {task in
+                guard let queued=task.presentationToken else{return false}
+                return token==nil || queued==token
+            }
+            tasks.removeAll {task in
+                guard let queued=task.presentationToken else{return false}
+                return token==nil || queued==token
+            }
+            condition.signal();condition.unlock()
+            obsolete.forEach{$0.cancel()}
+        }
+        private func timedResourceTick(_ renderer:ThreadState)->HTMLPreviewFrame? {
+            #if DEBUG
+            let work=TimingDiagnostics.shared.begin("renderer.resource.work")
+            defer {TimingDiagnostics.shared.end(work)}
+            #endif
+            return renderer.resourceTick()
         }
         private func finish(_ work:ScrollWork,result:HTMLPreviewPaintResult?) {
             DispatchQueue.main.async { [weak self] in
@@ -731,6 +849,7 @@ private final class HTMLRendererExecutor {
     }
 
     private let queue:QueueState
+    private let presentationGate=QueueState.PresentationGate()
     private let thread:Thread
     init(sdkRoot:String,css:String,imageLoadDelay:TimeInterval) {
         let queue=QueueState(sdkRoot:sdkRoot,css:css,imageLoadDelay:imageLoadDelay);self.queue=queue
@@ -746,10 +865,55 @@ private final class HTMLRendererExecutor {
     }
     var resourceFrame:((HTMLPreviewFrame)->Void)? {get{queue.resourceFrame} set{queue.resourceFrame=newValue}}
     func async(_ task:@escaping(ThreadState)->Void) {
-        queue.condition.lock();queue.tasks.append(task);queue.condition.signal();queue.condition.unlock()
+        queue.enqueue(.init(presentationToken:nil,run:task,cancel:{}))
     }
+    func asyncMeasured(_ name:String,revision:Int,token:Int,_ task:@escaping(ThreadState)->Void) {
+        #if DEBUG
+        let wait=TimingDiagnostics.shared.begin(name+".queue")
+        let depth=1
+        let run:(ThreadState)->Void = {state in
+            TimingDiagnostics.shared.end(wait,values:["revision":Double(revision),"token":Double(token),
+                "queueDepth":Double(depth)])
+            let work=TimingDiagnostics.shared.begin(name+".work")
+            task(state)
+            TimingDiagnostics.shared.end(work,values:["revision":Double(revision),"token":Double(token)])
+        }
+        queue.enqueue(.init(presentationToken:token,run:run,cancel:{
+            TimingDiagnostics.shared.end(wait,values:["revision":Double(revision),
+                "token":Double(token),"cancelled":1])
+        }))
+        #else
+        queue.enqueue(.init(presentationToken:token,run:task,cancel:{}))
+        #endif
+    }
+    func beginPresentation(token:Int,revision:Int) {
+        presentationGate.begin(token);queue.beginPresentation(token,revision:revision)
+    }
+    func cancelPresentation(token:Int?=nil) {
+        presentationGate.cancel(token);queue.cancelPresentation(token)
+    }
+    func isCurrentPresentation(token:Int)->Bool {presentationGate.isCurrent(token)}
     func asyncMeasurement(_ task:@escaping(ThreadState)->Void) {
-        queue.condition.lock();queue.measurementTasks.append(task);queue.condition.signal();queue.condition.unlock()
+        queue.enqueueMeasurement(.init(revision:-1,run:task,cancel:{}))
+    }
+    func asyncMeasurementMeasured(revision:Int,token:Int,_ task:@escaping(ThreadState)->Void) {
+        #if DEBUG
+        let wait=TimingDiagnostics.shared.begin("renderer.measurement.queue")
+        let depth=1
+        let run:(ThreadState)->Void = {state in
+            TimingDiagnostics.shared.end(wait,values:["revision":Double(revision),"token":Double(token),
+                "queueDepth":Double(depth)])
+            let work=TimingDiagnostics.shared.begin("renderer.measurement.work")
+            task(state)
+            TimingDiagnostics.shared.end(work,values:["revision":Double(revision),"token":Double(token)])
+        }
+        queue.enqueueMeasurement(.init(revision:revision,run:run,cancel:{
+            TimingDiagnostics.shared.end(wait,values:["revision":Double(revision),
+                "token":Double(token),"cancelled":1])
+        }))
+        #else
+        queue.enqueueMeasurement(.init(revision:revision,run:task,cancel:{}))
+        #endif
     }
     func scroll(token:Int,point:NSPoint,completion:@escaping(HTMLPreviewPaintResult?)->Void) {
         queue.enqueueScroll(token:token,point:point,completion:completion)
@@ -782,6 +946,7 @@ private final class HTMLRendererExecutor {
     private var baseURL:URL?
     private var committedToken:Int?
     private var committedGeometry:HTMLPreviewGeometry?
+    private var requestedRevisions=[Int:Int]()
     private var scrollSettlement:DispatchWorkItem?
     private var scrollGeneration=0
     private var horizontalGesture:Bool?
@@ -833,31 +998,74 @@ private final class HTMLRendererExecutor {
         if debugFailsNextPresentation {debugFailsNextPresentation=false;completion(nil);return}
         #endif
         hasUncommittedPresentation=true
-        renderer.async {state in
-            let layout=state.layout(request)
-            deliverOnMainRunLoop {completion(layout)}
+        requestedRevisions[request.token]=request.revision
+        let executor=renderer
+        executor.beginPresentation(token:request.token,revision:request.revision)
+        executor.asyncMeasured("renderer.layout",revision:request.revision,token:request.token) {state in
+            guard executor.isCurrentPresentation(token:request.token) else {
+                deliverOnMainRunLoop {completion(nil)};return
+            }
+            let candidate=state.layout(request)
+            let layout=executor.isCurrentPresentation(token:request.token) ? candidate:nil
+            #if DEBUG
+            let callback=TimingDiagnostics.shared.begin("renderer.layout.callback")
+            #endif
+            deliverOnMainRunLoop {
+                #if DEBUG
+                TimingDiagnostics.shared.end(callback,values:["revision":Double(request.revision),
+                    "token":Double(request.token)])
+                #endif
+                completion(layout)
+            }
         }
     }
     /// Measures a bounded, non-visible HTML window on the renderer thread.
     /// Foreground presentation and scroll work always run first.
     public func requestMeasurements(_ request:HTMLPreviewRenderRequest,
         completion:@escaping(HTMLPreviewLayout?)->Void) {
-        renderer.asyncMeasurement {state in
+        renderer.asyncMeasurementMeasured(revision:request.revision,token:request.token) {state in
             let layout=state.layout(request)
             deliverOnMainRunLoop {completion(layout)}
         }
     }
     public func capture(token:Int,scrollPoint:NSPoint,completion:@escaping(HTMLPreviewFrame?)->Void) {
-        renderer.async {state in
-            let frame=state.capture(token:token,point:scrollPoint)
-            deliverOnMainRunLoop {completion(frame)}
+        let revision=requestedRevisions[token] ?? -1
+        let executor=renderer
+        executor.asyncMeasured("renderer.capture",revision:revision,token:token) {state in
+            guard executor.isCurrentPresentation(token:token) else {
+                deliverOnMainRunLoop {completion(nil)};return
+            }
+            let candidate=state.capture(token:token,point:scrollPoint)
+            let frame=executor.isCurrentPresentation(token:token) ? candidate:nil
+            #if DEBUG
+            let callback=TimingDiagnostics.shared.begin("renderer.capture.callback")
+            #endif
+            deliverOnMainRunLoop {
+                #if DEBUG
+                TimingDiagnostics.shared.end(callback,values:["revision":Double(revision),"token":Double(token)])
+                #endif
+                completion(frame)
+            }
         }
     }
     public func captureResource(token:Int,scrollPoint:NSPoint,completion:@escaping(HTMLPreviewFrame?)->Void) {
-        renderer.async {state in
-            let frame=state.captureResource(token:token,point:scrollPoint)
+        let revision=requestedRevisions[token] ?? -1
+        let executor=renderer
+        executor.asyncMeasured("renderer.resourceCapture",revision:revision,token:token) {state in
+            guard executor.isCurrentPresentation(token:token) else {
+                deliverOnMainRunLoop {completion(nil)};return
+            }
+            let candidate=state.captureResource(token:token,point:scrollPoint)
+            let frame=executor.isCurrentPresentation(token:token) ? candidate:nil
             deliverOnMainRunLoop {completion(frame)}
         }
+    }
+    /// Abandons queued layout/capture work without touching the committed
+    /// bitmap. Any renderer operation already in flight may finish, but its
+    /// result can no longer be published.
+    public func cancelPresentation(token:Int?=nil) {
+        renderer.cancelPresentation(token:token)
+        hasUncommittedPresentation=false
     }
     public func beginViewportGesture() {renderer.async{$0.viewportGestureActive=true}}
     public func endViewportGesture() {renderer.async{$0.viewportGestureActive=false}}
@@ -871,6 +1079,7 @@ private final class HTMLRendererExecutor {
         else {pixels=frame.pixels;image=frame.image;imageSize=frame.imageSize;imageOffsetY=0}
         baseURL=frame.baseURL
         committedToken=frame.token;committedGeometry=frame.geometry;hasUncommittedPresentation=false;needsDisplay=true
+        requestedRevisions=requestedRevisions.filter{$0.key>=frame.token}
     }
     /// NSView may quantize a large frame origin to the backing grid. Keep that
     /// implementation detail out of document coordinates by applying the
