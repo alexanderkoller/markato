@@ -215,6 +215,7 @@ private struct PendingPreviewFrame {
     private let surface:PreviewSurface
     private var web:HTMLPreviewView {surface.web}
     private var clip:NSClipView {surface.clip}
+    private let verticalScroller=NSScroller(frame:NSRect(x:0,y:0,width:15,height:100))
     private let loadingView=PreviewLoadingView()
     private let loadingLabel=NSTextField(labelWithString:"Loading preview…")
     #if DEBUG
@@ -361,6 +362,11 @@ private struct PendingPreviewFrame {
         loadingView.wantsLayer=true;loadingView.layer?.backgroundColor=NSColor.textBackgroundColor.cgColor
         loadingLabel.textColor = .secondaryLabelColor;loadingLabel.alignment = .center
         loadingView.addSubview(loadingLabel);addSubview(loadingView);loadingView.isHidden=true
+        verticalScroller.scrollerStyle = .legacy
+        verticalScroller.target=self;verticalScroller.action=#selector(scrollbarChanged(_:))
+        verticalScroller.setAccessibilityLabel("Preview scroll position")
+        verticalScroller.isHidden=true
+        addSubview(verticalScroller)
         let view=surface.web
         view.engineReady={ [weak self] in self?.preparePresentation() }
         view.resourceFrame={ [weak self] frame in self?.receiveResourceFrame(frame) }
@@ -420,6 +426,41 @@ private struct PendingPreviewFrame {
     }
     // Wheel events over exposed canvas still bubble to this stationary pane.
     override func scrollWheel(with event:NSEvent) {web.scrollWheel(with:event)}
+    private var documentPreviewHeight:CGFloat {
+        guard let committed else{return bounds.height}
+        if let preparedDocument,preparedDocument.revision==committed.request.revision {
+            return max(committed.geometry.height,CGFloat(preparedDocument.previewHeight))
+        }
+        return committed.totalHeight
+    }
+    func updateScrollbar() {
+        // Background measurements refine the retained total before the next
+        // window publication. Never switch denominators at that publication.
+        let height=max(bounds.height,documentPreviewHeight)
+        let end=max(0,height-bounds.height)
+        verticalScroller.isHidden=end<=0
+        verticalScroller.isEnabled=end>0
+        verticalScroller.knobProportion=height>0 ? min(1,bounds.height/height):1
+        verticalScroller.doubleValue=end>0 ? Double(min(1,max(0,surface.logicalOrigin/end))):0
+    }
+    @objc private func scrollbarChanged(_ sender:NSScroller) {
+        scrollScrollbar(part:sender.hitPart,value:sender.doubleValue)
+    }
+    private func scrollScrollbar(part:NSScroller.Part,value:Double) {
+        guard committed != nil else{return}
+        let line=source?.verticalLineScroll ?? max(1,fontSize*1.5)
+        let page=max(line,bounds.height-line)
+        let origin:CGFloat
+        switch part {
+        case .decrementLine:origin=independentOrigin-line
+        case .incrementLine:origin=independentOrigin+line
+        case .decrementPage:origin=independentOrigin-page
+        case .incrementPage:origin=independentOrigin+page
+        case .knob,.knobSlot:origin=CGFloat(value)*max(0,documentPreviewHeight-bounds.height)
+        default:return
+        }
+        scrollPreview(to:origin,detachFromSource:true)
+    }
     private func handleVerticalScroll(_ event:NSEvent) {
         let delta=event.hasPreciseScrollingDeltas ? event.scrollingDeltaY :
             event.scrollingDeltaY*(source?.verticalLineScroll ?? max(1,fontSize*1.5))
@@ -431,10 +472,10 @@ private struct PendingPreviewFrame {
         }
     }
     private func scrollPreview(to proposedOrigin:CGFloat,detachFromSource:Bool) {
-        guard let committed else{return}
+        guard committed != nil else{return}
         clearResizePin()
         clearIdleAnchorLock()
-        let origin=min(max(0,committed.totalHeight-bounds.height),max(0,proposedOrigin))
+        let origin=min(max(0,documentPreviewHeight-bounds.height),max(0,proposedOrigin))
         guard abs(origin-independentOrigin)>=0.01 else{return}
         if detachFromSource,let source {
             detachedSourceOrigin=source.viewportOrigin
@@ -1067,6 +1108,7 @@ private struct PendingPreviewFrame {
         surface.size(contentHeight:position.totalHeight,windowTop:position.windowTop,width:request.width,viewportHeight:bounds.height)
         surface.publish(at:position.origin,paintedLocalOrigin:frame.scrollPoint.y)
         independentOrigin=position.origin
+        updateScrollbar()
         updateLoadingState()
         assert(!surface.clip.isHidden && !web.isHidden)
         CATransaction.commit()
@@ -1087,6 +1129,10 @@ private struct PendingPreviewFrame {
         #endif
         super.layout()
         surface.clip.frame=bounds
+        let scrollerWidth=NSScroller.scrollerWidth(for:.regular,scrollerStyle:.legacy)
+        verticalScroller.frame=NSRect(x:max(0,bounds.width-scrollerWidth),y:0,
+            width:scrollerWidth,height:bounds.height)
+        updateScrollbar()
         loadingView.frame=bounds
         loadingLabel.frame=NSRect(x:16,y:max(0,(bounds.height-24)/2),width:max(0,bounds.width-32),height:24)
         loadingView.layer?.backgroundColor=NSColor.textBackgroundColor.cgColor
@@ -1148,7 +1194,7 @@ private struct PendingPreviewFrame {
         let anchored=idleAnchorLock.flatMap {
             resolvedOrigin($0,geometry:current.geometry,windowTop:current.windowTop,totalHeight:current.totalHeight)
         }
-        guard let origin=anchored ?? targetOrigin(height:current.totalHeight,map:current.map) else{return}
+        guard let origin=anchored ?? targetOrigin(height:followsIndependentViewport ? documentPreviewHeight:current.totalHeight,map:current.map) else{return}
         moveClip(to:origin)
     }
     private func moveClip(to origin:CGFloat) {
@@ -1156,6 +1202,7 @@ private struct PendingPreviewFrame {
         CATransaction.begin();CATransaction.setDisableActions(true)
         surface.scroll(to:origin)
         independentOrigin=origin
+        updateScrollbar()
         CATransaction.commit()
         updateCommentAnchor(closeIfMissing:false)
     }
@@ -1176,6 +1223,10 @@ private struct PendingPreviewFrame {
     }
     #if DEBUG
     var debugIsIndependentlyScrolled:Bool {detachedSourceOrigin != nil}
+    var debugScrollbarValue:Double {verticalScroller.doubleValue}
+    var debugScrollbarProportion:CGFloat {verticalScroller.knobProportion}
+    var debugPreviewHeight:CGFloat {documentPreviewHeight}
+    func debugScrollKnob(to value:Double) {scrollScrollbar(part:.knob,value:value)}
     func debugHoldViewportAtCurrentOrigin() {
         idleAnchorLock = .absolute(origin:independentOrigin)
     }

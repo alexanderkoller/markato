@@ -299,7 +299,7 @@ struct AstraULSurface {
       ready = !!root;
     });
     if (!triggers.AttachTo(view.get())) return;
-    std::string shell = "<!doctype html><html><head><meta charset='utf-8'><style>";
+    std::string shell = "<!doctype html><html class='astra-windowed-preview'><head><meta charset='utf-8'><style>";
     shell += css ? css : "";
     shell += "</style></head><body><main id='preview'></main></body></html>";
     // Give application-supplied HTML a local origin. An opaque LoadHTML origin

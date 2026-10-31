@@ -791,6 +791,7 @@ final class EditorWindowController: NSWindowController, NSSplitViewDelegate, NSS
                 self.startPreviewMeasurement(revision:revision)
                 return
             }
+            self.preview.updateScrollbar()
             let next=NSMaxRange(window.range)
             DispatchQueue.main.asyncAfter(deadline:.now()+0.002) { [weak self] in
                 self?.continuePreviewMeasurement(revision:revision,generation:generation,cursor:next)

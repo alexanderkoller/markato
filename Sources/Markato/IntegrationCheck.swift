@@ -259,6 +259,9 @@ import PDFKit
         if CommandLine.arguments.contains("--integration-scroll-throughput") {
             verifyScrollThroughput(controller);return
         }
+        if CommandLine.arguments.contains("--integration-preview-scrollbar") {
+            verifyPreviewScrollbar(controller,document:document);return
+        }
         if CommandLine.arguments.contains("--integration-preview-scroll") {
             verifyPreviewWindowScrolling(controller,document:document);return
         }
@@ -2821,6 +2824,57 @@ import PDFKit
             }
         }
     }
+    private static func verifyPreviewScrollbar(_ controller:EditorWindowController,document:MarkdownDocument) {
+        let preview=controller.preview,source=controller.source
+        func wait(_ remaining:Int,_ ready:@escaping()->Bool,_ completion:@escaping()->Void) {
+            guard remaining>0 else{fail("Preview scrollbar did not settle: \(preview.debugGeometry())")}
+            if ready() {completion()}
+            else {DispatchQueue.main.asyncAfter(deadline:.now()+0.01){wait(remaining-1,ready,completion)}}
+        }
+        func verifyGlobalMetrics() {
+            let total=preview.debugPreviewHeight,end=max(1,total-preview.bounds.height)
+            check(abs(preview.debugScrollbarValue-Double(preview.clipOrigin/end))<0.00001,
+                "Preview scrollbar position uses fragment-local coordinates")
+            check(abs(preview.debugScrollbarProportion-preview.bounds.height/total)<0.00001,
+                "Preview scrollbar size uses fragment-local height")
+        }
+        wait(3000,{controller.hasMeasuredPreviewDocument && !preview.hasPendingPresentation}) {
+            let initialRange=preview.displayedSourceRange
+            var previous=preview.debugScrollbarValue
+            @MainActor func sourceStep(_ index:Int) {
+                if index==35 {
+                    check(preview.displayedSourceRange != initialRange,"Scrollbar test never replaced the mounted window")
+                    knobStep(0,sourceOrigin:source.viewportOrigin);return
+                }
+                source.debugScrollViewport(by:400)
+                wait(800,{!preview.hasPendingPresentation && preview.coversSourceViewport &&
+                    preview.debugScrollMapError.map{abs($0)<0.01}==true}) {
+                    verifyGlobalMetrics()
+                    check(preview.debugScrollbarValue+0.001>=previous,
+                        "Preview scrollbar moved backward during downward editor scrolling: index=\(index), before=\(previous), after=\(preview.debugScrollbarValue), \(preview.debugGeometry())")
+                    previous=preview.debugScrollbarValue
+                    sourceStep(index+1)
+                }
+            }
+            @MainActor func knobStep(_ index:Int,sourceOrigin:CGFloat) {
+                let positions=[0.65,0.1,1.0,0.0]
+                guard index<positions.count else {
+                    print("PREVIEW SCROLLBAR INTEGRATION PASSED");fflush(nil);_exit(EXIT_SUCCESS)
+                }
+                preview.debugScrollKnob(to:positions[index])
+                wait(1500,{!preview.hasPendingPresentation}) {
+                    verifyGlobalMetrics()
+                    check(abs(preview.debugScrollbarValue-positions[index])<0.005,
+                        "Dragging the preview scrollbar did not reach the document destination")
+                    check(abs(source.viewportOrigin-sourceOrigin)<0.01,"Preview scrollbar moved the editor")
+                    check(!preview.displaysCompleteDocument,"Preview scrollbar mounted the entire document")
+                    knobStep(index+1,sourceOrigin:sourceOrigin)
+                }
+            }
+            sourceStep(0)
+        }
+    }
+
     private static func verifyPreviewWindowScrolling(_ controller:EditorWindowController,document:MarkdownDocument) {
         let preview=controller.preview,source=controller.source
         func wait(_ remaining:Int,_ ready:@escaping()->Bool,_ completion:@escaping()->Void) {

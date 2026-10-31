@@ -37,6 +37,9 @@ html, body {
   overflow-anchor: none;
   background: var(--bg-default);
 }
+/* Only the bounded native renderer delegates vertical chrome to AppKit.
+   Exported HTML and nested horizontal scrollers retain their scrollbars. */
+html.astra-windowed-preview, html.astra-windowed-preview body { overflow-y: hidden; }
 body {
   color: var(--fg-default);
   font-weight: var(--weight-normal);

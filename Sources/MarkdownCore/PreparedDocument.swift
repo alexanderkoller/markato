@@ -174,6 +174,7 @@ public final class PreparedDocument {
         }
         collect(root);return result
     }
+    public var previewHeight:Double {64+(root?.previewSum ?? 0)}
     public var count:Int {root?.count ?? 0}
     public var hasCompleteFragments:Bool {(root?.preparedCount ?? 0)==count}
     public var styleCoverage:[NSRange] {syntax.map(\.range)}

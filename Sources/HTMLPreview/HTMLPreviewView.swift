@@ -8,7 +8,7 @@ private func deliverOnMainRunLoop(_ block:@escaping()->Void) {
 }
 
 public enum HTMLPreviewResources {
-    public static let stylesheetGeneration:UInt64=2
+    public static let stylesheetGeneration:UInt64=3
     public static let stylesheet:String = {
         func resource(_ name:String)->String {
             guard let url=Bundle.module.url(forResource:name,withExtension:"css"),
