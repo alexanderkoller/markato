@@ -295,3 +295,46 @@ import Testing
         [RenderedEntry(id:"block",fragment:fragment)],with:[comment]).first?.fragment.html)
     #expect(html.contains("<p data-markato-comment-block>"))
 }
+
+@Test func commentSourceFoldsOnlyCompleteLinesAndOneFollowingBlankLine() throws {
+    for newline in ["\n","\r\n"] {
+        let comment=MarkdownComments.comment(in:"Anchor",selection:NSRange(location:0,length:6),body:"First\n\nLast 🧮",author:"")
+        let raw=MarkdownComments.serialize(comment,newline:newline)
+        for prefix in ["","Before"+newline+newline] {
+            for suffix in ["",newline,newline+newline+"After",newline+newline+newline+"After"] {
+                let text=prefix+raw+suffix
+                let record=NSRange(location:prefix.utf16.count,length:raw.utf16.count)
+                let folded=try #require(MarkdownComments.standaloneSourceRange(record,in:TextRope(text)))
+                let removed=(text as NSString).substring(with:folded)
+                #expect(removed==raw+String(suffix.prefix(newline.count*2)))
+                #expect(folded.location==record.location)
+            }
+        }
+        for (prefix,suffix) in [("Prose ",""),(""," trailing prose"),("    ","\t"+newline+"After")] {
+            let text=prefix+raw+suffix
+            let record=NSRange(location:prefix.utf16.count,length:raw.utf16.count)
+            let folded=MarkdownComments.standaloneSourceRange(record,in:TextRope(text))
+            if prefix.trimmingCharacters(in:.whitespaces).isEmpty && suffix.hasPrefix("\t") {
+                #expect(folded?.location==0)
+                #expect(folded.map{NSMaxRange($0)}==(text as NSString).range(of:"After").location)
+            } else {#expect(folded==nil)}
+        }
+    }
+}
+
+@Test func insertingHiddenCommentPreservesParagraphSpacing() throws {
+    for newline in ["\n","\r\n"] {
+        for blankLines in 1...3 {
+            let before="Before 🧮",source=before+String(repeating:newline,count:blankLines+1)+"After"
+            let comment=MarkdownComments.comment(in:source,selection:NSRange(location:0,length:before.utf16.count),body:"Note",author:"")
+            // Parser block boundaries can fall before or after the final newline.
+            for offset in (0...blankLines+1).map({before.utf16.count+$0*newline.utf16.count}) {
+                let insertion=MarkdownComments.insertion(for:comment,in:source,at:offset,newline:newline)
+                let updated=(source as NSString).replacingCharacters(in:NSRange(location:offset,length:0),with:insertion)
+                let record=try #require(MarkdownComments.records(in:updated).first)
+                let fold=try #require(MarkdownComments.standaloneSourceRange(record.recordRange,in:TextRope(updated)))
+                #expect((updated as NSString).replacingCharacters(in:fold,with:"")==source)
+            }
+        }
+    }
+}

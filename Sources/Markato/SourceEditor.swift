@@ -105,6 +105,18 @@ final class SourceTextView:NSTextView {
     override func paste(_ sender:Any?) {
         if let text=NSPasteboard.general.string(forType:.string) {insertText(text,replacementRange:selectedRange())}
     }
+    override func moveForward(_ sender:Any?) {
+        if owner?.moveAcrossHiddenSource(backwards:false) != true {super.moveForward(sender)}
+    }
+    override func moveBackward(_ sender:Any?) {
+        if owner?.moveAcrossHiddenSource(backwards:true) != true {super.moveBackward(sender)}
+    }
+    override func moveRight(_ sender:Any?) {
+        if owner?.moveAcrossHiddenSource(backwards:false) != true {super.moveRight(sender)}
+    }
+    override func moveLeft(_ sender:Any?) {
+        if owner?.moveAcrossHiddenSource(backwards:true) != true {super.moveLeft(sender)}
+    }
     override func scrollToEndOfDocument(_ sender:Any?) {if let owner {owner.reveal(owner.document.source.count)}}
     override func scrollToBeginningOfDocument(_ sender:Any?) {owner?.reveal(0)}
     override func moveToBeginningOfDocument(_ sender:Any?) {owner?.reveal(0)}
@@ -171,6 +183,18 @@ final class SourceEditor:NSView,NSTextViewDelegate,NSTextStorageDelegate,ScrollS
     private var paintedCommentRanges=[NSRange]()
     private var selectedCommentRange:NSRange?
     private var commentRecordRanges=[NSRange]()
+    // Newly inserted records own exactly the bytes added by that transaction,
+    // including padding. Retain this provenance across parsing and UI edits.
+    private var insertedCommentSourceRanges=[NSRange:NSRange]()
+    private let commentPresentation=CommentSourcePresentation()
+    var showsCommentSource=CommentSourcePreferences.isShown {
+        didSet {
+            guard showsCommentSource != oldValue else{return}
+            refreshCommentSourcePresentation()
+            moveSelectionOutOfHiddenSource()
+        }
+    }
+    var hiddenCommentSourceRanges:[NSRange] {commentPresentation.hiddenRanges}
     private var highlightRevision = -1
     private var deferredHighlights=[(Int,[SyntaxSpan],NSRange)]()
     private var loadedRevision = -1
@@ -296,6 +320,7 @@ final class SourceEditor:NSView,NSTextViewDelegate,NSTextStorageDelegate,ScrollS
         // TextKit lays out exact geometry only where it is needed. The retained
         // layout tree carries an estimate for untouched regions and replaces it
         // with measured lines without changing the scrolling interfaces.
+        textView.layoutManager!.delegate=commentPresentation
         textView.layoutManager!.allowsNonContiguousLayout=true
         textView.layoutManager!.backgroundLayoutEnabled=false
         textView.autoresizingMask=[];textView.backgroundColor = .textBackgroundColor
@@ -306,6 +331,9 @@ final class SourceEditor:NSView,NSTextViewDelegate,NSTextStorageDelegate,ScrollS
         sourceScroll.userWillScroll={ [weak self] in self?.prepareForUserScroll() }
         sourceScroll.consumeScroll={ [weak self] event in self?.scrollOverflow?(event) ?? false }
         let center=NotificationCenter.default
+        observations.append(center.addObserver(forName:CommentSourcePreferences.didChange,object:nil,queue:.main) { [weak self] _ in
+            MainActor.assumeIsolated {self?.showsCommentSource=CommentSourcePreferences.isShown}
+        })
         observations.append(center.addObserver(forName:NSView.boundsDidChangeNotification,object:scroll.contentView,queue:.main) { [weak self] _ in self?.clipBoundsDidChange() })
         observations.append(center.addObserver(forName:NSView.frameDidChangeNotification,object:scroll.contentView,queue:.main) { [weak self] _ in self?.needsLayout=true })
         observations.append(center.addObserver(forName:NSScrollView.willStartLiveScrollNotification,object:scroll,queue:.main) { [weak self] _ in self?.beginScrollGesture() })
@@ -481,24 +509,32 @@ final class SourceEditor:NSView,NSTextViewDelegate,NSTextStorageDelegate,ScrollS
             }
         }
         let followingY:CGFloat?
-        if NSMaxRange(characters)<document.source.count {
-            let followingGlyph=manager.glyphIndexForCharacter(at:NSMaxRange(characters))
+        let measuredEnd=measured.last.map{NSMaxRange($0.range)} ?? NSMaxRange(characters)
+        if measuredEnd<document.source.count {
+            let followingGlyph=manager.glyphIndexForCharacter(at:measuredEnd)
             followingY=manager.lineFragmentUsedRect(forGlyphAt:followingGlyph,effectiveRange:nil).minY+textView.textContainerInset.height
         } else {followingY=nil}
         let lines=measured.enumerated().map {index,line in
             let next=index+1<measured.count ? measured[index+1].rect.minY:followingY ?? line.rect.maxY
             // AppKit can report overlapping character ranges for neighboring
-            // fragments after a CRLF/Unicode edit followed by full reflow.
-            // For a complete measurement, partition by successive line starts
-            // so the index covers every UTF-16 unit exactly once.
+            // fragments after a CRLF/Unicode edit or folding. Partition by
+            // successive line starts so each UTF-16 unit is indexed once.
             let length:Int
-            if replacingCompleteIndex {
-                let end=index+1<measured.count ? measured[index+1].range.location:document.source.count
-                length=end-line.range.location
-            } else {length=line.range.length}
+            let end=index+1<measured.count ? measured[index+1].range.location:
+                replacingCompleteIndex ? document.source.count:NSMaxRange(line.range)
+            length=end-line.range.location
             return LayoutIndex.Line(length:length,advance:Double(next-line.rect.minY),height:Double(line.rect.height))
         }
-        prepared.sourceLayout.replace(dirtyRange,with:lines,origin:measured.first.map{Double($0.rect.minY)})
+        // Hidden comment glyphs can join the requested paragraph to a later
+        // visible line. Replace the actual measured character span, including
+        // that folded tail, rather than duplicating it in the retained index.
+        let replacementRange:NSRange
+        if let first=measured.first,let last=measured.last,!replacingCompleteIndex {
+            let delta=document.source.count-prepared.sourceLayout.length
+            replacementRange=NSRange(location:first.range.location,
+                length:max(0,NSMaxRange(last.range)-first.range.location-delta))
+        } else {replacementRange=dirtyRange}
+        prepared.sourceLayout.replace(replacementRange,with:lines,origin:measured.first.map{Double($0.rect.minY)})
         if NSMaxRange(characters)==document.source.count,let last=measured.last {
             prepared.sourceLayout.fitEstimatedHeight(to:Double(last.rect.maxY))
         }
@@ -863,6 +899,7 @@ final class SourceEditor:NSView,NSTextViewDelegate,NSTextStorageDelegate,ScrollS
         TimingDiagnostics.shared.end(viewportAnchorWork,values:["revision":Double(document.revision)])
         #endif
         func shiftedRecordRange(_ record:NSRange)->NSRange {
+            if NSMaxRange(record)<=edit.range.location {return record}
             let start:Int
             if record.location>=end {start=record.location+delta}
             else {start=min(record.location,edit.range.location)}
@@ -870,7 +907,46 @@ final class SourceEditor:NSView,NSTextViewDelegate,NSTextStorageDelegate,ScrollS
             let newEnd=oldEnd>=end ? oldEnd+delta:max(start,edit.range.location+edit.insertedLength)
             return NSRange(location:max(0,start),length:max(0,newEnd-start))
         }
-        commentRecordRanges=commentRecordRanges.map(shiftedRecordRange)
+        insertedCommentSourceRanges=Dictionary(uniqueKeysWithValues:insertedCommentSourceRanges.compactMap {record,fold in
+            guard !(edit.range != record && edit.range.location<=record.location && NSMaxRange(edit.range)>=NSMaxRange(record)) else{return nil}
+            // Editing padding explicitly in source relinquishes its ownership.
+            let touchesFold=NSIntersectionRange(edit.range,fold).length>0 ||
+                (edit.range.length==0 && edit.range.location>fold.location && edit.range.location<NSMaxRange(fold))
+            let withinRecord=edit.range.location>=record.location && NSMaxRange(edit.range)<=NSMaxRange(record)
+            guard !touchesFold || withinRecord else{return nil}
+            return (shiftedRecordRange(record),shiftedRecordRange(fold))
+        })
+        commentRecordRanges=commentRecordRanges.compactMap {record in
+            // Deleting a passage also removes the records wholly inside it.
+            // An exact record replacement comes from the comment editor.
+            if edit.range != record,edit.range.location<=record.location,NSMaxRange(edit.range)>=NSMaxRange(record) {return nil}
+            let next=shiftedRecordRange(record)
+            return next.length>0 ? next:nil
+        }
+        commentPresentation.hiddenRanges=commentPresentation.hiddenRanges.map(shiftedRecordRange).filter{$0.length>0}
+        // Discover records in the edit before TextKit sees the replacement.
+        // Waiting for the background document parse paints the raw record for
+        // one frame and then folds it, visibly moving the surrounding text.
+        if insertedText.contains(MarkdownComments.marker) {
+            let incoming=MarkdownComments.records(in:insertedText)
+            for value in incoming {
+                let relative=value.recordRange
+                let record=NSRange(location:edit.range.location+relative.location,length:relative.length)
+                guard !commentRecordRanges.contains(record) else{continue}
+                commentRecordRanges.append(record)
+                if edit.range.length==0,incoming.count==1,
+                   MarkdownComments.standaloneSourceRange(record,in:document.source) != nil {
+                    let text=insertedText as NSString
+                    let before=text.substring(to:relative.location)
+                    let after=text.substring(from:NSMaxRange(relative))
+                    if before.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty,
+                       after.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty {
+                        insertedCommentSourceRanges[record]=NSRange(location:edit.range.location,length:edit.insertedLength)
+                    }
+                }
+            }
+            commentRecordRanges.sort{$0.location<$1.location}
+        }
         highlightedRanges=highlightedRanges.flatMap {range -> [NSRange] in
             if NSMaxRange(range)<=edit.range.location {return [range]}
             if range.location>=end {return [NSRange(location:range.location+delta,length:range.length)]}
@@ -887,12 +963,28 @@ final class SourceEditor:NSView,NSTextViewDelegate,NSTextStorageDelegate,ScrollS
             let paragraph=old.paragraphRange(for:edit.range)
             let start=max(0,paragraph.location-1),end=min(old.length,NSMaxRange(paragraph)+1)
             let affected=old.paragraphRange(for:NSRange(location:start,length:end-start))
-            if old.length==prepared.sourceLayout.length {dirtyRange=dirtyRange.map{NSUnionRange($0,affected)} ?? affected}
+            if old.length==prepared.sourceLayout.length {
+                let aligned=layoutReplacementRange(expanding:affected)
+                dirtyRange=dirtyRange.map{NSUnionRange($0,aligned)} ?? aligned
+            }
             else {dirtyRange=NSRange(location:0,length:prepared.sourceLayout.length)}
             let replacement=document.source.string(in:NSRange(location:edit.range.location,length:edit.insertedLength))
             let replaceNativeText = {
                 self.nativeLayoutRevision=nil
                 self.textView.textStorage!.replaceCharacters(in:edit.range,with:replacement)
+                self.refreshCommentSourcePresentation(reflow:false,
+                    paintRange:NSRange(location:edit.range.location,length:edit.insertedLength))
+                if let fold=self.commentPresentation.hiddenRanges.first(where:{
+                    NSIntersectionRange($0,NSRange(location:edit.range.location,length:max(1,edit.insertedLength))).length>0
+                }) {
+                    // The owned padding can begin on the preceding visible
+                    // line. Regenerate the entire folded run so no separator
+                    // keeps a cached paragraph-break action after a body edit.
+                    let rope=self.document.source
+                    let first=max(0,rope.line(at:fold.location)-1)
+                    let last=min(rope.lineCount,rope.line(at:NSMaxRange(fold))+2)
+                    self.textView.layoutManager!.invalidateGlyphs(forCharacterRange:rope.lines(first,last),changeInLength:0,actualCharacterRange:nil)
+                }
                 self.loadedRevision=self.document.revision
                 self.textView.setSelectedRange(selection)
             }
@@ -904,6 +996,8 @@ final class SourceEditor:NSView,NSTextViewDelegate,NSTextStorageDelegate,ScrollS
             }
             textView.setSelectedRange(selection)
         }
+        refreshCommentSourcePresentation(reflow:!localEdit,
+            paintRange:NSRange(location:edit.range.location,length:edit.insertedLength))
         #if DEBUG
         let commentPaintWork=TimingDiagnostics.shared.begin("source.edit.comment-paint")
         #endif
@@ -1006,8 +1100,106 @@ final class SourceEditor:NSView,NSTextViewDelegate,NSTextStorageDelegate,ScrollS
     func setCommentRecordRanges(_ records:[NSRange]) {
         let length=document.source.count
         let next=records.filter{$0.location>=0 && NSMaxRange($0)<=length}.sorted{$0.location<$1.location}
+        guard next != commentRecordRanges else{return}
+        let removed=Set(commentRecordRanges).subtracting(next)
+        for range in removed {
+            let valid=NSIntersectionRange(range,documentRange)
+            if valid.length>0 {textView.layoutManager!.removeTemporaryAttribute(.foregroundColor,forCharacterRange:valid)}
+        }
         commentRecordRanges=next
+        insertedCommentSourceRanges=insertedCommentSourceRanges.filter{next.contains($0.key)}
+        refreshCommentSourcePresentation()
     }
+
+    func insertedSourceRange(forCommentRecord record:NSRange)->NSRange? {
+        insertedCommentSourceRanges[record]
+    }
+
+    private func refreshCommentSourcePresentation(reflow:Bool=true,paintRange:NSRange?=nil) {
+        let folds:[NSRange]=showsCommentSource ? []:commentRecordRanges.compactMap {
+            guard let canonical=MarkdownComments.standaloneSourceRange($0,in:document.source) else{return nil}
+            return insertedCommentSourceRanges[$0] ?? canonical
+        }
+        var next=[NSRange]()
+        for fold in folds {
+            if let last=next.last,NSMaxRange(last)>=fold.location {next[next.count-1]=NSUnionRange(last,fold)}
+            else {next.append(fold)}
+        }
+        let previous=commentPresentation.hiddenRanges
+        commentPresentation.hiddenRanges=next
+        let changed=Set(previous).symmetricDifference(next).sorted{$0.location<$1.location}
+        let update = {
+            for range in changed {
+                let valid=NSIntersectionRange(range,self.documentRange)
+                guard valid.length>0 else{continue}
+                let rope=self.document.source
+                let first=max(0,rope.line(at:valid.location)-1)
+                let last=min(rope.lineCount,rope.line(at:NSMaxRange(valid))+2)
+                self.textView.layoutManager!.invalidateGlyphs(forCharacterRange:rope.lines(first,last),changeInLength:0,actualCharacterRange:nil)
+                self.invalidateLayout(in:valid)
+                // Retain the layout between distant records when toggling all.
+                if reflow {self.updateDimensions()}
+            }
+            self.paintCommentSource(in:paintRange)
+        }
+        if !changed.isEmpty,reflow {relayoutPreservingViewport(update)}else{update()}
+    }
+
+    private func paintCommentSource(in requested:NSRange?=nil) {
+        let manager=textView.layoutManager!
+        for record in commentRecordRanges {
+            let range=requested.map{NSIntersectionRange($0,record)} ?? record
+            guard range.length>0,NSMaxRange(range)<=document.source.count else{continue}
+            manager.addTemporaryAttribute(.foregroundColor,value:NSColor.secondaryLabelColor,forCharacterRange:range)
+        }
+        textView.needsDisplay=true
+    }
+
+    /// Native selections can include a zero-width run after the last visible
+    /// character. Comment actions operate on visible boundary text, while the
+    /// native selection remains atomic for ordinary selection and deletion.
+    var commentSelection:NSRange? {
+        let selected=selection
+        guard selected.length>0 else{return selected}
+        var start=selected.location,end=NSMaxRange(selected)
+        if let hidden=commentPresentation.hiddenRange(at:start) {start=NSMaxRange(hidden)}
+        if end>start,let hidden=commentPresentation.hiddenRange(at:end-1) {end=hidden.location}
+        guard start<end else{return nil}
+        return NSRange(location:start,length:end-start)
+    }
+
+    private func moveSelectionOutOfHiddenSource() {
+        let current=selection
+        let next=visibleSelection(current,from:current)
+        if next != current {textView.setSelectedRange(next)}
+    }
+
+    fileprivate func moveAcrossHiddenSource(backwards:Bool)->Bool {
+        guard selection.length==0 else{return false}
+        let probe=backwards ? selection.location-1:selection.location
+        guard let hidden=commentPresentation.hiddenRange(at:probe) else{return false}
+        textView.setSelectedRange(NSRange(location:backwards ? hidden.location:NSMaxRange(hidden),length:0))
+        return true
+    }
+
+    private func visibleSelection(_ proposed:NSRange,from old:NSRange)->NSRange {
+        if proposed.length==0,let hidden=commentPresentation.hiddenRange(at:proposed.location) {
+            let backwards=proposed.location<old.location ||
+                (proposed.location==hidden.location && proposed.location==old.location)
+            let offset=backwards ? hidden.location:NSMaxRange(hidden)
+            return NSRange(location:offset,length:0)
+        }
+        var start=proposed.location,end=NSMaxRange(proposed)
+        if let hidden=commentPresentation.hiddenRange(at:start) {start=hidden.location}
+        if end>start,let hidden=commentPresentation.hiddenRange(at:end-1) {end=NSMaxRange(hidden)}
+        return NSRange(location:start,length:end-start)
+    }
+
+    func textView(_ textView:NSTextView,willChangeSelectionFromCharacterRange oldSelectedCharRange:NSRange,
+                  toCharacterRange newSelectedCharRange:NSRange)->NSRange {
+        visibleSelection(newSelectedCharRange,from:oldSelectedCharRange)
+    }
+
     private func applyCommentHighlights(repainting:NSRange?=nil,rebuild:Bool=true) {
         guard let manager=textView.layoutManager else{return}
         var semantic=commentRanges
@@ -1201,6 +1393,19 @@ final class SourceEditor:NSView,NSTextViewDelegate,NSTextStorageDelegate,ScrollS
         viewportChanged?(visibleSourceRange)
     }
     func textView(_ textView:NSTextView,shouldChangeTextIn range:NSRange,replacementString:String?)->Bool {
+        // A collapsed record is atomic: boundary deletion skips it, while a
+        // selection spanning complete records can delete the selected passage.
+        if !changingLayout {
+            for hidden in commentPresentation.hiddenRanges {
+                let overlaps=NSIntersectionRange(range,hidden).length>0
+                let insertsInside=range.length==0 && range.location>hidden.location && range.location<NSMaxRange(hidden)
+                if insertsInside || (overlaps && (selection.length==0 || range.location>hidden.location || NSMaxRange(range)<NSMaxRange(hidden))) {
+                    let offset=range.location<selection.location ? hidden.location:NSMaxRange(hidden)
+                    textView.setSelectedRange(NSRange(location:offset,length:0))
+                    return false
+                }
+            }
+        }
         // Mark geometry unavailable before AppKit begins its character batch.
         if !changingLayout {
             nativeLayoutRevision=document.revision
@@ -1366,6 +1571,7 @@ final class SourceEditor:NSView,NSTextViewDelegate,NSTextStorageDelegate,ScrollS
                 guard range.length>0,let color=syntaxColor(span.kind) else{continue}
                 manager.addTemporaryAttribute(.foregroundColor,value:color,forCharacterRange:range)
             }
+            paintCommentSource(in:covered)
         }
         textView.needsDisplay=true
     }

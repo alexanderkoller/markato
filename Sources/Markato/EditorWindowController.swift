@@ -152,6 +152,7 @@ final class EditorWindowController: NSWindowController, NSSplitViewDelegate, NSS
     private var finishingCommentPopover=false
     private var commentRefreshGeneration=0
     private var synchronizingCommentRecord=false
+    private var insertingCommentRecord=false
     private var pendingCommentAnchorSyncIDs=Set<String>()
     private var commentAnchorSyncScheduled=false
     // Prepared document content is retained. Viewport movement never evicts it.
@@ -381,7 +382,7 @@ final class EditorWindowController: NSWindowController, NSSplitViewDelegate, NSS
             // destination. It may finish after the user has already scrolled;
             // treating it as one would reacquire the edit viewport and pull
             // the preview back to the comment record.
-            if editWasVisible && !self.synchronizingCommentRecord {
+            if editWasVisible && !self.synchronizingCommentRecord && !self.insertingCommentRecord {
                 #if DEBUG
                 let navigationWork=TimingDiagnostics.shared.begin("editor.edit.navigation")
                 #endif
@@ -801,21 +802,21 @@ final class EditorWindowController: NSWindowController, NSSplitViewDelegate, NSS
     @objc func undo(_ sender:Any?) { markdownDocument.undoManager?.undo() }
     @objc func redo(_ sender:Any?) { markdownDocument.undoManager?.redo() }
     @objc func addComment(_ sender:Any?) {
-        guard canAddComment else{return}
-        let selected=source.selection
+        guard let selected=selectionForNewComment else{return}
         let draft=MarkdownComment(anchor:MarkdownComments.anchor(in:markdownDocument.source.string,selection:selected),
             author:"",created:"",body:"")
         presentCommentPopover(comment:draft,target:.new(selection:selected),
             relativeTo:source.commentPopoverAnchor(for:selected),of:source,focus:true)
     }
-    private var canAddComment:Bool {
-        guard !source.textView.hasMarkedText() else{return false}
-        let selection=source.selection
-        guard selection.location>=0,NSMaxRange(selection)<=markdownDocument.source.count else{return false}
-        return !comments.contains {value in
+    private var canAddComment:Bool {selectionForNewComment != nil}
+    private var selectionForNewComment:NSRange? {
+        guard !source.textView.hasMarkedText(),let selection=source.commentSelection,
+              selection.location>=0,NSMaxRange(selection)<=markdownDocument.source.count else{return nil}
+        guard !comments.contains(where:{value in
             selection.length==0 ? NSLocationInRange(selection.location,value.recordRange)
                 : NSIntersectionRange(selection,value.recordRange).length>0
-        }
+        }) else{return nil}
+        return selection
     }
     private func insertComment(body:String,selection:NSRange) {
         guard preparedDocument.revision==markdownDocument.revision else {
@@ -850,8 +851,10 @@ final class EditorWindowController: NSWindowController, NSSplitViewDelegate, NSS
             location=NSMaxRange(anchor)
         }
         let insertion=MarkdownComments.insertion(for:comment,in:sourceText,at:location,newline:markdownDocument.newline)
+        insertingCommentRecord=true
         markdownDocument.replace(NSRange(location:location,length:0),with:insertion,
             selection:selection,name:"Add Comment")
+        insertingCommentRecord=false
         // Anchor metadata for an enclosing comment may already have a queued
         // refresh from the preceding keystroke. Publish one final parse after
         // this insertion so that stale refresh cannot hide the new record.
@@ -873,8 +876,14 @@ final class EditorWindowController: NSWindowController, NSSplitViewDelegate, NSS
         DispatchQueue.global(qos:.userInitiated).async { [weak self] in
             let parsed=MarkdownComments.records(in:rope.string)
             DispatchQueue.main.async {
-                guard let self,!self.isClosed,self.commentRefreshGeneration==generation,
-                      self.markdownDocument.revision==revision else{return}
+                guard let self,!self.isClosed,self.commentRefreshGeneration==generation else{return}
+                guard self.markdownDocument.revision==revision else {
+                    // Undo can restore a record and then change its anchor in
+                    // the same group. If no newer scan was requested, retry
+                    // against the final revision instead of losing the record.
+                    self.scheduleCommentRefresh(force:true)
+                    return
+                }
                 let reconciled=parsed.map {value -> ResolvedMarkdownComment in
                     guard let previous=self.comments.first(where:{old in
                         old.recordRange.location==value.recordRange.location ||
@@ -1094,9 +1103,10 @@ final class EditorWindowController: NSWindowController, NSSplitViewDelegate, NSS
     private func deleteComment(_ id:String,closingPopover:Bool) {
         guard let resolved=comments.first(where:{$0.comment.id==id}) else{return}
         let text=markdownDocument.source.string as NSString
-        var range=resolved.recordRange
+        let insertedRange=source.insertedSourceRange(forCommentRecord:resolved.recordRange)
+        var range=insertedRange ?? resolved.recordRange
         let newline=markdownDocument.newline as NSString
-        if NSMaxRange(range)+newline.length<=text.length,
+        if insertedRange==nil,NSMaxRange(range)+newline.length<=text.length,
            text.substring(with:NSRange(location:NSMaxRange(range),length:newline.length))==markdownDocument.newline {
             range.length += newline.length
         }
@@ -1307,13 +1317,29 @@ final class EditorWindowController: NSWindowController, NSSplitViewDelegate, NSS
         let query = findField.stringValue; guard !query.isEmpty else { return }
         findGeneration += 1; let generation = findGeneration
         let rope = markdownDocument.source, revision = markdownDocument.revision, selection = source.selection
+        let hidden=source.hiddenCommentSourceRanges
         DispatchQueue.global(qos:.userInitiated).async { [weak self] in
             let text = rope.string as NSString
             let start = min(text.length,fromStart ? 0 : backwards ? selection.location : NSMaxRange(selection))
             let search = backwards ? NSRange(location:0,length:start) : NSRange(location:start,length:text.length-start)
             let options: NSString.CompareOptions = backwards ? [.caseInsensitive,.backwards] : [.caseInsensitive]
-            var found = text.range(of:query,options:options,range:search)
-            if found.location == NSNotFound { found = text.range(of:query,options:options) }
+            func visibleMatch(in range:NSRange)->NSRange {
+                var remaining=range
+                while remaining.length>0 {
+                    let match=text.range(of:query,options:options,range:remaining)
+                    guard match.location != NSNotFound else{return match}
+                    guard let folded=hidden.first(where:{NSIntersectionRange($0,match).length>0}) else{return match}
+                    if backwards {
+                        remaining.length=max(0,folded.location-remaining.location)
+                    } else {
+                        let end=NSMaxRange(remaining),start=min(end,NSMaxRange(folded))
+                        remaining=NSRange(location:start,length:end-start)
+                    }
+                }
+                return NSRange(location:NSNotFound,length:0)
+            }
+            var found=visibleMatch(in:search)
+            if found.location == NSNotFound {found=visibleMatch(in:NSRange(location:0,length:text.length))}
             DispatchQueue.main.async {
                 guard let self,!self.isClosed,self.findGeneration == generation,self.markdownDocument.revision == revision else { return }
                 if found.location != NSNotFound {

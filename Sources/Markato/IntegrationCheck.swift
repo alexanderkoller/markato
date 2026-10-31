@@ -208,6 +208,12 @@ import PDFKit
         if CommandLine.arguments.contains("--integration-outline") {
             verifyOutline(controller,document:document);return
         }
+        if CommandLine.arguments.contains("--integration-comment-boundary") {
+            verifyCommentBoundary(controller,document:document);return
+        }
+        if CommandLine.arguments.contains("--integration-comment-source") {
+            verifyCommentSource();return
+        }
         if CommandLine.arguments.contains("--integration-comments") {
             verifyComments(controller,document:document);return
         }
@@ -2202,6 +2208,243 @@ import PDFKit
         waitForFixture(500)
     }
 
+    private static func verifyCommentBoundary(_ controller:EditorWindowController,document:MarkdownDocument) {
+        let original="First line\nFinal character."
+        controller.source.showsCommentSource=false
+        document.setInitialText(original)
+        guard let menu=NSApp.mainMenu?.item(withTitle:"Edit")?.submenu,
+              let item=menu.item(withTitle:"Add Comment"),let action=item.action else {
+            fail("Edit menu must contain Add Comment")
+        }
+        check(action == #selector(AppDelegate.addComment(_:)) && item.target === NSApp.delegate,
+            "Add Comment menu item must route to the active document")
+        check(item.keyEquivalent.lowercased()=="m" && item.keyEquivalentModifierMask == [.command,.shift],
+            "Add Comment must expose Shift-Command-M in the menu")
+        let finalCharacter=NSRange(location:original.utf16.count-1,length:1)
+        func waitForInitialLayout(_ remaining:Int) {
+            guard remaining>0 else{fail("Comment boundary fixture did not settle")}
+            if controller.preview.lastRevision==document.revision {
+                controller.debugBeginAddComment(selection:finalCharacter)
+                check(controller.debugCommentPopoverIsShown,"Final character of an uncommented paragraph must accept a comment")
+                controller.debugSetCommentPopoverText("Existing comment")
+                check(controller.debugPressCommentReturn(shift:false),"Could not save boundary comment")
+                waitForRecord(500);return
+            }
+            DispatchQueue.main.asyncAfter(deadline:.now()+0.01){waitForInitialLayout(remaining-1)}
+        }
+        func waitForRecord(_ remaining:Int) {
+            guard remaining>0 else{fail("Boundary comment record did not settle")}
+            if controller.debugComments.count==1,let fold=controller.source.hiddenCommentSourceRanges.first {
+                let view=controller.source.textView
+                controller.window?.makeFirstResponder(view)
+                // Represent the native range for a selection reaching the
+                // visible paragraph end, including its zero-width trailing run.
+                view.setSelectedRange(controller.debugComments[0].recordRange)
+                check(!controller.validateMenuItem(item),"A selection containing only hidden metadata must not accept a comment")
+                view.setSelectedRange(NSRange(location:finalCharacter.location,
+                    length:NSMaxRange(fold)-finalCharacter.location))
+                check(NSIntersectionRange(view.selectedRange(),finalCharacter).length==1,
+                    "Native selection must include the paragraph's final character")
+                check(NSIntersectionRange(view.selectedRange(),controller.debugComments[0].recordRange).length>0,
+                    "Boundary regression must exercise a native selection extending into hidden source")
+                check(controller.validateMenuItem(item),"Add Comment must stay enabled when the native selection includes hidden trailing metadata")
+                check(NSApp.sendAction(action,to:item.target,from:item),"Add Comment menu action was not dispatched")
+                check(controller.debugCommentPopoverIsShown,"Add Comment menu must open the editor at the final character")
+                controller.source.debugBeginSourceClick()
+                controller.window?.makeFirstResponder(view)
+                guard let event=NSEvent.keyEvent(with:.keyDown,location:.zero,modifierFlags:[.command,.shift],
+                    timestamp:0,windowNumber:controller.window?.windowNumber ?? 0,context:nil,
+                    characters:"M",charactersIgnoringModifiers:"m",isARepeat:false,keyCode:46) else {fail("Could not create shortcut event")}
+                menu.update()
+                check(NSApp.mainMenu!.performKeyEquivalent(with:event),"Shift-Command-M must invoke Add Comment")
+                check(controller.debugCommentPopoverIsShown,"Shortcut must open the comment editor at the paragraph boundary")
+                controller.debugSetCommentPopoverText("Boundary comment")
+                check(controller.debugPressCommentReturn(shift:false),"Could not save second boundary comment")
+                waitForSecondRecord(500);return
+            }
+            DispatchQueue.main.asyncAfter(deadline:.now()+0.01){waitForRecord(remaining-1)}
+        }
+        func waitForSecondRecord(_ remaining:Int) {
+            guard remaining>0 else{fail("Second boundary comment was not saved")}
+            if controller.debugComments.count==2 {
+                let value=controller.debugComments.first{$0.comment.body=="Boundary comment"}
+                check(value?.comment.anchor.exact==".","Boundary comment must anchor to visible text, not hidden source")
+                print("COMMENT BOUNDARY PASSED: native final-character selection, Edit menu, Shift-Command-M and visible-text anchor")
+                fflush(nil);_exit(EXIT_SUCCESS)
+            }
+            DispatchQueue.main.asyncAfter(deadline:.now()+0.01){waitForSecondRecord(remaining-1)}
+        }
+        waitForInitialLayout(500)
+    }
+
+    private static func verifyCommentInsertionStability() {
+        for newline in ["\n","\r\n"] {
+            for suffix in ["",newline,newline+newline+"Following paragraph",newline+"# Heading"] {
+                let paragraph="First line"+newline+"Last line 🧮"
+                let original=paragraph+suffix
+                for boundaryAdvance in suffix.hasPrefix(newline) ? [0,newline.utf16.count]:[0] {
+                    let doc=MarkdownDocument();fixtureDocuments.append(doc);doc.setInitialText(original)
+                    let model=PreparedDocument(),editor=SourceEditor(document:doc,prepared:model)
+                    let window=NSWindow(contentRect:NSRect(x:0,y:0,width:520,height:400),styleMask:[.titled],backing:.buffered,defer:false)
+                    window.contentView=editor;editor.frame=window.contentLayoutRect;editor.layoutSubtreeIfNeeded()
+                    doc.edited={selection,_,edit in editor.documentEdited(selection:selection,edit:edit)}
+                    let manager=editor.textView.layoutManager!,container=editor.textView.textContainer!
+                    manager.ensureLayout(for:container)
+                    let originalHeight=max(manager.usedRect(for:container).maxY,manager.extraLineFragmentRect.maxY)
+                    let originalOrigin=editor.viewportOrigin
+                    var publications=0
+                    func assertStable(_ stage:String) {
+                        manager.ensureLayout(for:container)
+                        var visible=editor.textView.string
+                        for fold in editor.hiddenCommentSourceRanges.reversed() {
+                            visible=(visible as NSString).replacingCharacters(in:fold,with:"")
+                        }
+                        check(visible==original,"Comment insertion must never publish changed visible text: \(stage), suffix=\(suffix.debugDescription)")
+                        let height=max(manager.usedRect(for:container).maxY,manager.extraLineFragmentRect.maxY)
+                        if abs(height-originalHeight)>=0.01 {
+                            print("STABILITY",stage,"folds",editor.hiddenCommentSourceRanges,"extra",manager.extraLineFragmentRect)
+                            manager.enumerateLineFragments(forGlyphRange:NSRange(location:0,length:manager.numberOfGlyphs)) {_,used,_,range,_ in
+                                print("LINE",range,manager.characterRange(forGlyphRange:range,actualGlyphRange:nil),used)
+                            }
+                            fflush(nil)
+                        }
+                        check(abs(height-originalHeight)<0.01,"Comment insertion must never change native height: \(stage), \(originalHeight)->\(height), suffix=\(suffix.debugDescription)")
+                        check(abs(editor.viewportOrigin-originalOrigin)<0.01,"Comment insertion must preserve the viewport: \(stage)")
+                        check(model.sourceLayout.length==doc.source.count,"Inserted comment layout must cover source bytes: \(stage)")
+                    }
+                    editor.geometryChanged={publications += 1;assertStable("geometry publication")}
+                    for _ in 0..<2 {
+                        let location=paragraph.utf16.count+boundaryAdvance
+                        let comment=MarkdownComments.comment(in:doc.source.string,selection:NSRange(location:0,length:paragraph.utf16.count),
+                            body:"Note\n\n"+String(repeating:"Long body ",count:30),author:"")
+                        let insertion=MarkdownComments.insertion(for:comment,in:doc.source.string,at:location,newline:newline)
+                        doc.replace(NSRange(location:location,length:0),with:insertion,selection:NSRange(location:0,length:0))
+                        assertStable("immediate insertion")
+                        editor.setCommentRecordRanges(MarkdownComments.records(in:doc.source.string).map(\.recordRange))
+                        assertStable("background reconciliation")
+                    }
+                    check(publications>=2,"Insertion regression must observe intermediate geometry publications")
+                    editor.geometryChanged=nil
+                    editor.showsCommentSource=true;editor.showsCommentSource=false
+                    assertStable("show/hide round trip")
+                    let comment=MarkdownComments.records(in:doc.source.string)[0]
+                    var changed=comment.comment;changed.body="Changed body"
+                    doc.replace(comment.recordRange,with:MarkdownComments.serialize(changed,newline:newline),selection:NSRange(location:0,length:0))
+                    editor.setCommentRecordRanges(MarkdownComments.records(in:doc.source.string).map(\.recordRange))
+                    assertStable("comment body edit")
+                    for record in MarkdownComments.records(in:doc.source.string).reversed() {
+                        guard let range=editor.insertedSourceRange(forCommentRecord:record.recordRange) else {fail("Inserted record lost its owned padding: suffix=\(suffix.debugDescription), boundary=\(boundaryAdvance), record=\(record.recordRange)")}
+                        doc.replace(range,with:"",selection:NSRange(location:0,length:0))
+                    }
+                    check(doc.source.string==original,"Deleting inserted comments must restore the exact original spacing")
+                }
+            }
+        }
+    }
+
+    private static func verifyCommentSource() {
+        let suite="MarkatoCommentSourceCheck."+UUID().uuidString
+        let defaults=UserDefaults(suiteName:suite)!
+        CommentSourcePreferences.defaults=defaults
+        check(!CommentSourcePreferences.isShown,"Comment source must default to hidden")
+        verifyCommentInsertionStability()
+        let newline="\r\n"
+        let comment=MarkdownComments.comment(in:"Before 🧮",selection:NSRange(location:0,length:6),
+            body:"First line\n\n"+String(repeating:"Long comment content. ",count:30)+"\nLast line",author:"")
+        let record=MarkdownComments.serialize(comment,newline:newline)
+        let text="Before 🧮"+newline+newline+record+newline+newline+"After"+newline+newline+record+newline+newline+"End"
+        let doc=MarkdownDocument();fixtureDocuments.append(doc);doc.setInitialText(text)
+        let model=PreparedDocument(),source=SourceEditor(document:doc,prepared:model)
+        let window=NSWindow(contentRect:NSRect(x:0,y:0,width:520,height:400),styleMask:[.titled],backing:.buffered,defer:false)
+        window.contentView=source;source.frame=window.contentLayoutRect;source.layoutSubtreeIfNeeded()
+        doc.edited={selection,_,edit in source.documentEdited(selection:selection,edit:edit)}
+        func refreshRecords() {source.setCommentRecordRanges(MarkdownComments.records(in:doc.source.string).map(\.recordRange))}
+        refreshRecords()
+        let secondDoc=MarkdownDocument();fixtureDocuments.append(secondDoc);secondDoc.setInitialText("Other window")
+        let second=SourceEditor(document:secondDoc)
+        func nativeY(_ offset:Int)->CGFloat {
+            let manager=source.textView.layoutManager!
+            manager.ensureLayout(forCharacterRange:NSRange(location:offset,length:1))
+            return manager.lineFragmentUsedRect(forGlyphAt:manager.glyphIndexForCharacter(at:offset),effectiveRange:nil).minY
+        }
+        func validateLayout(_ stage:String) {
+            check(model.sourceLayout.length==doc.source.count,"Folded layout must cover every source character: \(stage)")
+            let manager=source.textView.layoutManager!
+            manager.ensureLayout(for:source.textView.textContainer!)
+            for offset in stride(from:0,to:doc.source.count,by:11) {
+                check(abs(source.debugMeasuredPosition(for:offset)-nativeY(offset)-source.textView.textContainerInset.height)<0.01,
+                    "Folded retained layout differs from native layout at \(offset): \(stage), cached=\(source.debugMeasuredPosition(for:offset)), native=\(nativeY(offset)), inset=\(source.textView.textContainerInset.height)")
+            }
+        }
+        let after=(text as NSString).range(of:"After").location
+        let hiddenY=nativeY(after)
+        check(source.hiddenCommentSourceRanges.count==2,"Standalone records must be hidden")
+        let first=source.hiddenCommentSourceRanges[0]
+        let lineHeight=source.textView.layoutManager!.defaultLineHeight(for:source.textView.font!)
+        check(abs(hiddenY-lineHeight*2)<1,"Hidden multiline comment must leave only ordinary paragraph spacing")
+        validateLayout("initial")
+        let revision=doc.revision
+        let item=NSApp.mainMenu!.item(withTitle:"View")!.submenu!.item(withTitle:"Show Comment Source")!
+        let app=NSApp.delegate as! AppDelegate
+        app.toggleCommentSource(nil)
+        check(app.validateMenuItem(item) && item.state == .on,"View menu must reflect source visibility")
+        check(source.showsCommentSource && second.showsCommentSource && defaults.bool(forKey:CommentSourcePreferences.key),
+            "Preference must persist and update all editors")
+        check(source.hiddenCommentSourceRanges.isEmpty && nativeY(after)>hiddenY+lineHeight*3,"Showing source must restore readable comment rows")
+        validateLayout("shown")
+        let raw=MarkdownComments.records(in:text)[0].recordRange
+        source.applyHighlights([SyntaxSpan(kind:"Emph",from:raw.location,to:NSMaxRange(raw))],in:raw)
+        check(source.textView.layoutManager!.temporaryAttribute(.foregroundColor,atCharacterIndex:raw.location,effectiveRange:nil) as? NSColor == .secondaryLabelColor,
+            "Comment source must remain muted after highlighting")
+        app.toggleCommentSource(nil)
+        check(app.validateMenuItem(item) && item.state == .off,"View menu must reflect hidden source")
+        check(!second.showsCommentSource && nativeY(after)==hiddenY,"Hiding source must update every editor and restore compact geometry")
+        check(doc.revision==revision && doc.source.string==text && source.textView.string==text,"Visibility must not modify document bytes or revision")
+        validateLayout("hidden again")
+        source.textView.setSelectedRange(NSRange(location:NSMaxRange(first),length:0))
+        source.textView.deleteBackward(nil)
+        check(doc.source.string==text && source.selection.location==first.location,"Backspace at hidden source must skip the entire record")
+        source.textView.setSelectedRange(NSRange(location:first.location,length:0))
+        let beforeForward=source.selection
+        source.textView.moveForward(nil)
+        check(source.selection.location==NSMaxRange(first),"Forward arrow must skip hidden source: before=\(beforeForward), after=\(source.selection), fold=\(first), live=\(source.hiddenCommentSourceRanges)")
+        source.textView.moveBackward(nil)
+        check(source.selection.location==first.location,"Backward arrow must skip hidden source")
+        doc.replace(NSRange(location:0,length:0),with:"Prefix ")
+        refreshRecords();validateLayout("model edit before records")
+        let original=MarkdownComments.records(in:doc.source.string)[0]
+        var changed=original.comment;changed.body="Updated\n\n"+String(repeating:"more content\n",count:30)
+        doc.replace(original.recordRange,with:MarkdownComments.serialize(changed,newline:newline),selection:NSRange(location:0,length:0))
+        refreshRecords();validateLayout("hidden record edit")
+        check(source.hiddenCommentSourceRanges.count==2,"Editing comment UI must keep records hidden")
+        source.textView.insertText("Native ",replacementRange:NSRange(location:0,length:0))
+        DispatchQueue.main.asyncAfter(deadline:.now()+0.05) {
+            refreshRecords();validateLayout("native edit before records")
+            source.frame.size.width=380;source.layoutSubtreeIfNeeded();validateLayout("resize")
+            source.fontSize=17;validateLayout("font size")
+            let inline=MarkdownComments.records(in:doc.source.string)[0].recordRange
+            doc.replace(NSRange(location:inline.location,length:0),with:"Inline ")
+            refreshRecords()
+            check(source.hiddenCommentSourceRanges.count==1,"Inline records must remain visible")
+            validateLayout("standalone becomes inline")
+            doc.replace(NSRange(location:0,length:doc.source.count),with:record+newline+newline+record+newline+newline+"Tail")
+            refreshRecords();validateLayout("adjacent records at document start")
+            check(source.hiddenCommentSourceRanges.count==1 && nativeY(doc.source.count-1)==0,
+                "Adjacent comments at document start must collapse without a placeholder line: folds=\(source.hiddenCommentSourceRanges), y=\(nativeY(doc.source.count-1))")
+            source.textView.setSelectedRange(NSRange(location:0,length:doc.source.count))
+            source.textView.insertText("Visible replacement",replacementRange:source.selection)
+            DispatchQueue.main.asyncAfter(deadline:.now()+0.05) {
+                refreshRecords();validateLayout("replace selection spanning hidden records")
+                check(doc.source.string=="Visible replacement" && source.hiddenCommentSourceRanges.isEmpty,
+                    "Replacing a whole passage must remove its records and leave inserted prose visible")
+                defaults.removePersistentDomain(forName:suite)
+                CommentSourcePreferences.defaults = .standard
+                print("COMMENT SOURCE PASSED: preference, menu, multiple editors, compact layout, color, navigation, deletion, CRLF/Unicode, edits, resize and inline fallback")
+                fflush(nil);_exit(EXIT_SUCCESS)
+            }
+        }
+    }
+
     private static func verifyComments(_ controller:EditorWindowController,document:MarkdownDocument) {
         controller.window?.setContentSize(commentsScreenshotOutput != nil
             ? NSSize(width:1400,height:820):NSSize(width:1760,height:1120))
@@ -2225,6 +2468,19 @@ import PDFKit
         check(controller.debugCommentPopoverEditorIsEditable,"The new-comment card must contain an editable text view")
         check(controller.debugComments.isEmpty,"Opening the editor must not store an empty draft")
         controller.debugSetCommentPopoverText(body)
+        let originalGeometryChanged=controller.source.geometryChanged
+        var insertionGeometryPublications=0
+        controller.source.geometryChanged={
+            if document.source.count>source.length {insertionGeometryPublications += 1}
+            if !controller.source.showsCommentSource {
+                var visible=controller.source.textView.string
+                for fold in controller.source.hiddenCommentSourceRanges.reversed() {
+                    visible=(visible as NSString).replacingCharacters(in:fold,with:"")
+                }
+                check(visible==source as String,"Adding a comment must not briefly publish the record or its padding")
+            }
+            originalGeometryChanged?()
+        }
         check(controller.debugPressCommentReturn(shift:false),"Could not send Return to the comment editor")
         check(!controller.debugCommentPopoverIsShown,"Return must close the new-comment editor")
         @MainActor func waitForComment(_ remaining:Int) {
@@ -2239,6 +2495,8 @@ import PDFKit
                controller.preview.lastRevision==document.revision,
                web.debugCount(".markato-comment-bubble")==1,
                web.debugCount(".markato-comment-highlight")>0 {
+                controller.source.geometryChanged=originalGeometryChanged
+                check(insertionGeometryPublications>0,"Comment UI test must observe insertion geometry before background parsing settles")
                 check(!controller.isSidebarVisible,"Adding a comment must not reveal the sidebar")
                 check(controller.sidebar.mode == .comments,"Adding a comment must select the Comments sidebar")
                 check(controller.source.debugCommentRecordCount == 1,
@@ -2247,6 +2505,13 @@ import PDFKit
                 check((continuationHeight ?? 0)>10,
                     "Multiline comment continuations must remain readable (height=\(String(describing:continuationHeight)))")
                 let text=document.source.string
+                if !controller.source.showsCommentSource {
+                    var visible=text
+                    for fold in controller.source.hiddenCommentSourceRanges.reversed() {
+                        visible=(visible as NSString).replacingCharacters(in:fold,with:"")
+                    }
+                    check(visible==source as String,"Adding a hidden comment must preserve the original paragraph spacing")
+                }
                 check(text.contains(MarkdownComments.marker),"The comment record must be stored in the Markdown source")
                 guard let stored=controller.debugComments.first else{fail("Missing stored comment")}
                 check(stored.comment.anchor.startExact?.hasPrefix("This document") == true &&
@@ -2490,7 +2755,7 @@ import PDFKit
                                    !document.source.string.contains(MarkdownComments.marker) {
                                     document.undoManager?.undo()
                                     @MainActor func waitForUndo(_ undoRemaining:Int) {
-                                        guard undoRemaining>0 else{fail("Resolved comment could not be restored with Undo")}
+                                        guard undoRemaining>0 else{fail("Resolved comment could not be restored with Undo: comments=\(controller.debugComments.count), marker=\(document.source.string.contains(MarkdownComments.marker)), revision=\(document.revision), undo=\(document.undoManager?.undoActionName ?? "none"), redo=\(document.undoManager?.redoActionName ?? "none")")}
                                         if controller.debugComments.count==1 &&
                                            document.source.string.contains(MarkdownComments.marker) {
                                             check(controller.source.selection==selectionBeforeResolve,

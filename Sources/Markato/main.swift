@@ -97,6 +97,9 @@ func exportProfileRecording(_ path:UnsafePointer<CChar>) {
     @objc func findPrevious(_ sender:Any?) { currentEditor?.findPrevious(sender) }
     @objc func addComment(_ sender:Any?) { currentEditor?.addComment(sender) }
     @objc func toggleSidebar(_ sender:Any?) { currentEditor?.toggleSidebar(sender) }
+    @objc func toggleCommentSource(_ sender:Any?) {
+        CommentSourcePreferences.isShown.toggle()
+    }
     @objc func togglePreview(_ sender:Any?) { currentEditor?.togglePreview(sender) }
     @objc func increaseFont(_ sender:Any?) { currentEditor?.increaseFont(sender) }
     @objc func decreaseFont(_ sender:Any?) { currentEditor?.decreaseFont(sender) }
@@ -170,6 +173,10 @@ func exportProfileRecording(_ path:UnsafePointer<CChar>) {
     }
     #endif
     func validateMenuItem(_ menuItem:NSMenuItem)->Bool {
+        if menuItem.action == #selector(toggleCommentSource(_:)) {
+            menuItem.state=CommentSourcePreferences.isShown ? .on:.off
+            return true
+        }
         if menuItem.action == #selector(newDocument(_:)) || menuItem.action == #selector(openDocument(_:))
             || menuItem.action == #selector(openRecentDocument(_:)) {return true}
         if menuItem.action == #selector(closeAllDocuments(_:)) {
@@ -507,6 +514,8 @@ func exportProfileRecording(_ path:UnsafePointer<CChar>) {
         let view=submenu("View")
         add(view,"Show Sidebar",#selector(EditorWindowController.toggleSidebar(_:)),"s",[.command,.control])
         add(view,"Show Preview",#selector(EditorWindowController.togglePreview(_:)),"p",[.command,.option]);add(view,"Increase Font Size",#selector(EditorWindowController.increaseFont(_:)),"+");add(view,"Decrease Font Size",#selector(EditorWindowController.decreaseFont(_:)),"-")
+        add(view,"Show Comment Source",#selector(toggleCommentSource(_:)))
+        view.items.last?.target=self
         add(view,"Enter Full Screen",#selector(NSWindow.toggleFullScreen(_:)),"f",[.command,.control])
         let window=submenu("Window");NSApp.windowsMenu=window
         add(window,"Minimize",#selector(NSWindow.performMiniaturize(_:)),"m");add(window,"Zoom",#selector(NSWindow.performZoom(_:)));window.addItem(.separator());add(window,"Bring All to Front",#selector(NSApplication.arrangeInFront(_:)))

@@ -206,15 +206,47 @@ public enum MarkdownComments {
                                  newline:String="\n")->String {
         let text=source as NSString
         let position=min(max(0,location ?? text.length),text.length)
-        let prefix=text.substring(to:position)
-        let separator: String
-        if prefix.isEmpty {separator=""}
-        else if prefix.hasSuffix("\r\n\r\n") || prefix.hasSuffix("\n\n") {separator=""}
-        else if prefix.hasSuffix("\r\n") || prefix.hasSuffix("\n") {separator=newline}
-        else {separator=newline+newline}
-        let suffix=position<text.length ? text.substring(from:position):""
-        let trailing=(suffix.hasPrefix("\r\n") || suffix.hasPrefix("\n")) ? "":newline
-        return separator+serialize(comment,newline:newline)+newline+trailing
+        // Only the boundary newlines matter; avoid copying either document half.
+        let prefix=text.substring(with:NSRange(location:max(0,position-4),length:min(4,position)))
+        let suffix=text.substring(with:NSRange(location:position,length:min(4,text.length-position)))
+        let leading:Int
+        if prefix.isEmpty || prefix.hasSuffix("\r\n\r\n") || prefix.hasSuffix("\n\n") {leading=0}
+        else if prefix.hasSuffix("\r\n") || prefix.hasSuffix("\n") {leading=1}
+        else {leading=2}
+        let existingAfter:Int
+        if suffix.hasPrefix("\r\n\r\n") || suffix.hasPrefix("\n\n") {existingAfter=2}
+        else if suffix.hasPrefix("\r\n") || suffix.hasPrefix("\n") {existingAfter=1}
+        else {existingAfter=0}
+        // A hidden record consumes two following line breaks. Insert exactly
+        // two in total when existing paragraph spacing can supply the rest,
+        // so hiding it preserves even deliberately wider paragraph gaps.
+        // A trailing newline at EOF creates an extra TextKit insertion line
+        // even when its glyph is hidden. The record needs no closing separator
+        // when there is no following source.
+        let trailing=position==text.length ? 0:max(2-leading,2-existingAfter)
+        return String(repeating:newline,count:leading)+serialize(comment,newline:newline)
+            + String(repeating:newline,count:trailing)
+    }
+
+    /// A fold owns the record's complete lines and one following blank line.
+    /// Inspect only the boundary lines; the body may be arbitrarily long.
+    public static func standaloneSourceRange(_ record:NSRange,in rope:TextRope)->NSRange? {
+        guard record.length>=7,record.location>=0,NSMaxRange(record)<=rope.count,
+              rope.string(in:NSRange(location:record.location,length:4))==opening,
+              rope.string(in:NSRange(location:NSMaxRange(record)-3,length:3))==closing else{return nil}
+        let first=rope.line(at:record.location),last=rope.line(at:NSMaxRange(record)-1)
+        let start=rope.lineStart(first)
+        var end=last+1<rope.lineCount ? rope.lineStart(last+1):rope.count
+        let before=rope.string(in:NSRange(location:start,length:record.location-start))
+        let after=rope.string(in:NSRange(location:NSMaxRange(record),length:end-NSMaxRange(record)))
+        guard before.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty,
+              after.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty else{return nil}
+        if end<rope.count {
+            let next=last+2<rope.lineCount ? rope.lineStart(last+2):rope.count
+            if rope.string(in:NSRange(location:end,length:next-end))
+                .trimmingCharacters(in:.whitespacesAndNewlines).isEmpty {end=next}
+        }
+        return NSRange(location:start,length:end-start)
     }
 
     public static func records(in source:String)->[ResolvedMarkdownComment] {
