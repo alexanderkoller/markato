@@ -276,17 +276,21 @@ func exportProfileRecording(_ path:UnsafePointer<CChar>) {
                 let expectedURL=launchConfiguration.documentURL ?? finderURL
                 guard documents.count==1,let document=documents.first as? MarkdownDocument,
                       document.windowControllers.count==1,
-                      let window=document.windowControllers.first?.window,
+                      let controller=document.windowControllers.first as? EditorWindowController,
+                      let window=controller.window,
                       window.tabbingMode == .disallowed,!window.isRestorable,window.isVisible,
                       checkingFinderPath == nil || window.animationBehavior != .none,
+                      checkingFinderPath == nil || (abs(controller.source.viewportOrigin)<0.01 &&
+                          abs(controller.preview.clipOrigin)<0.01),
                       NSScreen.screens.contains(where:{$0.visibleFrame.intersects(window.frame)}),
                       document.fileURL?.standardizedFileURL == expectedURL?.standardizedFileURL,
                       expectedURL != nil || document.source.count==0,
                       !checkingDefaultStartup || openedStartupFallback else {
                     let failedWindow=documents.first?.windowControllers.first?.window
                     let failedDocument=documents.first as? MarkdownDocument
+                    let failedController=documents.first?.windowControllers.first as? EditorWindowController
                     let onScreen=failedWindow.map{window in NSScreen.screens.contains(where:{$0.visibleFrame.intersects(window.frame)})} ?? false
-                    print("STARTUP FAILED: documents=\(documents.count), controllers=\(documents.first?.windowControllers.count ?? -1), visible=\(failedWindow?.isVisible ?? false), onScreen=\(onScreen), tabbing=\(String(describing:failedWindow?.tabbingMode)), file=\(failedDocument?.fileURL?.path ?? "nil"), expected=\(expectedURL?.path ?? "nil"), characters=\(failedDocument?.source.count ?? -1), fallback=\(openedStartupFallback), frame=\(String(describing:failedWindow?.frame))")
+                    print("STARTUP FAILED: documents=\(documents.count), controllers=\(documents.first?.windowControllers.count ?? -1), visible=\(failedWindow?.isVisible ?? false), onScreen=\(onScreen), tabbing=\(String(describing:failedWindow?.tabbingMode)), file=\(failedDocument?.fileURL?.path ?? "nil"), expected=\(expectedURL?.path ?? "nil"), characters=\(failedDocument?.source.count ?? -1), fallback=\(openedStartupFallback), sourceOrigin=\(failedController?.source.viewportOrigin ?? -1), previewOrigin=\(failedController?.preview.clipOrigin ?? -1), frame=\(String(describing:failedWindow?.frame))")
                     exit(2)
                 }
                 print("STARTUP: empty=\(document.source.count==0), file=\(document.fileURL?.path ?? "untitled"), visible=true, tabbing=disallowed, fallback=\(openedStartupFallback)")

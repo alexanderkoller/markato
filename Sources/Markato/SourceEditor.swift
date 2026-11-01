@@ -376,7 +376,11 @@ final class SourceEditor:NSView,NSTextViewDelegate,NSTextStorageDelegate,ScrollS
     init(document:MarkdownDocument,prepared:PreparedDocument = PreparedDocument(),deferInitialLayout:Bool=false) {
         self.document=document;self.prepared=prepared;initialStylesReady = !deferInitialLayout;super.init(frame:.zero)
         scroll.contentView=SourceClipView()
-        scroll.hasVerticalScroller=true;scroll.hasHorizontalScroller=false;scroll.autohidesScrollers=true
+        scroll.hasVerticalScroller=true;scroll.hasHorizontalScroller=false
+        // Reserve the scroller width until the deferred first layout knows the
+        // document height. Otherwise its late appearance narrows and rewraps
+        // the source after reveal(0), allowing AppKit to move the clip origin.
+        scroll.autohidesScrollers = !deferInitialLayout
         let verticalScroller=SourceScroller()
         verticalScroller.userWillScroll={ [weak self] in self?.prepareForUserScroll() }
         scroll.verticalScroller=verticalScroller
@@ -1646,6 +1650,7 @@ final class SourceEditor:NSView,NSTextViewDelegate,NSTextStorageDelegate,ScrollS
         // several screens. Exact lines replace the estimate in the same tree.
         dirtyRange=rope.lines(0,min(rope.lineCount,80))
         relayoutPreservingViewport {}
+        scroll.autohidesScrollers=true
     }
     func applyHighlights(_ spans:[SyntaxSpan],in requestedRange:NSRange) {
         // Syntax colors are temporary layout-manager attributes and cannot
