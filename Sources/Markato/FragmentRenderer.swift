@@ -227,11 +227,9 @@ private struct PendingPreviewFrame {
     private let verticalScroller=NSScroller(frame:NSRect(x:0,y:0,width:15,height:100))
     private let loadingView=PreviewLoadingView()
     private let loadingLabel=NSTextField(labelWithString:"Loading preview…")
-    #if DEBUG
     private var loadingWait:TimingDiagnostics.Interval?
     private var editPresentationWait:(revision:Int,inserted:Int,removed:Int,
         interval:TimingDiagnostics.Interval)?
-    #endif
     private var committed:CommittedPresentation?
     private var content:PreviewContent?
     private var desired:PreviewRequest?
@@ -601,13 +599,11 @@ private struct PendingPreviewFrame {
         cancelRenderingPresentation()
         updateLoadingState()
     }
-    #if DEBUG
     func beginEditTiming(revision:Int,edit:SourceEdit) {
         editPresentationWait=TimingDiagnostics.shared.begin("edit.to.preview").map{
             (revision:revision,inserted:edit.insertedLength,removed:edit.range.length,interval:$0)
         }
     }
-    #endif
     func show(_ result:ParseResult) {
         let existing=Dictionary((content?.entries ?? []).map{($0.fragment.from,$0.blockID)},uniquingKeysWith:{first,_ in first})
         show(result.fragments.map{RenderedEntry(id:$0.id ?? existing[$0.from] ?? BlockID(UInt64.random(in:1...UInt64.max)),fragment:$0)},revision:result.revision)
@@ -1107,13 +1103,13 @@ private struct PendingPreviewFrame {
             preservedImageOffsetY:preservePixels ? previousPaintedOffset-nextPaintedOffset:0)
         #if DEBUG
         committedFrameID += 1
+        #endif
         if let wait=editPresentationWait,wait.revision==request.revision {
             TimingDiagnostics.shared.end(wait.interval,values:["revision":Double(request.revision),
                 "mountedBlocks":Double(request.entries.count),"inserted":Double(wait.inserted),
                 "removed":Double(wait.removed)])
             editPresentationWait=nil
         }
-        #endif
         committed=CommittedPresentation(request:request,geometry:frame.geometry,map:position.map,sourceGeometryRevision:position.sourceGeometryRevision,viewportHeight:bounds.height,windowTop:position.windowTop,totalHeight:position.totalHeight)
         if desired?.id==request.id {desired=nil}
         surface.size(contentHeight:position.totalHeight,windowTop:position.windowTop,width:request.width,viewportHeight:bounds.height)

@@ -10,13 +10,13 @@ If you like [MacDown](https://github.com/MacDownApp/macdown)'s source-on-the-lef
 
 ## Speed on long documents
 
-In a controlled benchmark on an Apple M4 Pro, Markato opened an **8 MB Markdown document to a visible preview in 0.26 seconds** — **9.7 times faster than [MacDown 2.0](https://github.com/xuanji86/MacDown2.0)** and **46 times faster than MacDown 0.7.3**. Neither [MarkViewer](https://markviewer.com/) nor [MacDown 3000](https://github.com/schuyler/macdown3000) completed that operation within the 60-second limit.
+In a controlled benchmark on a MacBook Air with Apple M5, Markato had the fastest open time at 64 KB and 1 MB and the fastest edit time at 8 MB. At 8 MB, Markato opened about 11% faster than the [MacDown 2.0 v0.3.0 release](https://github.com/xuanji86/MacDown2.0/releases/tag/v0.3.0), and its rendered edit completed about 2.4 times faster. An older MacDown 2 pre-release build opened about 15% faster than Markato.
 
-![An 8 MB Markdown document opens in 0.26 seconds in Markato, 2.48 seconds in MacDown 2.0, and 11.87 seconds in MacDown 0.7.3; MarkViewer and MacDown 3000 exceed the 60-second timeout.](docs/assets/markato-performance.png)
+![Six plots compare open and edit latency for Markato, MarkViewer, MacDown 0.7.3, MacDown 3000, and two MacDown 2 builds at 64 KB, 1 MB, and 8 MB.](docs/assets/markato-performance-m5.png)
 
-On the same 8 MB document, an edit reached the visible preview in **0.21 seconds**, compared with **0.23 seconds for MacDown 2.0**. The largest advantage in this comparison is opening long documents.
+Markato's rendered edit latency remained nearly flat across the tested sizes: 53 ms at 64 KB, 49 ms at 1 MB, and 54 ms at 8 MB. Lower is better in every plot.
 
-See the [complete performance comparison](docs/performance.md) for opening and editing results at 64 KB, 1 MB, and 8 MB, the tested versions, and the benchmark method. These figures describe the tested documents and hardware.
+See the [complete M5 benchmark archive](benchmarks/2026-11-01-m5-comparison/README.md) for the tested versions, benchmark method, raw records, and environment details. These figures describe the tested documents and hardware.
 
 ## Write and preview
 

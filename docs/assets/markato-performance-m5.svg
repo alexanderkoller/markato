@@ -1,0 +1,265 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="2000" height="1250" viewBox="0 0 2000 1250" role="img" aria-labelledby="title desc">
+  <title id="title">Complete Markato benchmark comparison</title>
+  <desc id="desc">Six linear-scale horizontal bar charts compare Markato, MarkViewer, MacDown 0.7.3, MacDown 3000, and two MacDown 2 builds at 64 KB, 1 MB, and 8 MB.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#07111d"/><stop offset="1" stop-color="#102333"/></linearGradient>
+    <linearGradient id="markato" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#45e0ff"/><stop offset="1" stop-color="#80ffb7"/></linearGradient>
+    <pattern id="timeout" width="14" height="14" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><rect width="14" height="14" fill="#344f62"/><rect width="5" height="14" fill="#d7ff64" fill-opacity=".52"/></pattern>
+    <pattern id="untested" width="14" height="14" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><rect width="14" height="14" fill="#243847"/><rect width="3" height="14" fill="#7890a0" fill-opacity=".6"/></pattern>
+    <style>
+      .panel { fill:#0d1b2a; fill-opacity:.78; stroke:#466276; stroke-opacity:.42 }
+      .heading { fill:#fff; font-size:27px; font-weight:730 } .subheading { fill:#80ffb7; font-size:17px; font-weight:700; letter-spacing:2px }
+      .app { fill:#b9cad6; font-size:17px } .app-markato { fill:#fff; font-size:17px; font-weight:700 }
+      .value { fill:#dce7ed; font-size:15px; font-weight:650 } .value-markato { fill:#80ffb7; font-size:15px; font-weight:740 }
+      .value-timeout { fill:#d7ff64; font-size:15px; font-weight:720 } .value-untested { fill:#dce7ed; font-size:13px; font-weight:720 }
+      .axis { stroke:#a8bdca; stroke-opacity:.16 } .tick { fill:#708999; font-size:13px }
+    </style>
+  </defs>
+  <rect width="2000" height="1250" fill="url(#bg)"/><circle cx="1800" cy="80" r="510" fill="#45e0ff" fill-opacity=".035"/><circle cx="1430" cy="1230" r="590" fill="#80ffb7" fill-opacity=".025"/>
+  <g font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif">
+    <text x="76" y="110" fill="#fff" font-size="52" font-weight="760" letter-spacing="-1">Markato performance</text>
+    <text x="76" y="160" fill="#aabfcd" font-size="22">End-to-end latency until the requested view is visibly painted · linear scales · lower is better</text>
+    <g transform="translate(56 235)">
+<rect class="panel" width="610" height="430" rx="22"/>
+<text class="subheading" x="28" y="42">64 KB</text>
+<text class="heading" x="28" y="78">Open</text>
+<g transform="translate(28 104)">
+<g class="axis">
+<line x1="132.0" y1="0" x2="132.0" y2="258"/>
+<line x1="238.5" y1="0" x2="238.5" y2="258"/>
+<line x1="345.0" y1="0" x2="345.0" y2="258"/>
+<line x1="451.5" y1="0" x2="451.5" y2="258"/>
+<line x1="558.0" y1="0" x2="558.0" y2="258"/>
+</g>
+<g class="tick" text-anchor="middle">
+<text x="132.0" y="280">0</text>
+<text x="238.5" y="280">100 ms</text>
+<text x="345.0" y="280">200 ms</text>
+<text x="451.5" y="280">300 ms</text>
+<text x="558.0" y="280">400 ms</text>
+</g>
+<text class="app-markato" x="0" y="28">Markato</text>
+<rect x="132" y="10" width="118.4" height="22" rx="11" fill="url(#markato)"/>
+<text class="value-markato" x="259.4" y="28">111.2 ms</text>
+<text class="app" x="0" y="70">MarkViewer</text>
+<rect x="132" y="52" width="224.4" height="22" rx="11" fill="#a97fe5"/>
+<text class="value" x="365.4" y="70">210.7 ms</text>
+<text class="app" x="0" y="112">MacDown 0.7.3</text>
+<rect x="132" y="94" width="259.3" height="22" rx="11" fill="#6f899c"/>
+<text class="value" x="400.3" y="112">243.5 ms</text>
+<text class="app" x="0" y="154">MD 3000</text>
+<rect x="132" y="136" width="199.7" height="22" rx="11" fill="#587286"/>
+<text class="value" x="340.7" y="154">187.5 ms</text>
+<text class="app" x="0" y="196">MD2 pre-rel.</text>
+<rect x="132" y="178" width="330.9" height="22" rx="11" fill="#91a7b6"/>
+<text class="value" x="471.9" y="196">310.7 ms</text>
+<text class="app" x="0" y="238">MD2 0.3.0</text>
+<rect x="132" y="220" width="309.8" height="22" rx="11" fill="#d49b65"/>
+<text class="value" x="450.8" y="238">290.9 ms</text>
+</g>
+</g>
+<g transform="translate(695 235)">
+<rect class="panel" width="610" height="430" rx="22"/>
+<text class="subheading" x="28" y="42">1 MB</text>
+<text class="heading" x="28" y="78">Open</text>
+<g transform="translate(28 104)">
+<g class="axis">
+<line x1="132.0" y1="0" x2="132.0" y2="258"/>
+<line x1="238.5" y1="0" x2="238.5" y2="258"/>
+<line x1="345.0" y1="0" x2="345.0" y2="258"/>
+<line x1="451.5" y1="0" x2="451.5" y2="258"/>
+<line x1="558.0" y1="0" x2="558.0" y2="258"/>
+</g>
+<g class="tick" text-anchor="middle">
+<text x="132.0" y="280">0</text>
+<text x="238.5" y="280">1.25 s</text>
+<text x="345.0" y="280">2.5 s</text>
+<text x="451.5" y="280">3.75 s</text>
+<text x="558.0" y="280">5 s</text>
+</g>
+<text class="app-markato" x="0" y="28">Markato</text>
+<rect x="132" y="10" width="31.7" height="22" rx="11" fill="url(#markato)"/>
+<text class="value-markato" x="172.7" y="28">372.5 ms</text>
+<text class="app" x="0" y="70">MarkViewer</text>
+<rect x="132" y="52" width="426.0" height="22" rx="11" fill="#a97fe5"/>
+<text class="value" x="550.0" y="70" text-anchor="end">18.97 s  ›</text>
+<text class="app" x="0" y="112">MacDown 0.7.3</text>
+<rect x="132" y="94" width="143.5" height="22" rx="11" fill="#6f899c"/>
+<text class="value" x="284.5" y="112">1.68 s</text>
+<text class="app" x="0" y="154">MD 3000</text>
+<rect x="132" y="136" width="180.9" height="22" rx="11" fill="#587286"/>
+<text class="value" x="321.9" y="154">2.12 s</text>
+<text class="app" x="0" y="196">MD2 pre-rel.</text>
+<rect x="132" y="178" width="46.3" height="22" rx="11" fill="#91a7b6"/>
+<text class="value" x="187.3" y="196">543.0 ms</text>
+<text class="app" x="0" y="238">MD2 0.3.0</text>
+<rect x="132" y="220" width="46.2" height="22" rx="11" fill="#d49b65"/>
+<text class="value" x="187.2" y="238">542.3 ms</text>
+</g>
+</g>
+<g transform="translate(1334 235)">
+<rect class="panel" width="610" height="430" rx="22"/>
+<text class="subheading" x="28" y="42">8 MB</text>
+<text class="heading" x="28" y="78">Open</text>
+<g transform="translate(28 104)">
+<g class="axis">
+<line x1="132.0" y1="0" x2="132.0" y2="258"/>
+<line x1="238.5" y1="0" x2="238.5" y2="258"/>
+<line x1="345.0" y1="0" x2="345.0" y2="258"/>
+<line x1="451.5" y1="0" x2="451.5" y2="258"/>
+<line x1="558.0" y1="0" x2="558.0" y2="258"/>
+</g>
+<g class="tick" text-anchor="middle">
+<text x="132.0" y="280">0</text>
+<text x="238.5" y="280">15 s</text>
+<text x="345.0" y="280">30 s</text>
+<text x="451.5" y="280">45 s</text>
+<text x="558.0" y="280">60 s</text>
+</g>
+<text class="app-markato" x="0" y="28">Markato</text>
+<rect x="132" y="10" width="17.3" height="22" rx="11" fill="url(#markato)"/>
+<text class="value-markato" x="158.3" y="28">2.43 s</text>
+<text class="app" x="0" y="70">MarkViewer</text>
+<rect x="132" y="52" width="426" height="22" rx="11" fill="url(#timeout)"/>
+<text class="value-timeout" x="548" y="70" text-anchor="end">&gt;60 s</text>
+<text class="app" x="0" y="112">MacDown 0.7.3</text>
+<rect x="132" y="94" width="90.7" height="22" rx="11" fill="#6f899c"/>
+<text class="value" x="231.7" y="112">12.78 s</text>
+<text class="app" x="0" y="154">MD 3000</text>
+<rect x="132" y="136" width="359.5" height="22" rx="11" fill="#587286"/>
+<text class="value" x="483.5" y="154" text-anchor="end">50.64 s*</text>
+<text class="app" x="0" y="196">MD2 pre-rel.</text>
+<rect x="132" y="178" width="14.7" height="22" rx="11" fill="#91a7b6"/>
+<text class="value" x="155.7" y="196">2.07 s</text>
+<text class="app" x="0" y="238">MD2 0.3.0</text>
+<rect x="132" y="220" width="19.4" height="22" rx="11" fill="#d49b65"/>
+<text class="value" x="160.4" y="238">2.73 s</text>
+</g>
+</g>
+<g transform="translate(56 695)">
+<rect class="panel" width="610" height="430" rx="22"/>
+<text class="subheading" x="28" y="42">64 KB</text>
+<text class="heading" x="28" y="78">Edit</text>
+<g transform="translate(28 104)">
+<g class="axis">
+<line x1="132.0" y1="0" x2="132.0" y2="258"/>
+<line x1="238.5" y1="0" x2="238.5" y2="258"/>
+<line x1="345.0" y1="0" x2="345.0" y2="258"/>
+<line x1="451.5" y1="0" x2="451.5" y2="258"/>
+<line x1="558.0" y1="0" x2="558.0" y2="258"/>
+</g>
+<g class="tick" text-anchor="middle">
+<text x="132.0" y="280">0</text>
+<text x="238.5" y="280">37.5 ms</text>
+<text x="345.0" y="280">75 ms</text>
+<text x="451.5" y="280">112.5 ms</text>
+<text x="558.0" y="280">150 ms</text>
+</g>
+<text class="app-markato" x="0" y="28">Markato</text>
+<rect x="132" y="10" width="151.7" height="22" rx="11" fill="url(#markato)"/>
+<text class="value-markato" x="292.7" y="28">53.4 ms</text>
+<text class="app" x="0" y="70">MarkViewer</text>
+<rect x="132" y="52" width="368.6" height="22" rx="11" fill="#a97fe5"/>
+<text class="value" x="492.6" y="70" text-anchor="end">129.8 ms</text>
+<text class="app" x="0" y="112">MacDown 0.7.3</text>
+<rect x="132" y="94" width="97.1" height="22" rx="11" fill="#6f899c"/>
+<text class="value" x="238.1" y="112">34.2 ms</text>
+<text class="app" x="0" y="154">MD 3000</text>
+<rect x="132" y="136" width="129.5" height="22" rx="11" fill="#587286"/>
+<text class="value" x="270.5" y="154">45.6 ms</text>
+<text class="app" x="0" y="196">MD2 pre-rel.</text>
+<rect x="132" y="178" width="102.0" height="22" rx="11" fill="#91a7b6"/>
+<text class="value" x="243.0" y="196">35.9 ms</text>
+<text class="app" x="0" y="238">MD2 0.3.0</text>
+<rect x="132" y="220" width="97.7" height="22" rx="11" fill="#d49b65"/>
+<text class="value" x="238.7" y="238">34.4 ms</text>
+</g>
+</g>
+<g transform="translate(695 695)">
+<rect class="panel" width="610" height="430" rx="22"/>
+<text class="subheading" x="28" y="42">1 MB</text>
+<text class="heading" x="28" y="78">Edit</text>
+<g transform="translate(28 104)">
+<g class="axis">
+<line x1="132.0" y1="0" x2="132.0" y2="258"/>
+<line x1="238.5" y1="0" x2="238.5" y2="258"/>
+<line x1="345.0" y1="0" x2="345.0" y2="258"/>
+<line x1="451.5" y1="0" x2="451.5" y2="258"/>
+<line x1="558.0" y1="0" x2="558.0" y2="258"/>
+</g>
+<g class="tick" text-anchor="middle">
+<text x="132.0" y="280">0</text>
+<text x="238.5" y="280">0.25 s</text>
+<text x="345.0" y="280">0.5 s</text>
+<text x="451.5" y="280">0.75 s</text>
+<text x="558.0" y="280">1 s</text>
+</g>
+<text class="app-markato" x="0" y="28">Markato</text>
+<rect x="132" y="10" width="21.1" height="22" rx="11" fill="url(#markato)"/>
+<text class="value-markato" x="162.1" y="28">49.5 ms</text>
+<text class="app" x="0" y="70">MarkViewer</text>
+<rect x="132" y="52" width="426.0" height="22" rx="11" fill="#a97fe5"/>
+<text class="value" x="550.0" y="70" text-anchor="end">10.45 s  ›</text>
+<text class="app" x="0" y="112">MacDown 0.7.3</text>
+<rect x="132" y="94" width="98.7" height="22" rx="11" fill="#6f899c"/>
+<text class="value" x="239.7" y="112">231.6 ms</text>
+<text class="app" x="0" y="154">MD 3000</text>
+<rect x="132" y="136" width="386.6" height="22" rx="11" fill="#587286"/>
+<text class="value" x="510.6" y="154" text-anchor="end">907.6 ms</text>
+<text class="app" x="0" y="196">MD2 pre-rel.</text>
+<rect x="132" y="178" width="22.8" height="22" rx="11" fill="#91a7b6"/>
+<text class="value" x="163.8" y="196">53.6 ms</text>
+<text class="app" x="0" y="238">MD2 0.3.0</text>
+<rect x="132" y="220" width="15.5" height="22" rx="11" fill="#d49b65"/>
+<text class="value" x="156.5" y="238">36.4 ms</text>
+</g>
+</g>
+<g transform="translate(1334 695)">
+<rect class="panel" width="610" height="430" rx="22"/>
+<text class="subheading" x="28" y="42">8 MB</text>
+<text class="heading" x="28" y="78">Edit</text>
+<g transform="translate(28 104)">
+<g class="axis">
+<line x1="132.0" y1="0" x2="132.0" y2="258"/>
+<line x1="238.5" y1="0" x2="238.5" y2="258"/>
+<line x1="345.0" y1="0" x2="345.0" y2="258"/>
+<line x1="451.5" y1="0" x2="451.5" y2="258"/>
+<line x1="558.0" y1="0" x2="558.0" y2="258"/>
+</g>
+<g class="tick" text-anchor="middle">
+<text x="132.0" y="280">0</text>
+<text x="238.5" y="280">0.5 s</text>
+<text x="345.0" y="280">1 s</text>
+<text x="451.5" y="280">1.5 s</text>
+<text x="558.0" y="280">2 s</text>
+</g>
+<text class="app-markato" x="0" y="28">Markato</text>
+<rect x="132" y="10" width="11.6" height="22" rx="11" fill="url(#markato)"/>
+<text class="value-markato" x="152.6" y="28">54.3 ms</text>
+<text class="app" x="0" y="70">MarkViewer</text>
+<rect x="132" y="52" width="426" height="22" rx="11" fill="url(#untested)"/>
+<text class="value-untested" x="345.0" y="70" text-anchor="middle">NOT TESTED · OPEN TIMED OUT</text>
+<text class="app" x="0" y="112">MacDown 0.7.3</text>
+<rect x="132" y="94" width="389.3" height="22" rx="11" fill="#6f899c"/>
+<text class="value" x="513.3" y="112" text-anchor="end">1.83 s</text>
+<text class="app" x="0" y="154">MD 3000</text>
+<rect x="132" y="136" width="426" height="22" rx="11" fill="url(#timeout)"/>
+<text class="value-timeout" x="548" y="154" text-anchor="end">&gt;60 s</text>
+<text class="app" x="0" y="196">MD2 pre-rel.</text>
+<rect x="132" y="178" width="35.6" height="22" rx="11" fill="#91a7b6"/>
+<text class="value" x="176.6" y="196">167.3 ms</text>
+<text class="app" x="0" y="238">MD2 0.3.0</text>
+<rect x="132" y="220" width="27.8" height="22" rx="11" fill="#d49b65"/>
+<text class="value" x="168.8" y="238">130.3 ms</text>
+</g>
+</g>
+    <g transform="translate(76 1195)">
+      <rect x="0" y="-18" width="24" height="14" rx="7" fill="url(#markato)"/><text x="36" y="-5" fill="#aabfcd" font-size="16">Markato</text>
+      <rect x="138" y="-18" width="24" height="14" rx="7" fill="#a97fe5"/><text x="174" y="-5" fill="#aabfcd" font-size="16">MarkViewer</text>
+      <rect x="330" y="-18" width="24" height="14" rx="7" fill="url(#timeout)"/><text x="366" y="-5" fill="#aabfcd" font-size="16">60-second operation limit</text>
+      <rect x="666" y="-18" width="24" height="14" rx="7" fill="url(#untested)"/><text x="702" y="-5" fill="#aabfcd" font-size="16">not tested: prerequisite open timed out</text>
+      <text x="1870" y="-5" fill="#708797" font-size="15" text-anchor="end">Apple M5, 10-core · macOS 27.2 · medians where completed</text>
+    </g>
+    <text x="76" y="1227" fill="#708797" font-size="13">* MacDown 3000's 8 MB open is one completed observation; its first edit timed out.</text>
+  </g>
+</svg>

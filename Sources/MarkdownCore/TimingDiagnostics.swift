@@ -1,4 +1,3 @@
-#if DEBUG
 import Foundation
 
 /// Opt-in, bounded in-memory recording. No logging or file I/O occurs on scroll callbacks.
@@ -82,4 +81,3 @@ public final class TimingDiagnostics: @unchecked Sendable {
     }
 }
 
-#endif

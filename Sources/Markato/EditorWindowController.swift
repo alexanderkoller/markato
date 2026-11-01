@@ -332,10 +332,10 @@ final class EditorWindowController: NSWindowController, NSSplitViewDelegate, NSS
         preview.baseURL = document.fileURL?.deletingLastPathComponent()
         document.edited = { [weak self] selection,_,edit in
             guard let self,!self.isClosed else { return }
+            self.preview.beginEditTiming(revision:document.revision,edit:edit)
             #if DEBUG
             let editCallbackWork=TimingDiagnostics.shared.begin("editor.edit.callback")
             defer {TimingDiagnostics.shared.end(editCallbackWork,values:["revision":Double(document.revision)])}
-            self.preview.beginEditTiming(revision:document.revision,edit:edit)
             #endif
             let inserted=edit.insertedLength>0
                 ? document.source.string(in:NSRange(location:edit.range.location,length:edit.insertedLength)):""

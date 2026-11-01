@@ -1,0 +1,119 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="2000" height="1050" viewBox="0 0 2000 1050" role="img" aria-labelledby="line-title line-desc">
+  <title id="line-title">Markato performance by document size</title>
+  <desc id="line-desc">Two line charts compare open and edit latency across 64 KB, 1 MB, and 8 MB Markdown documents for Markato and five competing editor builds. The open chart is cut off at five seconds and the edit chart at two seconds.</desc>
+  <defs><linearGradient id="line-bg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#07111d"/><stop offset="1" stop-color="#102333"/></linearGradient></defs>
+  <style>
+    .panel { fill:#0d1b2a; fill-opacity:.78; stroke:#466276; stroke-opacity:.42 }
+    .plot-frame { fill:#091624; stroke:#7890a0; stroke-opacity:.28 }
+    .grid { stroke:#a8bdca; stroke-opacity:.15 }
+    .panel-heading { fill:#fff; font-size:30px; font-weight:730 }
+    .cutoff,.tick,.status { fill:#7890a0; font-size:14px }
+    .axis-title { fill:#aabfcd; font-size:16px; font-weight:650 }
+    .legend { fill:#b9cad6; font-size:16px }
+  </style>
+  <rect width="2000" height="1050" fill="url(#line-bg)"/><circle cx="1810" cy="50" r="500" fill="#45e0ff" fill-opacity=".035"/>
+  <g font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif">
+    <text x="76" y="94" fill="#fff" font-size="52" font-weight="760" letter-spacing="-1">Markato performance by document size</text>
+    <text x="76" y="142" fill="#aabfcd" font-size="22">End-to-end latency until the requested view is visibly painted · lower is better</text>
+    <g transform="translate(56 190)">
+<rect class="panel" width="916" height="700" rx="22"/>
+<text class="panel-heading" x="30" y="53">Open</text>
+<text class="cutoff" x="886" y="53" text-anchor="end">axis cutoff: 5 s</text>
+<rect class="plot-frame" x="106" y="118" width="750" height="450"/>
+<line class="grid" x1="106" y1="568.0" x2="856" y2="568.0"/>
+<text class="tick" x="90" y="573.0" text-anchor="end">0</text>
+<line class="grid" x1="106" y1="455.5" x2="856" y2="455.5"/>
+<text class="tick" x="90" y="460.5" text-anchor="end">1.25</text>
+<line class="grid" x1="106" y1="343.0" x2="856" y2="343.0"/>
+<text class="tick" x="90" y="348.0" text-anchor="end">2.5</text>
+<line class="grid" x1="106" y1="230.5" x2="856" y2="230.5"/>
+<text class="tick" x="90" y="235.5" text-anchor="end">3.75</text>
+<line class="grid" x1="106" y1="118.0" x2="856" y2="118.0"/>
+<text class="tick" x="90" y="123.0" text-anchor="end">5</text>
+<line class="grid" x1="106.0" y1="118" x2="106.0" y2="568"/>
+<text class="tick" x="106.0" y="602" text-anchor="middle">64 KB</text>
+<line class="grid" x1="534.6" y1="118" x2="534.6" y2="568"/>
+<text class="tick" x="534.6" y="602" text-anchor="middle">1 MB</text>
+<line class="grid" x1="856.0" y1="118" x2="856.0" y2="568"/>
+<text class="tick" x="856.0" y="602" text-anchor="middle">8 MB</text>
+<text class="axis-title" x="24" y="343.0" text-anchor="middle" transform="rotate(-90 24 343.0)">Latency (seconds)</text>
+<text class="axis-title" x="481.0" y="643" text-anchor="middle">Document size (log scale)</text>
+<path d="M 106.0 558.0 L 534.6 534.5 L 856.0 349.0" fill="none" stroke="#55ead8" stroke-width="4" stroke-linejoin="round" stroke-linecap="round"/>
+<circle cx="106.0" cy="557.992" r="7" fill="#55ead8"/>
+<circle cx="534.5714285714286" cy="534.475" r="7" fill="#55ead8"/>
+<circle cx="856.0" cy="348.985" r="7" fill="#55ead8"/>
+<path d="M 106.0 549.0 L 534.6 118.0" fill="none" stroke="#a97fe5" stroke-width="4" stroke-linejoin="round" stroke-linecap="round"/>
+<rect x="99.0" y="542.037" width="14" height="14" rx="2" fill="#a97fe5"/>
+<path d="M 529.5714285714286 116 L 538.5714285714286 132 L 520.5714285714286 132 Z" fill="#a97fe5"/>
+<path d="M 844.0 121 L 858.0 135 M 858.0 121 L 844.0 135" stroke="#a97fe5" stroke-width="4" stroke-linecap="round"/>
+<path d="M 106.0 546.1 L 534.6 416.4 L 856.0 118.0" fill="none" stroke="#7f9aab" stroke-width="4" stroke-linejoin="round" stroke-linecap="round"/>
+<path d="M 106.0 538.085 L 114.0 546.085 L 106.0 554.085 L 98.0 546.085 Z" fill="#7f9aab"/>
+<path d="M 534.5714285714286 408.44899999999996 L 542.5714285714286 416.44899999999996 L 534.5714285714286 424.44899999999996 L 526.5714285714286 416.44899999999996 Z" fill="#7f9aab"/>
+<path d="M 856.0 116 L 865.0 132 L 847.0 132 Z" fill="#7f9aab"/>
+<path d="M 106.0 551.1 L 534.6 376.9 L 856.0 118.0" fill="none" stroke="#5f7c90" stroke-width="4" stroke-linejoin="round" stroke-linecap="round"/>
+<path d="M 106.0 542.125 L 115.0 558.125 L 97.0 558.125 Z" fill="#5f7c90"/>
+<path d="M 534.5714285714286 367.87600000000003 L 543.5714285714286 383.87600000000003 L 525.5714285714286 383.87600000000003 Z" fill="#5f7c90"/>
+<path d="M 861.0 116 L 870.0 132 L 852.0 132 Z" fill="#5f7c90"/>
+<path d="M 106.0 540.0 L 534.6 519.1 L 856.0 381.4" fill="none" stroke="#a8bdca" stroke-width="4" stroke-linejoin="round" stroke-linecap="round"/>
+<circle cx="106.0" cy="540.037" r="7" fill="#091624" stroke="#a8bdca" stroke-width="4"/>
+<circle cx="534.5714285714286" cy="519.13" r="7" fill="#091624" stroke="#a8bdca" stroke-width="4"/>
+<circle cx="856.0" cy="381.358" r="7" fill="#091624" stroke="#a8bdca" stroke-width="4"/>
+<path d="M 106.0 541.8 L 534.6 519.2 L 856.0 322.5" fill="none" stroke="#d49b65" stroke-width="4" stroke-linejoin="round" stroke-linecap="round"/>
+<path d="M 99.0 541.819 L 113.0 541.819 M 106.0 534.819 L 106.0 548.819" stroke="#d49b65" stroke-width="4" stroke-linecap="round"/>
+<path d="M 527.5714285714286 519.193 L 541.5714285714286 519.193 M 534.5714285714286 512.193 L 534.5714285714286 526.193" stroke="#d49b65" stroke-width="4" stroke-linecap="round"/>
+<path d="M 849.0 322.471 L 863.0 322.471 M 856.0 315.471 L 856.0 329.471" stroke="#d49b65" stroke-width="4" stroke-linecap="round"/>
+<text class="status" x="106" y="676">▲ above cutoff   × timed out   — not tested</text>
+</g>
+    <g transform="translate(1028 190)">
+<rect class="panel" width="916" height="700" rx="22"/>
+<text class="panel-heading" x="30" y="53">Edit</text>
+<text class="cutoff" x="886" y="53" text-anchor="end">axis cutoff: 2 s</text>
+<rect class="plot-frame" x="106" y="118" width="750" height="450"/>
+<line class="grid" x1="106" y1="568.0" x2="856" y2="568.0"/>
+<text class="tick" x="90" y="573.0" text-anchor="end">0</text>
+<line class="grid" x1="106" y1="455.5" x2="856" y2="455.5"/>
+<text class="tick" x="90" y="460.5" text-anchor="end">0.5</text>
+<line class="grid" x1="106" y1="343.0" x2="856" y2="343.0"/>
+<text class="tick" x="90" y="348.0" text-anchor="end">1</text>
+<line class="grid" x1="106" y1="230.5" x2="856" y2="230.5"/>
+<text class="tick" x="90" y="235.5" text-anchor="end">1.5</text>
+<line class="grid" x1="106" y1="118.0" x2="856" y2="118.0"/>
+<text class="tick" x="90" y="123.0" text-anchor="end">2</text>
+<line class="grid" x1="106.0" y1="118" x2="106.0" y2="568"/>
+<text class="tick" x="106.0" y="602" text-anchor="middle">64 KB</text>
+<line class="grid" x1="534.6" y1="118" x2="534.6" y2="568"/>
+<text class="tick" x="534.6" y="602" text-anchor="middle">1 MB</text>
+<line class="grid" x1="856.0" y1="118" x2="856.0" y2="568"/>
+<text class="tick" x="856.0" y="602" text-anchor="middle">8 MB</text>
+<text class="axis-title" x="24" y="343.0" text-anchor="middle" transform="rotate(-90 24 343.0)">Latency (seconds)</text>
+<text class="axis-title" x="481.0" y="643" text-anchor="middle">Document size (log scale)</text>
+<path d="M 106.0 556.0 L 534.6 556.9 L 856.0 555.8" fill="none" stroke="#55ead8" stroke-width="4" stroke-linejoin="round" stroke-linecap="round"/>
+<circle cx="106.0" cy="555.985" r="7" fill="#55ead8"/>
+<circle cx="534.5714285714286" cy="556.8625" r="7" fill="#55ead8"/>
+<circle cx="856.0" cy="555.7825" r="7" fill="#55ead8"/>
+<path d="M 106.0 538.8 L 534.6 118.0" fill="none" stroke="#a97fe5" stroke-width="4" stroke-linejoin="round" stroke-linecap="round"/>
+<rect x="99.0" y="531.7950000000001" width="14" height="14" rx="2" fill="#a97fe5"/>
+<path d="M 529.5714285714286 116 L 538.5714285714286 132 L 520.5714285714286 132 Z" fill="#a97fe5"/>
+<line x1="843.0" y1="128" x2="859.0" y2="128" stroke="#a97fe5" stroke-width="4" stroke-linecap="round"/>
+<path d="M 106.0 560.3 L 534.6 515.9 L 856.0 156.8" fill="none" stroke="#7f9aab" stroke-width="4" stroke-linejoin="round" stroke-linecap="round"/>
+<path d="M 106.0 552.3050000000001 L 114.0 560.3050000000001 L 106.0 568.3050000000001 L 98.0 560.3050000000001 Z" fill="#7f9aab"/>
+<path d="M 534.5714285714286 507.89 L 542.5714285714286 515.89 L 534.5714285714286 523.89 L 526.5714285714286 515.89 Z" fill="#7f9aab"/>
+<path d="M 856.0 148.76749999999998 L 864.0 156.76749999999998 L 856.0 164.76749999999998 L 848.0 156.76749999999998 Z" fill="#7f9aab"/>
+<path d="M 106.0 557.7 L 534.6 363.8" fill="none" stroke="#5f7c90" stroke-width="4" stroke-linejoin="round" stroke-linecap="round"/>
+<path d="M 106.0 548.74 L 115.0 564.74 L 97.0 564.74 Z" fill="#5f7c90"/>
+<path d="M 534.5714285714286 354.79 L 543.5714285714286 370.79 L 525.5714285714286 370.79 Z" fill="#5f7c90"/>
+<path d="M 854.0 121 L 868.0 135 M 868.0 121 L 854.0 135" stroke="#5f7c90" stroke-width="4" stroke-linecap="round"/>
+<path d="M 106.0 559.9 L 534.6 555.9 L 856.0 530.4" fill="none" stroke="#a8bdca" stroke-width="4" stroke-linejoin="round" stroke-linecap="round"/>
+<circle cx="106.0" cy="559.9225" r="7" fill="#091624" stroke="#a8bdca" stroke-width="4"/>
+<circle cx="534.5714285714286" cy="555.94" r="7" fill="#091624" stroke="#a8bdca" stroke-width="4"/>
+<circle cx="856.0" cy="530.3575000000001" r="7" fill="#091624" stroke="#a8bdca" stroke-width="4"/>
+<path d="M 106.0 560.3 L 534.6 559.8 L 856.0 538.7" fill="none" stroke="#d49b65" stroke-width="4" stroke-linejoin="round" stroke-linecap="round"/>
+<path d="M 99.0 560.26 L 113.0 560.26 M 106.0 553.26 L 106.0 567.26" stroke="#d49b65" stroke-width="4" stroke-linecap="round"/>
+<path d="M 527.5714285714286 559.81 L 541.5714285714286 559.81 M 534.5714285714286 552.81 L 534.5714285714286 566.81" stroke="#d49b65" stroke-width="4" stroke-linecap="round"/>
+<path d="M 849.0 538.6825 L 863.0 538.6825 M 856.0 531.6825 L 856.0 545.6825" stroke="#d49b65" stroke-width="4" stroke-linecap="round"/>
+<text class="status" x="106" y="676">▲ above cutoff   × timed out   — not tested</text>
+</g>
+    <circle cx="80" cy="970" r="7" fill="#55ead8"/><text class="legend" x="99" y="976">Markato</text><rect x="278" y="963" width="14" height="14" rx="2" fill="#a97fe5"/><text class="legend" x="304" y="976">MarkViewer</text><path d="M 490 962 L 498 970 L 490 978 L 482 970 Z" fill="#7f9aab"/><text class="legend" x="509" y="976">MacDown 0.7.3</text><path d="M 735 961 L 744 977 L 726 977 Z" fill="#5f7c90"/><text class="legend" x="754" y="976">MacDown 3000</text><circle cx="940" cy="970" r="7" fill="#091624" stroke="#a8bdca" stroke-width="4"/><text class="legend" x="959" y="976">MD2 pre-release</text><path d="M 1178 970 L 1192 970 M 1185 963 L 1185 977" stroke="#d49b65" stroke-width="4" stroke-linecap="round"/><text class="legend" x="1204" y="976">MD2 0.3.0</text>
+    <text x="1920" y="976" fill="#708797" font-size="15" text-anchor="end">Apple M5, 10-core · macOS 27.2</text>
+  </g>
+</svg>
