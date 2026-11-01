@@ -229,16 +229,19 @@ import Testing
 
 @Test func commentsSharingPreviewBlockHaveSeparatedBubbles() throws {
     let values=[
-        MarkdownComment(id:"one",anchor:.init(exact:"",position:4),author:"A",created:"now",body:"One"),
-        MarkdownComment(id:"two",anchor:.init(exact:"",position:8),author:"B",created:"now",body:"Two")
+        MarkdownComment(id:"two",anchor:.init(exact:"",position:8),author:"B",created:"now",body:"Two"),
+        MarkdownComment(id:"one",anchor:.init(exact:"",position:4),author:"A",created:"now",body:"One")
     ]
     let comments=values.map {ResolvedMarkdownComment(comment:$0,recordRange:NSRange(location:30,length:10),
         anchorRange:NSRange(location:$0.anchor.position ?? 0,length:0))}
     let fragment=PreviewFragment(kind:.paragraph,from:0,to:20,html:"<p>One line of text.</p>",id:"block")
     let html=try #require(MarkdownCommentHTML.decorate(
         [RenderedEntry(id:"block",fragment:fragment)],with:comments).first?.fragment.html)
-    #expect(html.contains("style=\"top:-2.0px\""))
-    #expect(html.contains("style=\"top:24.0px\""))
+    #expect(html.contains("<span class=\"markato-comment-bubbles\">"))
+    #expect(html.components(separatedBy:"markato-comment-bubble\"").count-1 == 2)
+    #expect(html.range(of:"data-comment-id=\"one\"")!.lowerBound <
+        html.range(of:"data-comment-id=\"two\"")!.lowerBound)
+    #expect(!html.contains("style=\"top:"))
 }
 
 @Test func selectionAcrossRenderedBlocksNormalizesWithoutPersistedRenderingMode() throws {

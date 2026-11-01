@@ -51,14 +51,17 @@ body {
 #preview {
   position: relative;
   display: flow-root;
-  padding: 32px;
+  padding: 32px 32px 32px 36px;
 }
 .astra-preview-block {
   position: relative;
   display: flow-root;
   contain: layout paint;
-  margin: 0;
-  padding: 0 0 16px;
+  /* Keep the annotation rail inside this block's paint boundary. The negative
+     margin borrows space from #preview's existing left gutter, while the
+     matching padding preserves the Markdown content width. */
+  margin: 0 0 0 -28px;
+  padding: 0 0 16px 28px;
   overflow-wrap: anywhere;
 }
 .markato-comment-highlight {
@@ -72,20 +75,36 @@ body {
   line-height: inherit;
 }
 .markato-comment-highlight.is-selected {
-  outline: 1px solid rgba(9, 105, 218, .9);
-  outline-offset: 1px;
+  background: rgba(255, 213, 79, .42);
+  box-shadow: inset 0 0 0 1px rgba(31, 35, 40, .88);
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+}
+.markato-comment-highlight.is-comment-hovered:not(.is-selected) {
+  background: rgba(255, 213, 79, .42);
+  box-shadow: inset 0 0 0 1px rgba(31, 35, 40, .88);
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
 }
 [data-markato-comment-block] {
   border-radius: .2em;
   background: rgba(255, 213, 79, .42);
 }
 [data-markato-comment-selected] {
-  outline: 1px solid rgba(9, 105, 218, .9);
-  outline-offset: 1px;
+  box-shadow: inset 0 0 0 1px rgba(31, 35, 40, .88);
+}
+.markato-comment-bubbles {
+  float: left;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  width: 22px;
+  margin-left: -28px;
 }
 .markato-comment-bubble {
-  position: absolute;
-  right: -24px;
+  position: relative;
+  flex: 0 0 22px;
   z-index: 3;
   display: block;
   width: 22px;
@@ -124,17 +143,27 @@ body {
   transform: skewY(-35deg);
 }
 .markato-comment-bubble.is-selected {
-  outline: 1px solid rgba(9, 105, 218, .95);
-  outline-offset: 1px;
+  border-color: rgba(31, 35, 40, .88);
+  background: rgba(255, 213, 79, .42);
+  box-shadow: 0 1px 3px rgba(31, 35, 40, .22);
 }
-.markato-comment-bubble:hover {
+.markato-comment-bubble.is-selected::before,
+.markato-comment-bubble.is-selected::after { border-color: rgba(31, 35, 40, .88); }
+.markato-comment-bubble.is-selected::after { background: inherit; }
+.markato-comment-bubble.is-comment-hovered:not(.is-selected) {
+  border-color: rgba(31, 35, 40, .24);
+  background: rgba(255, 235, 166, .46);
+  box-shadow: 0 1px 3px rgba(31, 35, 40, .20);
+}
+.markato-comment-bubble.is-comment-hovered:not(.is-selected)::after { background: inherit; }
+.markato-comment-bubble:hover:not(.is-selected):not(.is-comment-hovered) {
   background: var(--bg-muted);
   text-decoration: none;
 }
 .astra-preview-block:has(> h1, > h2, > h3, > h4, > h5, > h6) { padding-top: 24px; }
 .astra-preview-block.document-first:has(> h1, > h2, > h3, > h4, > h5, > h6) { padding-top: 0; }
 .astra-preview-block > :first-child { margin-top: 0; }
-.astra-preview-block > .markato-comment-bubble + :not(.markato-comment-bubble) { margin-top: 0; }
+.astra-preview-block > .markato-comment-bubbles + :not(.markato-comment-bubbles) { margin-top: 0; }
 .astra-preview-block > :last-child { margin-bottom: 0; }
 .paint-group { display: flow-root; contain: paint; }
 

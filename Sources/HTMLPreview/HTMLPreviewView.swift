@@ -8,7 +8,7 @@ private func deliverOnMainRunLoop(_ block:@escaping()->Void) {
 }
 
 public enum HTMLPreviewResources {
-    public static let stylesheetGeneration:UInt64=3
+    public static let stylesheetGeneration:UInt64=4
     public static let stylesheet:String = {
         func resource(_ name:String)->String {
             guard let url=Bundle.module.url(forResource:name,withExtension:"css"),
@@ -599,9 +599,21 @@ private final class HTMLRendererExecutor {
             astra_ul_surface_horizontal_scroll(engine,delta,Int32(point.x),Int32(point.y))
             _ = astra_ul_surface_render(engine);return inputPaintResult()
         }
-        func mouse(type:Int32,point:NSPoint,button:Int32,token:Int)->HTMLPreviewPaintResult? {
+        func mouse(type:Int32,point:NSPoint,button:Int32,token:Int)
+            ->(paint:HTMLPreviewPaintResult?,hoveredCommentID:String?)? {
             guard let engine,request?.token==token else{return nil}
             astra_ul_surface_mouse(engine,type,Int32(point.x),Int32(point.y),button)
+            _ = astra_ul_surface_render(engine)
+            let id:String?
+            if let raw=astra_ul_surface_hovered_comment_id(engine) {
+                id=String(cString:raw);astra_ul_string_free(raw)
+            } else {id=nil}
+            return (inputPaintResult(),id)
+        }
+        func setCommentHover(_ id:String?,token:Int)->HTMLPreviewPaintResult? {
+            guard let engine,request?.token==token else{return nil}
+            if let id {id.withCString {astra_ul_surface_set_comment_hover(engine,$0)}}
+            else {astra_ul_surface_set_comment_hover(engine,nil)}
             _ = astra_ul_surface_render(engine);return inputPaintResult()
         }
         func toggleFirstDetails(token:Int)->HTMLPreviewPaintResult? {
@@ -923,6 +935,7 @@ private final class HTMLRendererExecutor {
     public var engineReady:(()->Void)?
     public var resourceFrame:((HTMLPreviewFrame)->Void)?
     public var scrollApplied:((NSPoint)->Void)?
+    public var commentHovered:((String?)->Void)?
     public private(set) var isEngineReady=false
     public private(set) var hasUncommittedPresentation=false
     private let renderer:HTMLRendererExecutor
@@ -974,6 +987,9 @@ private final class HTMLRendererExecutor {
     public override init(frame:NSRect) {
         renderer=Self.processRenderer
         super.init(frame:frame);wantsLayer=true;setAccessibilityLabel("Markdown preview")
+        addTrackingArea(NSTrackingArea(rect:.zero,
+            options:[.mouseMoved,.mouseEnteredAndExited,.activeInKeyWindow,.inVisibleRect],
+            owner:self,userInfo:nil))
         renderer.ready={ [weak self] in guard let self else{return};self.isEngineReady=true;self.engineReady?() }
         renderer.resourceFrame={ [weak self] frame in self?.resourceFrame?(frame) }
     }
@@ -1218,10 +1234,22 @@ private final class HTMLRendererExecutor {
         let point=convert(event.locationInWindow,from:nil)
         renderer.async { [weak self] state in
             let result=state.mouse(type:type,point:point,button:button,token:token)
+            DispatchQueue.main.async {
+                guard let self,let result else{return}
+                self.publish(result.paint,token:token)
+                self.commentHovered?(result.hoveredCommentID)
+            }
+        }
+    }
+    public func setHoveredCommentID(_ id:String?) {
+        guard let token=committedToken,!hasUncommittedPresentation else{return}
+        renderer.async { [weak self] state in
+            let result=state.setCommentHover(id,token:token)
             DispatchQueue.main.async {self?.publish(result,token:token)}
         }
     }
     public override func mouseMoved(with event:NSEvent) {fireMouse(event,type:0,button:0)}
+    public override func mouseExited(with event:NSEvent) {fireMouse(event,type:0,button:0)}
     public override func mouseDragged(with event:NSEvent) {fireMouse(event,type:0,button:1)}
     public override func mouseDown(with event:NSEvent) {window?.makeFirstResponder(self);fireMouse(event,type:1,button:1)}
     public override func mouseUp(with event:NSEvent) {

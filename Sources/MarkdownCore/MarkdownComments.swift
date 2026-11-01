@@ -499,15 +499,31 @@ public enum MarkdownCommentHTML {
                 }
             }
             if highlightsBlock {html=decorateRoot(html,selected:selectsBlock)}
-            let bubbles=relevant.filter {bubbleBlock[$0.comment.id] == entry.blockID}
-            var bubbleHTML=""
-            for (index,comment) in bubbles.enumerated() {
+            let bubbles=relevant.filter {bubbleBlock[$0.comment.id] == entry.blockID}.sorted {first,second in
+                let firstRange=first.anchorRange ?? NSRange(
+                    location:first.comment.anchor.position ?? Int.max,length:0)
+                let secondRange=second.anchorRange ?? NSRange(
+                    location:second.comment.anchor.position ?? Int.max,length:0)
+                if firstRange.location != secondRange.location {
+                    return firstRange.location<secondRange.location
+                }
+                if NSMaxRange(firstRange) != NSMaxRange(secondRange) {
+                    return NSMaxRange(firstRange)<NSMaxRange(secondRange)
+                }
+                if first.recordRange.location != second.recordRange.location {
+                    return first.recordRange.location<second.recordRange.location
+                }
+                return first.comment.id<second.comment.id
+            }
+            var bubbleHTML=bubbles.isEmpty ? "":"<span class=\"markato-comment-bubbles\">"
+            for comment in bubbles {
                 let value=comment.comment,selected=value.id == selectedID
                 let title=escapeAttribute(value.body.prefix(160).description)
                 let id=escapeAttribute(value.id)
                 let className="markato-comment-bubble"+(selected ? " is-selected":"")
-                bubbleHTML += "<a class=\"\(className)\" data-comment-id=\"\(id)\" style=\"top:\(Double(index)*26-2)px\" href=\"markato-comment:\(id)\" title=\"\(title)\" aria-label=\"Open comment\"></a>"
+                bubbleHTML += "<a class=\"\(className)\" data-comment-id=\"\(id)\" href=\"markato-comment:\(id)\" title=\"\(title)\" aria-label=\"Open comment\"></a>"
             }
+            if !bubbles.isEmpty {bubbleHTML += "</span>"}
             html=bubbleHTML+html
             let fragment=PreviewFragment(kind:entry.fragment.kind,from:entry.fragment.from,to:entry.fragment.to,
                 html:html,id:entry.fragment.id)

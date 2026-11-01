@@ -8,23 +8,42 @@ import MarkdownCore
     enum Mode:Int {case outline,comments}
     private final class Cell:NSTableCellView {}
     private final class CommentCell:NSTableCellView {
+        static let font=NSFont.systemFont(ofSize:12)
         let card=NSView(),label=NSTextField(wrappingLabelWithString:"")
         override init(frame:NSRect) {
             super.init(frame:frame);card.wantsLayer=true;card.layer?.cornerRadius=6
-            label.maximumNumberOfLines=3;label.lineBreakMode = .byWordWrapping
-            label.font=NSFont.systemFont(ofSize:12);label.textColor = .labelColor
+            label.maximumNumberOfLines=4;label.lineBreakMode = .byWordWrapping
+            label.font=Self.font;label.textColor = .labelColor
             label.isSelectable=false;label.isEditable=false;label.allowsEditingTextAttributes=false
             card.addSubview(label);addSubview(card);textField=label
         }
         required init?(coder:NSCoder) {fatalError()}
         override func layout() {
-            super.layout();card.frame=bounds.insetBy(dx:6,dy:4);label.frame=card.bounds.insetBy(dx:9,dy:6)
+            super.layout()
+            let inset:CGFloat=6
+            // Full-width table rows retain a platform leading offset even
+            // though their cell can extend beneath the trailing clip edge.
+            // Lay the card out against the visible row and mirror that leading
+            // offset, so its rounded right edge always has the same breathing
+            // room as its left edge.
+            let rowWidth=enclosingScrollView?.contentView.bounds.width ?? superview?.bounds.width ?? bounds.width
+            let cardWidth=max(1,rowWidth-frame.minX*2-inset*2)
+            card.frame=NSRect(x:inset,y:4,width:cardWidth,height:max(1,bounds.height-8))
+            label.frame=card.bounds.insetBy(dx:9,dy:6)
         }
         func configure(text:String,selected:Bool) {
             label.stringValue=text
             card.layer?.backgroundColor=NSColor(calibratedRed:0.98,green:0.91,blue:0.68,alpha:1).cgColor
             card.layer?.borderWidth=selected ? 1:0
             card.layer?.borderColor=NSColor.controlAccentColor.cgColor
+        }
+        static func rowHeight(for text:String,width:CGFloat)->CGFloat {
+            let paragraph=NSMutableParagraphStyle();paragraph.lineBreakMode = .byWordWrapping
+            let measured=(text as NSString).boundingRect(
+                with:NSSize(width:max(1,width-50),height:CGFloat.greatestFiniteMagnitude),
+                options:[.usesLineFragmentOrigin,.usesFontLeading],
+                attributes:[.font:font,.paragraphStyle:paragraph])
+            return max(52,min(92,ceil(measured.height)+20))
         }
     }
     private final class Node:NSObject {
@@ -55,6 +74,7 @@ import MarkdownCore
     private var roots=[Node](),ordered=[Node](),nodes=[BlockID:Node]()
     private var allComments=[ResolvedMarkdownComment](),comments=[ResolvedMarkdownComment]()
     private var hasSnapshot=false,changingSelection=false
+    private var commentLayoutWidth:CGFloat = -1
     private(set) var mode:Mode = .outline
 
     override init(frame:NSRect) {
@@ -70,7 +90,9 @@ import MarkdownCore
         outlineScroll.documentView=outline;configure(scroll:outlineScroll);addSubview(outlineScroll)
 
         commentTable.addTableColumn(commentColumn);commentTable.headerView=nil
-        commentTable.style = .sourceList;commentTable.rowHeight=64;commentTable.selectionHighlightStyle = .none
+        commentTable.style = .fullWidth;commentTable.rowHeight=64;commentTable.selectionHighlightStyle = .none
+        commentTable.columnAutoresizingStyle = .lastColumnOnlyAutoresizingStyle
+        commentColumn.resizingMask = .autoresizingMask
         commentTable.dataSource=self;commentTable.delegate=self;commentTable.target=self
         commentTable.action=#selector(clickSelectedComment(_:))
         commentTable.doubleAction=#selector(openSelectedComment(_:));commentTable.setAccessibilityLabel("Document comments")
@@ -97,9 +119,17 @@ import MarkdownCore
         modeControl.frame=NSRect(x:inset,y:6,width:max(1,bounds.width-inset*2),height:24)
         outlineScroll.frame=NSRect(x:0,y:top,width:bounds.width,height:max(0,bounds.height-top))
         outlineEmpty.frame=NSRect(x:16,y:top+22,width:max(0,bounds.width-32),height:20)
-        outlineColumn.width=max(1,bounds.width)
+        outlineColumn.width=max(1,outlineScroll.contentSize.width)
         let commentTop:CGFloat=36,controls:CGFloat=36
-        commentScroll.frame=NSRect(x:0,y:commentTop,width:bounds.width,height:max(0,bounds.height-commentTop-controls));commentColumn.width=max(1,bounds.width)
+        commentScroll.frame=NSRect(x:0,y:commentTop,width:bounds.width,height:max(0,bounds.height-commentTop-controls))
+        let commentWidth=max(1,commentScroll.contentSize.width)
+        commentColumn.width=commentWidth
+        if abs(commentWidth-commentLayoutWidth)>0.5 {
+            commentLayoutWidth=commentWidth
+            if !comments.isEmpty {
+                commentTable.noteHeightOfRows(withIndexesChanged:IndexSet(integersIn:0..<comments.count))
+            }
+        }
         commentEmpty.frame=NSRect(x:16,y:commentTop+18,width:max(0,bounds.width-32),height:20)
         resolveButton.frame=NSRect(x:max(8,bounds.width-82),y:bounds.height-32,width:74,height:26)
     }
@@ -163,7 +193,7 @@ import MarkdownCore
     }
     private func snippet(for comment:ResolvedMarkdownComment)->String {
         let flat=comment.comment.body.split(whereSeparator:{$0.isWhitespace}).joined(separator:" ")
-        return flat.count>60 ? String(flat.prefix(57))+"...":flat
+        return flat.count>120 ? String(flat.prefix(117))+"...":flat
     }
     private func updateSelectionActions() {
         resolveButton.title="Resolve";resolveButton.isEnabled=selectedComment != nil
@@ -218,7 +248,11 @@ import MarkdownCore
         let state=comment.anchorRange == nil ? "⚠︎ ":""
         cell.configure(text:"\(state)\(snippet(for:comment))",selected:commentTable.selectedRow==row);return cell
     }
-    func tableView(_ tableView:NSTableView,heightOfRow row:Int)->CGFloat {64}
+    func tableView(_ tableView:NSTableView,heightOfRow row:Int)->CGFloat {
+        guard comments.indices.contains(row) else{return 52}
+        let text=(comments[row].anchorRange == nil ? "⚠︎ ":"")+snippet(for:comments[row])
+        return CommentCell.rowHeight(for:text,width:max(1,commentLayoutWidth))
+    }
     func tableViewSelectionDidChange(_ notification:Notification) {
         refreshCommentCards()
         updateSelectionActions();guard !changingSelection else{return}
@@ -242,6 +276,20 @@ import MarkdownCore
     var debugCommentTextIsSelectable:Bool {
         (0..<comments.count).contains {row in
             (commentTable.view(atColumn:0,row:row,makeIfNecessary:true) as? CommentCell)?.label.isSelectable == true
+        }
+    }
+    var debugCommentCardsFit:Bool {
+        comments.indices.allSatisfy {row in
+            guard let cell=commentTable.view(atColumn:0,row:row,makeIfNecessary:true) as? CommentCell else{return false}
+            cell.layoutSubtreeIfNeeded()
+            let rowWidth=cell.enclosingScrollView?.contentView.bounds.width ??
+                cell.superview?.bounds.width ?? cell.bounds.width
+            let visibleLeft=cell.frame.minX+cell.card.frame.minX
+            let visibleRight=rowWidth-(cell.frame.minX+cell.card.frame.maxX)
+            return visibleLeft>=5.5 && visibleRight>=5.5 && abs(visibleLeft-visibleRight)<=0.5 &&
+                cell.card.frame.minX >= -0.5 && cell.card.frame.maxX <= cell.bounds.maxX+0.5 &&
+                cell.label.frame.minX >= -0.5 && cell.label.frame.maxX <= cell.card.bounds.maxX+0.5 &&
+                cell.label.frame.minY >= -0.5 && cell.label.frame.maxY <= cell.card.bounds.maxY+0.5
         }
     }
     func debugSetCommentFilter(_ status:MarkdownCommentStatus?) {

@@ -1,6 +1,48 @@
 import AppKit
 import MarkdownCore
 
+private extension NSAttributedString.Key {
+    static let markatoCommentBorderColor=NSAttributedString.Key("MarkatoCommentBorderColor")
+}
+
+/// Draw comment emphasis as part of TextKit's normal background pass. Each
+/// wrapped line gets its own inset border, matching CSS box-decoration-break
+/// without relying on a view-level post-draw overlay that can leave stale or
+/// clipped pixels when layout changes.
+private final class SourceCommentLayoutManager:NSLayoutManager {
+    override func drawBackground(forGlyphRange glyphsToShow:NSRange,at origin:NSPoint) {
+        super.drawBackground(forGlyphRange:glyphsToShow,at:origin)
+        guard glyphsToShow.length>0,
+              let container=textContainer(forGlyphAt:glyphsToShow.location,effectiveRange:nil)
+        else{return}
+        let visibleCharacters=characterRange(forGlyphRange:glyphsToShow,actualGlyphRange:nil)
+        var cursor=visibleCharacters.location
+        while cursor<NSMaxRange(visibleCharacters) {
+            var effective=NSRange()
+            let value=temporaryAttribute(.markatoCommentBorderColor,
+                atCharacterIndex:cursor,effectiveRange:&effective)
+            let clipped=NSIntersectionRange(visibleCharacters,effective)
+            let advance=max(cursor+1,NSMaxRange(clipped))
+            defer {cursor=advance}
+            guard let color=value as? NSColor,clipped.length>0 else{continue}
+            let borderedGlyphs=glyphRange(forCharacterRange:clipped,actualCharacterRange:nil)
+            enumerateLineFragments(forGlyphRange:borderedGlyphs) { [weak self] _,_,lineContainer,lineGlyphs,_ in
+                guard let self,lineContainer===container else{return}
+                let segment=NSIntersectionRange(borderedGlyphs,lineGlyphs)
+                guard segment.length>0 else{return}
+                var rect=self.boundingRect(forGlyphRange:segment,in:lineContainer)
+                    .offsetBy(dx:origin.x,dy:origin.y)
+                // Stroke inward so neither the text view nor a dirty-rect clip
+                // can shave off the top, bottom, or side of the frame.
+                rect=rect.insetBy(dx:0.5,dy:0.5)
+                guard rect.width>1,rect.height>1 else{return}
+                let path=NSBezierPath(roundedRect:rect,xRadius:2,yRadius:2)
+                path.lineWidth=1;color.setStroke();path.stroke()
+            }
+        }
+    }
+}
+
 /// Opt-in geometry-only trace for reproducing AppKit resize event order.
 /// Enable with `defaults write de.alexanderkoller.markato ResizeTraceEnabled -bool YES`.
 @MainActor enum ResizeTrace {
@@ -80,8 +122,21 @@ private final class SourceClipView:NSClipView {
 }
 final class SourceTextView:NSTextView {
     weak var owner:SourceEditor?
-    override func draw(_ dirtyRect:NSRect) {
-        super.draw(dirtyRect);owner?.drawSelectedCommentOutline()
+    private var commentTrackingArea:NSTrackingArea?
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let commentTrackingArea {removeTrackingArea(commentTrackingArea)}
+        let area=NSTrackingArea(rect:.zero,
+            options:[.mouseMoved,.mouseEnteredAndExited,.activeInKeyWindow,.inVisibleRect],
+            owner:self,userInfo:nil)
+        addTrackingArea(area);commentTrackingArea=area
+    }
+    override func mouseMoved(with event:NSEvent) {
+        owner?.commentHoverChanged?(owner?.commentOffset(at:convert(event.locationInWindow,from:nil)))
+        super.mouseMoved(with:event)
+    }
+    override func mouseExited(with event:NSEvent) {
+        owner?.commentHoverChanged?(nil);super.mouseExited(with:event)
     }
     override func mouseDown(with event:NSEvent) {
         owner?.sourceClicked?()
@@ -142,6 +197,7 @@ final class SourceTextView:NSTextView {
 final class SourceEditor:NSView,NSTextViewDelegate,NSTextStorageDelegate,ScrollSource {
     enum NavigationAlignment {
         case minimalReveal
+        case passiveReveal
         case top
         case readingAnchor
     }
@@ -153,7 +209,13 @@ final class SourceEditor:NSView,NSTextViewDelegate,NSTextStorageDelegate,ScrollS
 
     let scroll:NSScrollView=SourceScrollView()
     let canvas=FlippedView()
-    let textView=SourceTextView(usingTextLayoutManager:false)
+    let textView:SourceTextView = {
+        let storage=NSTextStorage()
+        let manager=SourceCommentLayoutManager()
+        let container=NSTextContainer(size:NSSize(width:0,height:CGFloat.greatestFiniteMagnitude))
+        storage.addLayoutManager(manager);manager.addTextContainer(container)
+        return SourceTextView(frame:.zero,textContainer:container)
+    }()
     unowned let document:MarkdownDocument
     private let prepared:PreparedDocument
     private var dirtyRange:NSRange?=NSRange(location:0,length:0)
@@ -164,6 +226,7 @@ final class SourceEditor:NSView,NSTextViewDelegate,NSTextStorageDelegate,ScrollS
     var scrollOverflow:((NSEvent)->Bool)?
     var navigationRequested:((Int)->Void)?
     var sourceClicked:(()->Void)?
+    var commentHoverChanged:((Int?)->Void)?
     var sourceNavigationIntent:(()->Void)?
     private(set) var isScrolling=false
     private(set) var geometryRevision=0
@@ -182,6 +245,8 @@ final class SourceEditor:NSView,NSTextViewDelegate,NSTextStorageDelegate,ScrollS
     private var commentRanges=[NSRange]()
     private var paintedCommentRanges=[NSRange]()
     private var selectedCommentRange:NSRange?
+    private var hoveredCommentRange:NSRange?
+    private var emphasizedCommentPaintRanges=[NSRange]()
     private var commentRecordRanges=[NSRange]()
     // Newly inserted records own exactly the bytes added by that transaction,
     // including padding. Retain this provenance across parsing and UI edits.
@@ -211,7 +276,15 @@ final class SourceEditor:NSView,NSTextViewDelegate,NSTextStorageDelegate,ScrollS
         if !paused {scheduleLayoutCompletion()}
     }
     var debugCommentRangeCount:Int {commentRanges.count}
-    var debugHasSelectedCommentRange:Bool {selectedCommentRange != nil}
+    var debugHasSelectedCommentRange:Bool {selectedCommentRange != nil || hoveredCommentRange != nil}
+    var debugHasHoveredCommentRange:Bool {hoveredCommentRange != nil}
+    var debugSelectedCommentHasBorder:Bool {
+        guard let semantic=hoveredCommentRange ?? selectedCommentRange,
+              let range=commentPaintRanges(semantic).first,range.length>0 else{return false}
+        return textView.layoutManager?.temporaryAttribute(.markatoCommentBorderColor,
+            atCharacterIndex:range.location,effectiveRange:nil) != nil
+    }
+    func debugHoverComment(at offset:Int?) {commentHoverChanged?(offset)}
     func debugHasCommentBackground(at location:Int)->Bool {
         guard location>=0,location<textView.string.utf16.count else{return false}
         return textView.layoutManager?.temporaryAttribute(.backgroundColor,
@@ -872,6 +945,9 @@ final class SourceEditor:NSView,NSTextViewDelegate,NSTextStorageDelegate,ScrollS
         selectedCommentRange=selectedCommentRange.map {
             MarkdownComments.transformedAnchorRange($0,through:edit)
         }
+        hoveredCommentRange=hoveredCommentRange.map {
+            MarkdownComments.transformedAnchorRange($0,through:edit)
+        }
         paintedCommentRanges=paintedCommentRanges.map {
             MarkdownComments.transformedAnchorRange($0,through:edit)
         }
@@ -970,6 +1046,14 @@ final class SourceEditor:NSView,NSTextViewDelegate,NSTextStorageDelegate,ScrollS
             else {dirtyRange=NSRange(location:0,length:prepared.sourceLayout.length)}
             let replacement=document.source.string(in:NSRange(location:edit.range.location,length:edit.insertedLength))
             let replaceNativeText = {
+                // MarkdownDocument owns the undo record for model-driven
+                // changes. TextKit must not register a second "Typing" action
+                // while mirroring that same replacement into retained native
+                // storage, or the two records can share an event group.
+                let undo=self.textView.undoManager
+                let disablesNativeUndo=undo?.isUndoRegistrationEnabled == true
+                if disablesNativeUndo {undo?.disableUndoRegistration()}
+                defer {if disablesNativeUndo {undo?.enableUndoRegistration()}}
                 self.nativeLayoutRevision=nil
                 self.textView.textStorage!.replaceCharacters(in:edit.range,with:replacement)
                 self.refreshCommentSourcePresentation(reflow:false,
@@ -1071,6 +1155,22 @@ final class SourceEditor:NSView,NSTextViewDelegate,NSTextStorageDelegate,ScrollS
     func setSelectedCommentRange(_ range:NSRange?) {
         guard range != selectedCommentRange else{return}
         selectedCommentRange=range;applyCommentHighlights()
+    }
+    func setHoveredCommentRange(_ range:NSRange?) {
+        guard range != hoveredCommentRange else{return}
+        hoveredCommentRange=range;applyCommentHighlights()
+    }
+    fileprivate func commentOffset(at point:NSPoint)->Int? {
+        guard bounds.contains(point),let manager=textView.layoutManager,
+              let container=textView.textContainer,manager.numberOfGlyphs>0 else{return nil}
+        let origin=textView.textContainerOrigin
+        let local=NSPoint(x:point.x-origin.x,y:point.y-origin.y)
+        let glyph=manager.glyphIndex(for:local,in:container,fractionOfDistanceThroughGlyph:nil)
+        guard glyph<manager.numberOfGlyphs else{return nil}
+        let rect=manager.boundingRect(forGlyphRange:NSRange(location:glyph,length:1),in:container)
+            .offsetBy(dx:origin.x,dy:origin.y).insetBy(dx:-1,dy:-1)
+        guard rect.contains(point) else{return nil}
+        return manager.characterIndexForGlyph(at:glyph)
     }
     func commentPopoverAnchor(for requested:NSRange)->NSRect {
         let length=textView.string.utf16.count
@@ -1204,6 +1304,7 @@ final class SourceEditor:NSView,NSTextViewDelegate,NSTextStorageDelegate,ScrollS
         guard let manager=textView.layoutManager else{return}
         var semantic=commentRanges
         if let selectedCommentRange,!semantic.contains(selectedCommentRange) {semantic.append(selectedCommentRange)}
+        if let hoveredCommentRange,!semantic.contains(hoveredCommentRange) {semantic.append(hoveredCommentRange)}
         let next:[NSRange]
         if rebuild {
             next=mergedCommentPaintRanges(semantic.flatMap(commentPaintRanges))
@@ -1273,19 +1374,31 @@ final class SourceEditor:NSView,NSTextViewDelegate,NSTextStorageDelegate,ScrollS
                 cursor += 1
             }
         }
-        paintedCommentRanges=next
-    }
-    fileprivate func drawSelectedCommentOutline() {
-        guard let range=selectedCommentRange,range.length>0,
-              let manager=textView.layoutManager,let container=textView.textContainer else{return}
-        let glyphs=manager.glyphRange(forCharacterRange:range,actualCharacterRange:nil)
-        let origin=textView.textContainerOrigin
-        NSColor.controlAccentColor.setStroke()
-        manager.enumerateEnclosingRects(forGlyphRange:glyphs,
-            withinSelectedGlyphRange:NSRange(location:NSNotFound,length:0),in:container) {rect,_ in
-            let outlined=rect.offsetBy(dx:origin.x,dy:origin.y).insetBy(dx:-1,dy:-1)
-            let path=NSBezierPath(roundedRect:outlined,xRadius:2,yRadius:2);path.lineWidth=1;path.stroke()
+        // Repaint the previous emphasis with the ordinary comment color, then
+        // apply the new emphasis as a temporary TextKit background. Keeping
+        // this inside TextKit gives scrolling, clipping and invalidation one
+        // owner; the former post-draw outline could leave stale edge pixels.
+        for range in emphasizedCommentPaintRanges where NSMaxRange(range)<=length {
+            manager.removeTemporaryAttribute(.backgroundColor,forCharacterRange:range)
+            manager.removeTemporaryAttribute(.markatoCommentBorderColor,forCharacterRange:range)
+            for ordinary in next {
+                let overlap=NSIntersectionRange(range,ordinary)
+                if overlap.length>0 {
+                    manager.addTemporaryAttribute(.backgroundColor,value:color,forCharacterRange:overlap)
+                }
+            }
         }
+        let emphasized=mergedCommentPaintRanges(
+            [selectedCommentRange,hoveredCommentRange].compactMap{$0}.flatMap(commentPaintRanges))
+        let emphasisColor=NSColor(srgbRed:1,green:213.0/255.0,blue:79.0/255.0,alpha:0.42)
+        let borderColor=NSColor.labelColor.withAlphaComponent(0.88)
+        for range in emphasized where NSMaxRange(range)<=length {
+            manager.addTemporaryAttribute(.backgroundColor,value:emphasisColor,forCharacterRange:range)
+            manager.addTemporaryAttribute(.markatoCommentBorderColor,value:borderColor,
+                forCharacterRange:range)
+        }
+        emphasizedCommentPaintRanges=emphasized
+        paintedCommentRanges=next
     }
     func reconcilePreparedHighlights() {
         let applied=highlightedRanges
@@ -1352,7 +1465,7 @@ final class SourceEditor:NSView,NSTextViewDelegate,NSTextStorageDelegate,ScrollS
         else if let y=renderedVerticalPosition(for:position) {
             let target=NSRect(x:textView.textContainerInset.width,y:y,width:1,height:1)
             switch request.alignment {
-            case .minimalReveal:
+            case .minimalReveal,.passiveReveal:
                 canvas.scrollToVisible(target.insetBy(dx:0,dy:-30))
             case .top:
                 scroll.contentView.scroll(to:NSPoint(x:0,y:y))

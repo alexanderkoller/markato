@@ -19,6 +19,31 @@ import Testing
     #expect(!html.contains("last-block"))
 }
 
+@Test func commentBubbleStatesUseTheirBorderAndFillWithoutAnExternalRing() {
+    let stylesheet=HTMLPreviewResources.stylesheet as NSString
+    for (state,selector) in [
+        ("is-selected",".markato-comment-bubble.is-selected {"),
+        ("is-comment-hovered",".markato-comment-bubble.is-comment-hovered:not(.is-selected) {")
+    ] {
+        let start=stylesheet.range(of:selector)
+        guard start.location != NSNotFound else {
+            Issue.record("Missing \(state) comment-bubble rule");continue
+        }
+        let tail=NSRange(location:start.location,length:stylesheet.length-start.location)
+        let close=stylesheet.range(of:"}",options:[],range:tail)
+        guard close.location != NSNotFound else {
+            Issue.record("Unterminated \(state) comment-bubble rule");continue
+        }
+        let rule=stylesheet.substring(with:NSRange(location:start.location,
+            length:NSMaxRange(close)-start.location))
+        #expect(rule.contains("border-color:"))
+        #expect(rule.contains("background:"))
+        #expect(!rule.contains("outline:"))
+        #expect(!rule.contains("outline-offset:"))
+    }
+    #expect(stylesheet.contains(".markato-comment-highlight.is-comment-hovered:not(.is-selected) {\n  background: rgba(255, 213, 79, .42);\n  box-shadow: inset 0 0 0 1px rgba(31, 35, 40, .88);"))
+}
+
 @Test func localImagesUseTheirAbsoluteFileURL() throws {
     let directory=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString,isDirectory:true)
     try FileManager.default.createDirectory(at:directory,withIntermediateDirectories:true)

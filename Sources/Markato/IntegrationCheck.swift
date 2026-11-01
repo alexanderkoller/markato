@@ -113,6 +113,18 @@ import PDFKit
                   windowNumber:window.windowNumber,context:nil,eventNumber:0,clickCount:1,pressure:0) else{return false}
         view.mouseDown(with:down);view.mouseUp(with:up);return true
     }
+    private static func moveMouse(_ view:HTMLPreviewView,to point:NSPoint)->Bool {
+        guard let window=view.window else{return false}
+        let location=view.convert(point,to:nil)
+        guard let event=NSEvent.mouseEvent(with:.mouseMoved,location:location,modifierFlags:[],
+            timestamp:0,windowNumber:window.windowNumber,context:nil,eventNumber:0,
+            clickCount:0,pressure:0) else{return false}
+        view.mouseMoved(with:event);return true
+    }
+    private static func moveMouse(_ view:HTMLPreviewView,selector:String)->Bool {
+        guard let rect=view.debugRect(selector) else{return false}
+        return moveMouse(view,to:NSPoint(x:rect.midX,y:rect.midY))
+    }
     private static func clickSource(_ view:SourceTextView,at point:NSPoint)->Bool {
         guard let window=view.window else{return false}
         let location=view.convert(point,to:nil)
@@ -2030,7 +2042,10 @@ import PDFKit
             MarkdownComments.comment(in:paragraph,selection:contained,body:"contained",author:""),
             MarkdownComments.comment(in:paragraph,selection:partial,body:"partial",author:"")
         ]
-        let fixture=paragraph+"\n\n"+comments.map{MarkdownComments.serialize($0)}.joined(separator:"\n\n")+"\n"
+        // Store records in reverse anchor order. Bubble order is semantic and
+        // must not inherit record/creation order.
+        let fixture=paragraph+"\n\n"+comments.reversed().map{MarkdownComments.serialize($0)}
+            .joined(separator:"\n\n")+"\n"
         document.replace(NSRange(location:0,length:document.source.count),with:fixture)
 
         func checkCoverage(_ phase:String) {
@@ -2092,7 +2107,196 @@ import PDFKit
                controller.preview.lastRevision==document.revision,
                Set(controller.debugComments.map{$0.comment.body})==Set(["outer","contained","partial"]) {
                 checkCoverage("initial")
-                applyEdit(0);return
+                let web=controller.preview.previewView
+                let anchorOrdered=controller.debugComments.sorted {first,second in
+                    let firstRange=first.anchorRange ?? NSRange(location:Int.max,length:0)
+                    let secondRange=second.anchorRange ?? NSRange(location:Int.max,length:0)
+                    if firstRange.location != secondRange.location {
+                        return firstRange.location<secondRange.location
+                    }
+                    return NSMaxRange(firstRange)<NSMaxRange(secondRange)
+                }
+                let bubbles=anchorOrdered.compactMap {value in
+                    web.debugRect(".markato-comment-bubble[data-comment-id=\"\(value.comment.id)\"]")
+                }
+                guard bubbles.count==3,let block=web.debugRect(".astra-preview-block"),
+                      let paragraph=web.debugRect("p") else {
+                    DispatchQueue.main.asyncAfter(deadline:.now()+0.01){waitForSetup(remaining-1)}
+                    return
+                }
+                for bubble in bubbles {
+                    check(abs(bubble.width-22)<0.5 && abs(bubble.height-22)<0.5,
+                        "Overlapping comments must retain full-size bubble hit targets: \(bubble)")
+                    check(bubble.minX>=block.minX-0.5 && bubble.maxX<=block.maxX+0.5 &&
+                          bubble.minY>=block.minY-0.5 && bubble.maxY<=block.maxY+0.5,
+                        "Comment bubble escaped its retained paint boundary: bubble=\(bubble), block=\(block)")
+                    let textGap=paragraph.minX-bubble.maxX
+                    check(textGap>=5.5 && textGap<=6.5,
+                        "Comment bubble must keep the minimal six-point text gap: gap=\(textGap), bubble=\(bubble), paragraph=\(paragraph)")
+                }
+                for (first,second) in zip(bubbles,bubbles.dropFirst()) {
+                    check(first.maxY<=second.minY-3.5,
+                        "Overlapping comments produced colliding bubbles: \(first), \(second)")
+                }
+                check(click(web,selector:".markato-comment-bubble:nth-child(1)"),
+                    "Could not open the first overlapping comment")
+                @MainActor func waitForFirstPopover(_ popupRemaining:Int) {
+                    guard popupRemaining>0 else{fail("First overlapping comment popup did not open")}
+                    guard controller.debugCommentPopoverIsShown,
+                          controller.debugCommentPopoverText==anchorOrdered[0].comment.body,
+                          web.debugRect(".markato-comment-bubble:nth-child(2)") != nil else {
+                        DispatchQueue.main.asyncAfter(deadline:.now()+0.01){waitForFirstPopover(popupRemaining-1)}
+                        return
+                    }
+                    check(moveMouse(web,selector:".markato-comment-bubble:nth-child(2)"),
+                        "Could not hover a second bubble while its neighbor popup was open")
+                    waitForOpenPopoverHover(200)
+                }
+                @MainActor func waitForOpenPopoverHover(_ hoverRemaining:Int) {
+                    guard hoverRemaining>0 else{fail("Hovering a second bubble did not emphasize its source anchor while a popup was open")}
+                    let id=anchorOrdered[1].comment.id
+                    let bubble=".markato-comment-bubble[data-comment-id=\"\(id)\"].is-comment-hovered"
+                    let highlight=".markato-comment-highlight[data-comment-id=\"\(id)\"].is-comment-hovered"
+                    guard controller.debugCommentPopoverIsShown,
+                          controller.debugCommentPopoverText==anchorOrdered[0].comment.body,
+                          controller.source.debugHasHoveredCommentRange,
+                          controller.source.debugSelectedCommentHasBorder,
+                          web.debugCount(bubble)==1,web.debugCount(highlight)>0,
+                          web.debugCount(".markato-comment-bubble.is-selected")==1 else {
+                        DispatchQueue.main.asyncAfter(deadline:.now()+0.01){waitForOpenPopoverHover(hoverRemaining-1)}
+                        return
+                    }
+                    if let path=commentsScreenshotOutput,let content=controller.window?.contentView {
+                        let url=URL(fileURLWithPath:path).deletingPathExtension()
+                            .appendingPathExtension("open-hover.png")
+                        content.layoutSubtreeIfNeeded()
+                        do {try capture(content).png.write(to:url,options:.atomic)}
+                        catch {fail("Could not write open-popup hover screenshot: \(error.localizedDescription)")}
+                    }
+                    controller.debugScheduleCommentOutsideClick()
+                    check(click(web,selector:".markato-comment-bubble:nth-child(2)"),
+                        "Could not click a second bubble while its neighbor popup was open")
+                    waitForSecondPopover(200)
+                }
+                @MainActor func waitForSecondPopover(_ popupRemaining:Int) {
+                    guard popupRemaining>0 else{fail("Clicking a second bubble did not directly replace the open popup")}
+                    guard controller.debugCommentPopoverIsShown,
+                          controller.debugCommentPopoverText==anchorOrdered[1].comment.body else {
+                        DispatchQueue.main.asyncAfter(deadline:.now()+0.01){waitForSecondPopover(popupRemaining-1)}
+                        return
+                    }
+                    controller.debugScheduleCommentOutsideClick()
+                    waitForOutsideDismissal(200)
+                }
+                @MainActor func waitForOutsideDismissal(_ popupRemaining:Int) {
+                    guard popupRemaining>0 else{fail("Clicking outside did not close the comment popup")}
+                    guard !controller.debugCommentPopoverIsShown,
+                          !controller.source.debugHasSelectedCommentRange,
+                          web.debugRect(".markato-comment-highlight") != nil else {
+                        DispatchQueue.main.asyncAfter(deadline:.now()+0.01){waitForOutsideDismissal(popupRemaining-1)}
+                        return
+                    }
+                    check(moveMouse(web,selector:".markato-comment-highlight"),
+                        "Could not hover a comment highlight")
+                    waitForHover(200)
+                }
+                @MainActor func waitForHover(_ hoverRemaining:Int) {
+                    guard hoverRemaining>0 else{fail("Hovered comment highlight did not outline one bubble")}
+                    guard web.debugCount(".markato-comment-bubble.is-comment-hovered")==1,
+                          web.debugCount(".markato-comment-highlight.is-comment-hovered")>0,
+                          controller.source.debugHasSelectedCommentRange,
+                          controller.source.debugSelectedCommentHasBorder else {
+                        DispatchQueue.main.asyncAfter(deadline:.now()+0.01){waitForHover(hoverRemaining-1)}
+                        return
+                    }
+                    @MainActor func finishHoverCheck() {
+                        check(moveMouse(web,to:NSPoint(x:web.bounds.maxX-2,y:web.bounds.maxY-2)),
+                            "Could not leave the comment highlight")
+                        @MainActor func waitForHoverClear(_ clearRemaining:Int) {
+                            guard clearRemaining>0 else{fail("Preview comment hover did not clear all three surfaces")}
+                            if web.debugCount(".markato-comment-bubble.is-comment-hovered")==0,
+                               web.debugCount(".markato-comment-highlight.is-comment-hovered")==0,
+                               !controller.source.debugHasSelectedCommentRange {
+                                check(moveMouse(web,selector:".markato-comment-bubble:nth-child(2)"),
+                                    "Could not hover a comment bubble")
+                                waitForBubbleHover(200);return
+                            }
+                            DispatchQueue.main.asyncAfter(deadline:.now()+0.01) {
+                                waitForHoverClear(clearRemaining-1)
+                            }
+                        }
+                        waitForHoverClear(200)
+                    }
+                    @MainActor func waitForBubbleHover(_ hoverRemaining:Int) {
+                        guard hoverRemaining>0 else{fail("Comment bubble hover did not highlight all three surfaces")}
+                        let id=anchorOrdered[1].comment.id
+                        let bubble=".markato-comment-bubble[data-comment-id=\"\(id)\"].is-comment-hovered"
+                        let highlight=".markato-comment-highlight[data-comment-id=\"\(id)\"].is-comment-hovered"
+                        guard controller.source.debugHasSelectedCommentRange,
+                              controller.source.debugSelectedCommentHasBorder,
+                              web.debugCount(bubble)==1,web.debugCount(highlight)>0 else {
+                            DispatchQueue.main.asyncAfter(deadline:.now()+0.01){waitForBubbleHover(hoverRemaining-1)}
+                            return
+                        }
+                        check(moveMouse(web,to:NSPoint(x:web.bounds.maxX-2,y:web.bounds.maxY-2)),
+                            "Could not leave the comment bubble")
+                        waitForBubbleHoverClear(200)
+                    }
+                    @MainActor func waitForBubbleHoverClear(_ clearRemaining:Int) {
+                        guard clearRemaining>0 else{fail("Comment bubble hover did not clear all three surfaces")}
+                        guard !controller.source.debugHasSelectedCommentRange,
+                              web.debugCount(".markato-comment-bubble.is-comment-hovered")==0,
+                              web.debugCount(".markato-comment-highlight.is-comment-hovered")==0 else {
+                            DispatchQueue.main.asyncAfter(deadline:.now()+0.01){waitForBubbleHoverClear(clearRemaining-1)}
+                            return
+                        }
+                        guard let offset=anchorOrdered[1].anchorRange?.location else {
+                            fail("Second overlapping comment lost its source anchor")
+                        }
+                        controller.source.debugHoverComment(at:offset)
+                        waitForSourceHover(200)
+                    }
+                    @MainActor func waitForSourceHover(_ hoverRemaining:Int) {
+                        guard hoverRemaining>0 else{fail("Source comment hover did not highlight all three surfaces")}
+                        let id=anchorOrdered[1].comment.id
+                        let bubble=".markato-comment-bubble[data-comment-id=\"\(id)\"].is-comment-hovered"
+                        let highlight=".markato-comment-highlight[data-comment-id=\"\(id)\"].is-comment-hovered"
+                        guard controller.source.debugHasSelectedCommentRange,
+                              controller.source.debugSelectedCommentHasBorder,
+                              web.debugCount(bubble)==1,web.debugCount(highlight)>0 else {
+                            DispatchQueue.main.asyncAfter(deadline:.now()+0.01){waitForSourceHover(hoverRemaining-1)}
+                            return
+                        }
+                        controller.source.debugHoverComment(at:nil)
+                        waitForSourceHoverClear(200)
+                    }
+                    @MainActor func waitForSourceHoverClear(_ clearRemaining:Int) {
+                        guard clearRemaining>0 else{fail("Source comment hover did not clear all three surfaces")}
+                        if !controller.source.debugHasSelectedCommentRange,
+                           web.debugCount(".markato-comment-bubble.is-comment-hovered")==0,
+                           web.debugCount(".markato-comment-highlight.is-comment-hovered")==0 {
+                            applyEdit(0);return
+                        }
+                        DispatchQueue.main.asyncAfter(deadline:.now()+0.01) {
+                            waitForSourceHoverClear(clearRemaining-1)
+                        }
+                    }
+                    if let path=commentsScreenshotOutput,let content=controller.window?.contentView {
+                        // The DOM class changes synchronously; retained pixels
+                        // publish on the following paint. Capture that paint,
+                        // not the bitmap from immediately before the hover.
+                        DispatchQueue.main.asyncAfter(deadline:.now()+0.05) {
+                            content.layoutSubtreeIfNeeded()
+                            do {try capture(content).png.write(to:URL(fileURLWithPath:path),options:.atomic)}
+                            catch {fail("Could not write overlapping-comment screenshot: \(error.localizedDescription)")}
+                            print("COMMENT COLLISION SCREENSHOT: \(path)")
+                            finishHoverCheck()
+                        }
+                        return
+                    }
+                    finishHoverCheck()
+                }
+                waitForFirstPopover(200);return
             }
             DispatchQueue.main.asyncAfter(deadline:.now()+0.01){waitForSetup(remaining-1)}
         }
@@ -2535,34 +2739,71 @@ import PDFKit
                 }
                 controller.toggleSidebar(nil)
                 check(controller.isSidebarVisible,"The sidebar must still open when explicitly requested")
+                controller.sidebar.layoutSubtreeIfNeeded()
+                check(controller.sidebar.debugCommentCardsFit,
+                    "Sidebar comment cards and wrapped labels must remain inside their table cells")
                 if let path=commentsScreenshotOutput,let content=controller.window?.contentView {
-                    check(click(web,selector:".markato-comment-bubble"),"Could not open the comment bubble")
-                    DispatchQueue.main.asyncAfter(deadline:.now()+0.25) {
-                        check(controller.debugCommentPopoverIsShown,"The native comment popover did not open")
-                        check(controller.source.debugHasSelectedCommentRange,"Selecting a comment must outline its source highlight")
-                        check(web.debugCount(".markato-comment-highlight.is-selected")>0,
-                            "Selecting a comment must outline its preview highlight")
-                        check(web.debugCount(".markato-comment-bubble.is-selected")==1,
-                            "Selecting a comment must outline its preview bubble")
-                        guard let popover=controller.debugCommentPopoverView else{fail("Missing native comment popover view")}
+                    @MainActor func waitForScreenshot(_ screenshotRemaining:Int) {
+                        guard screenshotRemaining>0 else {
+                            fail("Comment bubble did not settle after opening the sidebar: \(controller.preview.debugGeometry())")
+                        }
                         content.layoutSubtreeIfNeeded()
-                        popover.layoutSubtreeIfNeeded()
-                        do {try capture(content).png.write(to:URL(fileURLWithPath:path),options:.atomic)}
-                        catch {fail("Could not write comments screenshot: \(error.localizedDescription)")}
+                        guard controller.preview.lastRevision==document.revision,
+                              web.debugRect(".markato-comment-bubble") != nil else {
+                            DispatchQueue.main.asyncAfter(deadline:.now()+0.01) {
+                                waitForScreenshot(screenshotRemaining-1)
+                            }
+                            return
+                        }
                         let url=URL(fileURLWithPath:path)
-                        let popoverURL=url.deletingPathExtension().appendingPathExtension("popover.png")
-                        do {try capture(popover).png.write(to:popoverURL,options:.atomic)}
-                        catch {fail("Could not write comment popover screenshot: \(error.localizedDescription)")}
-                        print("COMMENTS SCREENSHOT: \(path)")
-                        print("COMMENT POPOVER SCREENSHOT: \(popoverURL.path)");fflush(nil);_exit(EXIT_SUCCESS)
+                        let previewURL=url.deletingPathExtension().appendingPathExtension("bubble.png")
+                        do {try capture(content).png.write(to:previewURL,options:.atomic)}
+                        catch {fail("Could not write comment-bubble screenshot: \(error.localizedDescription)")}
+                        check(click(web,selector:".markato-comment-bubble"),
+                            "Could not click the comment bubble at \(String(describing:web.debugRect(".markato-comment-bubble")))")
+                        @MainActor func waitForSelectedScreenshot(_ selectedRemaining:Int) {
+                            guard selectedRemaining>0 else {
+                                fail("Selected comment visuals did not settle for screenshot")
+                            }
+                            guard controller.debugCommentPopoverIsShown,
+                                  controller.source.debugHasSelectedCommentRange,
+                                  web.debugCount(".markato-comment-highlight.is-selected")>0,
+                                  web.debugCount(".markato-comment-bubble.is-selected")==1 else {
+                                DispatchQueue.main.asyncAfter(deadline:.now()+0.01) {
+                                    waitForSelectedScreenshot(selectedRemaining-1)
+                                }
+                                return
+                            }
+                            guard let popover=controller.debugCommentPopoverView else{fail("Missing native comment popover view")}
+                            content.layoutSubtreeIfNeeded()
+                            popover.layoutSubtreeIfNeeded()
+                            do {try capture(content).png.write(to:url,options:.atomic)}
+                            catch {fail("Could not write comments screenshot: \(error.localizedDescription)")}
+                            let popoverURL=url.deletingPathExtension().appendingPathExtension("popover.png")
+                            do {try capture(popover).png.write(to:popoverURL,options:.atomic)}
+                            catch {fail("Could not write comment popover screenshot: \(error.localizedDescription)")}
+                            print("COMMENTS SCREENSHOT: \(path)")
+                            print("COMMENT POPOVER SCREENSHOT: \(popoverURL.path)");fflush(nil);_exit(EXIT_SUCCESS)
+                        }
+                        waitForSelectedScreenshot(200)
                     }
+                    waitForScreenshot(500)
                     return
                 }
                 check(!controller.sidebar.debugCommentTextIsSelectable,
                     "Sidebar comment-card text must not be selectable")
+                let priorSourceSelection=NSRange(location:0,length:1)
+                let collapsedSourceSelection=NSRange(location:NSMaxRange(priorSourceSelection),length:0)
+                controller.source.textView.setSelectedRange(priorSourceSelection)
                 controller.sidebar.debugSelectComment(id:id)
                 check(controller.source.debugHasSelectedCommentRange,
                     "Clicking a sidebar comment must select and reveal its source anchor")
+                check(controller.source.debugSelectedCommentHasBorder,
+                    "Selecting a comment must frame its source anchor")
+                check(controller.source.selection.length==0,
+                    "Selecting a comment must not text-select its source anchor")
+                check(controller.source.selection==collapsedSourceSelection,
+                    "Selecting a comment must collapse the prior source selection in place")
                 controller.sidebar.debugOpenSelectedComment()
                 @MainActor func waitForTrackedPopover(_ remaining:Int) {
                     guard remaining>0 else {
@@ -2573,6 +2814,8 @@ import PDFKit
                        controller.preview.lastRevision==document.revision,
                        let bubble=controller.preview.debugSelectedCommentAnchor,
                        let positioning=controller.debugCommentPopoverPositioningRect {
+                        check(controller.source.selection.length==0,
+                            "Opening a comment popup must not text-select its source anchor: actual=\(controller.source.selection)")
                         check(abs(bubble.midX-positioning.midX)<0.5 && abs(bubble.midY-positioning.midY)<0.5,
                             "Comment popover must initially align with the rendered bubble: bubble=\(bubble), positioning=\(positioning)")
                         let originalY=bubble.minY
@@ -2641,7 +2884,19 @@ import PDFKit
                             "Return must close an existing comment editor")
                         @MainActor func waitForEditedComment(_ editRemaining:Int) {
                             guard editRemaining>0 else{fail("Edited comment body did not reach the model")}
-                            if controller.debugComments.first?.comment.body==editedBody {
+                            if controller.debugComments.first?.comment.body==editedBody,
+                               controller.preview.lastRevision==document.revision,
+                               web.debugCount(".markato-comment-bubble.is-selected")==0,
+                               web.debugCount(".markato-comment-highlight.is-selected")==0,
+                               !controller.source.debugHasSelectedCommentRange {
+                                guard let edited=controller.debugComments.first else{fail("Edited comment disappeared")}
+                                let serialized=MarkdownComments.serialize(edited.comment,newline:document.newline)
+                                check(serialized.hasSuffix(" | "+MarkdownComments.marker+" -->") &&
+                                      document.source.string.contains(serialized),
+                                    "Popover editing must replace the compact v3 record in place")
+                                let reparsed=MarkdownComments.records(in:document.source.string)
+                                check(reparsed.count==1 && reparsed[0].comment.body==editedBody,
+                                    "Edited compact v3 record must remain independently parseable")
                                 let anchorEdit=(document.source.string as NSString).range(of:"editor")
                                 check(anchorEdit.location != NSNotFound &&
                                       anchorEdit.location<(controller.debugComments.first?.recordRange.location ?? 0),
@@ -2711,7 +2966,8 @@ import PDFKit
                                             guard bubbleRemaining>0 else {
                                                 fail("Could not locate the comment bubble for tracking")
                                             }
-                                            if let bubble=web.debugRect(".markato-comment-bubble") {
+                                            if web.debugCount(".markato-comment-bubble.is-selected")==0,
+                                               let bubble=web.debugRect(".markato-comment-bubble") {
                                                 controller.preview.openComment?(id,web,bubble)
                                                 waitForTrackedPopover(500);return
                                             }
@@ -2759,9 +3015,48 @@ import PDFKit
                                         if controller.debugComments.count==1 &&
                                            document.source.string.contains(MarkdownComments.marker) {
                                             check(controller.source.selection==selectionBeforeResolve,
-                                                "Undoing resolution moved the source selection")
-                                            print("COMMENTS INTEGRATION PASSED: adjacent add/edit/storage, anchor highlighting, resolve-delete, undo, and annotated PDF export")
-                                            fflush(nil);_exit(EXIT_SUCCESS)
+                                                "Undoing resolution moved the source selection: before=\(selectionBeforeResolve), after=\(controller.source.selection), undo=\(document.undoManager?.undoActionName ?? "none"), redo=\(document.undoManager?.redoActionName ?? "none"), level=\(document.undoManager?.groupingLevel ?? -1)")
+                                            guard let restoredID=controller.debugComments.first?.comment.id else {
+                                                fail("Undo restored a comment without an identity")
+                                            }
+                                            controller.debugOpenCommentPopover(restoredID)
+                                            @MainActor func waitForDeletePopover(_ popupRemaining:Int) {
+                                                guard popupRemaining>0 else{fail("Restored comment did not reopen for deletion")}
+                                                guard controller.debugCommentPopoverIsShown else {
+                                                    DispatchQueue.main.asyncAfter(deadline:.now()+0.01) {
+                                                        waitForDeletePopover(popupRemaining-1)
+                                                    }
+                                                    return
+                                                }
+                                                check(controller.debugDeleteCommentFromPopover(),
+                                                    "Comment popover trash button was unavailable")
+                                                @MainActor func waitForPopoverDeletion(_ deleteRemaining:Int) {
+                                                    guard deleteRemaining>0 else{fail("Popover deletion did not remove the compact v3 record")}
+                                                    if controller.debugComments.isEmpty &&
+                                                       !document.source.string.contains(MarkdownComments.marker) {
+                                                        document.undoManager?.undo()
+                                                        @MainActor func waitForDeleteUndo(_ restoreRemaining:Int) {
+                                                            guard restoreRemaining>0 else{fail("Popover deletion could not be undone")}
+                                                            if controller.debugComments.count==1,
+                                                               let restored=controller.debugComments.first,
+                                                               document.source.string.contains(
+                                                                MarkdownComments.serialize(restored.comment,newline:document.newline)) {
+                                                                print("COMMENTS INTEGRATION PASSED: adjacent add/edit/storage, anchor highlighting, resolve and popover deletion, undo, and annotated PDF export")
+                                                                fflush(nil);_exit(EXIT_SUCCESS)
+                                                            }
+                                                            DispatchQueue.main.asyncAfter(deadline:.now()+0.01) {
+                                                                waitForDeleteUndo(restoreRemaining-1)
+                                                            }
+                                                        }
+                                                        waitForDeleteUndo(500);return
+                                                    }
+                                                    DispatchQueue.main.asyncAfter(deadline:.now()+0.01) {
+                                                        waitForPopoverDeletion(deleteRemaining-1)
+                                                    }
+                                                }
+                                                waitForPopoverDeletion(500)
+                                            }
+                                            waitForDeletePopover(500);return
                                         }
                                         DispatchQueue.main.asyncAfter(deadline:.now()+0.01){waitForUndo(undoRemaining-1)}
                                     }

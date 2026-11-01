@@ -72,6 +72,8 @@ bool astra_ul_surface_pump(AstraULSurface* surface);
 
 void astra_ul_surface_mouse(AstraULSurface* surface, int type, int x, int y,
                             int button);
+void astra_ul_surface_set_comment_hover(AstraULSurface* surface, const char* comment_id);
+char* astra_ul_surface_hovered_comment_id(AstraULSurface* surface);
 void astra_ul_surface_horizontal_scroll(AstraULSurface* surface, int delta_x,
                                         int x, int y);
 bool astra_ul_surface_toggle_first_details(AstraULSurface* surface);

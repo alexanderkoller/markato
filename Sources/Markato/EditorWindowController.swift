@@ -140,8 +140,10 @@ final class EditorWindowController: NSWindowController, NSSplitViewDelegate, NSS
     private(set) var isSidebarVisible=false
     private var comments=[ResolvedMarkdownComment]()
     private var selectedCommentID:String?
+    private var hoveredCommentID:String?
     private var commentPopover:NSPopover?
     private var commentPopoverController:CommentPopoverViewController?
+    private var commentOutsideClickMonitor:Any?
     private var commentPopoverID:String?
     private var pendingCommentPopoverID:String?
     private enum CommentEditTarget {
@@ -252,6 +254,8 @@ final class EditorWindowController: NSWindowController, NSSplitViewDelegate, NSS
         parseErrorBar.addSubview(parseErrorLabel);parseErrorBar.addSubview(parseRetryButton);content.addSubview(parseErrorBar)
         content.postsFrameChangedNotifications = true
         NotificationCenter.default.addObserver(self,selector:#selector(contentResized(_:)),name:NSView.frameDidChangeNotification,object:content)
+        NotificationCenter.default.addObserver(self,selector:#selector(applicationDidResignActive(_:)),
+            name:NSApplication.didResignActiveNotification,object:NSApp)
         sidebar.activateHeading = { [weak self] id,focusSource in
             guard let self,let heading=self.preparedDocument.heading(id:id) else{return}
             self.source.reveal(heading.range.location,alignment:.readingAnchor)
@@ -273,6 +277,20 @@ final class EditorWindowController: NSWindowController, NSSplitViewDelegate, NSS
             }
         }
         preview.preparedDocument=preparedDocument
+        preview.previewView.commentHovered = { [weak self] id in self?.setCommentHover(id) }
+        source.commentHoverChanged = { [weak self] offset in
+            guard let self else{return}
+            let hovered=offset.flatMap {offset in
+                self.comments.filter {value in
+                    guard let range=value.anchorRange else{return false}
+                    return range.length==0 ? range.location==offset:NSLocationInRange(offset,range)
+                }.min {first,second in
+                    let a=first.anchorRange!,b=second.anchorRange!
+                    return a.length != b.length ? a.length<b.length:a.location<b.location
+                }?.comment.id
+            }
+            self.setCommentHover(hovered)
+        }
         preview.openComment = { [weak self] id,view,anchor in
             guard let self else{return}
             let stableAnchor=self.preview.convert(anchor,from:view)
@@ -479,8 +497,12 @@ final class EditorWindowController: NSWindowController, NSSplitViewDelegate, NSS
         sidebar.activateHeading=nil
         sidebar.activateComment=nil;sidebar.openComment=nil;sidebar.clearCommentSelection=nil;sidebar.toggleCommentResolved=nil
         preview.openComment=nil;preview.commentAnchorChanged=nil
+        preview.previewView.commentHovered=nil;source.commentHoverChanged=nil
     }
     @objc private func contentResized(_ notification:Notification) { layoutContent() }
+    @objc private func applicationDidResignActive(_ notification:Notification) {
+        finishCommentPopover(save:true)
+    }
     private func layoutContent() {
         let findHeight:CGFloat = findVisible ? 38 : 0
         let errorHeight:CGFloat = parseErrorBar.isHidden ? 0 : 36
@@ -903,11 +925,21 @@ final class EditorWindowController: NSWindowController, NSSplitViewDelegate, NSS
                 self.source.setCommentRecordRanges(reconciled.map(\.recordRange))
                 let active=reconciled.filter{$0.comment.status == .open}.compactMap(\.anchorRange)
                 let selectedComment=self.selectedCommentID.flatMap {id in reconciled.first(where:{$0.comment.id==id})}
-                if self.selectedCommentID != nil && selectedComment == nil {self.selectedCommentID=nil}
+                if self.selectedCommentID != nil && selectedComment == nil {
+                    self.selectedCommentID=nil
+                }
                 let selected=selectedComment.map {
                     $0.anchorRange ?? NSRange(location:min($0.comment.anchor.position ?? 0,self.markdownDocument.source.count),length:0)
                 }
+                let hoveredComment=self.hoveredCommentID.flatMap {id in reconciled.first(where:{$0.comment.id==id})}
+                if self.hoveredCommentID != nil && hoveredComment == nil {
+                    self.hoveredCommentID=nil;self.preview.previewView.setHoveredCommentID(nil)
+                }
+                let hovered=hoveredComment.map {
+                    $0.anchorRange ?? NSRange(location:min($0.comment.anchor.position ?? 0,self.markdownDocument.source.count),length:0)
+                }
                 self.source.setCommentRanges(active);self.source.setSelectedCommentRange(selected)
+                self.source.setHoveredCommentRange(hovered)
                 self.preview.comments=self.comments;self.preview.selectedCommentID=self.selectedCommentID
                 // Migrate verbose v3 selectors in place once their full range
                 // has resolved. This is a bounded metadata replacement per
@@ -996,7 +1028,9 @@ final class EditorWindowController: NSWindowController, NSSplitViewDelegate, NSS
         let selected=selectedComment.map {
             $0.anchorRange ?? NSRange(location:min($0.comment.anchor.position ?? 0,markdownDocument.source.count),length:0)
         }
+        let hovered=resolvedCommentRange(for:hoveredCommentID)
         source.setCommentRanges(active);source.setSelectedCommentRange(selected)
+        source.setHoveredCommentRange(hovered)
         preview.comments=comments
         guard !synchronizingCommentRecord,!dirty.isEmpty else{return}
         pendingCommentAnchorSyncIDs.formUnion(dirty.map(\.comment.id))
@@ -1032,17 +1066,34 @@ final class EditorWindowController: NSWindowController, NSSplitViewDelegate, NSS
     private func revealComment(_ id:String,focusSource:Bool) {
         guard let comment=comments.first(where:{$0.comment.id==id}) else{return}
         let range=comment.anchorRange ?? NSRange(location:min(comment.comment.anchor.position ?? 0,markdownDocument.source.count),length:0)
-        selectedCommentID=id;source.setSelectedCommentRange(range);preview.selectedCommentID=id
-        source.reveal(range.location)
-        source.textView.setSelectedRange(NSRange(location:range.location,length:0))
-        if range.length>0 {source.textView.scrollRangeToVisible(range)}
+        let sourceSelection=source.selection
+        if sourceSelection.length>0 {
+            source.textView.setSelectedRange(NSRange(location:NSMaxRange(sourceSelection),length:0))
+        }
+        selectedCommentID=id
+        source.setSelectedCommentRange(range);preview.selectedCommentID=id
+        source.reveal(range.location,alignment:.passiveReveal)
         if focusSource {window?.makeFirstResponder(source.textView)}
+    }
+    private func setCommentHover(_ id:String?) {
+        guard id != hoveredCommentID else{return}
+        hoveredCommentID=id
+        source.setHoveredCommentRange(resolvedCommentRange(for:id))
+        preview.previewView.setHoveredCommentID(id)
+    }
+    private func resolvedCommentRange(for id:String?)->NSRange? {
+        id.flatMap {id in comments.first(where:{$0.comment.id==id})}.flatMap {value in
+            value.anchorRange ?? NSRange(
+                location:min(value.comment.anchor.position ?? 0,markdownDocument.source.count),length:0)
+        }
     }
     private func clearCommentSelection() {
         finishCommentPopover(save:true)
         pendingCommentPopoverID=nil
         sidebar.deselectComment()
-        selectedCommentID=nil;source.setSelectedCommentRange(nil);preview.selectedCommentID=nil
+        selectedCommentID=nil;hoveredCommentID=nil
+        preview.previewView.setHoveredCommentID(nil)
+        source.setSelectedCommentRange(nil);source.setHoveredCommentRange(nil);preview.selectedCommentID=nil
     }
     private func openSidebarComment(_ id:String) {
         revealComment(id,focusSource:false)
@@ -1062,21 +1113,51 @@ final class EditorWindowController: NSWindowController, NSSplitViewDelegate, NSS
         controller.submit={ [weak self] in self?.finishCommentPopover(save:true) }
         controller.cancel={ [weak self] in self?.finishCommentPopover(save:false) }
         controller.delete={ [weak self] in self?.deleteCommentFromPopover() }
-        let popover=NSPopover();popover.behavior = .transient;popover.animates=false;popover.delegate=self
+        let popover=NSPopover();popover.behavior = .applicationDefined;popover.animates=false;popover.delegate=self
         popover.contentViewController=controller
         commentPopover=popover;commentPopoverController=controller;commentEditTarget=target
         if case .existing(let id)=target {commentPopoverID=id}else{commentPopoverID=nil}
+        hoveredCommentID=nil;preview.previewView.setHoveredCommentID(nil)
+        source.setHoveredCommentRange(nil)
         pendingCommentPopoverID=nil
         popover.show(relativeTo:anchor,of:positioningView,preferredEdge:.minX)
+        commentOutsideClickMonitor=NSEvent.addLocalMonitorForEvents(
+            matching:[.leftMouseUp,.rightMouseUp,.otherMouseUp]) { [weak self,weak popover] event in
+            guard let self,let popover,self.commentPopover === popover,popover.isShown else{return event}
+            guard event.window !== popover.contentViewController?.view.window else{return event}
+            // Defer until the click has reached its target. A comment-bubble
+            // click replaces this popover synchronously; the identity check
+            // then preserves the newly opened one. Every other outside click
+            // closes the original popover after completing its normal action.
+            self.scheduleCommentOutsideClick(popover)
+            return event
+        }
+    }
+    private func scheduleCommentOutsideClick(_ popover:NSPopover) {
+        DispatchQueue.main.async { [weak self,weak popover] in
+            guard let self,let popover,self.commentPopover === popover else{return}
+            self.finishCommentPopover(save:true)
+        }
     }
     private func finishCommentPopover(save:Bool,close:Bool=true) {
         guard !finishingCommentPopover,commentPopover != nil || commentEditTarget != nil else{return}
         finishingCommentPopover=true
         let popover=commentPopover,controller=commentPopoverController,target=commentEditTarget
+        if let monitor=commentOutsideClickMonitor {NSEvent.removeMonitor(monitor)}
+        commentOutsideClickMonitor=nil
         popover?.delegate=nil
         if close {popover?.close()}
         commentPopover=nil;commentPopoverController=nil;commentEditTarget=nil;commentPopoverID=nil
         finishingCommentPopover=false
+        defer {
+            hoveredCommentID=nil;preview.previewView.setHoveredCommentID(nil)
+            source.setHoveredCommentRange(nil)
+            if case .some(.existing(let id)) = target,id==selectedCommentID {
+                selectedCommentID=nil
+                source.setSelectedCommentRange(nil)
+                preview.selectedCommentID=nil
+            }
+        }
         guard save,let target,let body=controller?.body else{return}
         switch target {
         case .new(let selection):
@@ -1091,10 +1172,24 @@ final class EditorWindowController: NSWindowController, NSSplitViewDelegate, NSS
                     anchorRange:resolved.anchorRange)
             }
             synchronizingCommentRecord=true
-            markdownDocument.replace(resolved.recordRange,with:replacement,selection:source.selection,name:"Edit Comment")
+            replaceCommentSource(resolved.recordRange,with:replacement,selection:source.selection,
+                name:"Edit Comment")
             synchronizingCommentRecord=false
             source.setCommentRecordRanges(comments.map(\.recordRange))
         }
+    }
+    private func replaceCommentSource(_ range:NSRange,with replacement:String,
+                                      selection:NSRange,name:String) {
+        let undo=markdownDocument.undoManager
+        // Comment commands are discrete UI actions. Close any implicit
+        // TextKit event group left by the preceding source edit so comment
+        // metadata never becomes part of that edit's "Typing" undo step.
+        while let undo,undo.groupingLevel>0 {undo.endUndoGrouping()}
+        undo?.beginUndoGrouping()
+        markdownDocument.replace(range,with:replacement,selection:selection,
+            undoSelection:selection,name:name)
+        undo?.setActionName(name)
+        undo?.endUndoGrouping()
     }
     private func deleteCommentFromPopover() {
         guard case .existing(let id)=commentEditTarget else{return}
@@ -1112,12 +1207,13 @@ final class EditorWindowController: NSWindowController, NSSplitViewDelegate, NSS
         }
         if closingPopover {finishCommentPopover(save:false)}
         pendingCommentPopoverID=nil;sidebar.deselectComment();selectedCommentID=nil
-        source.setSelectedCommentRange(nil);preview.selectedCommentID=nil
+        hoveredCommentID=nil;preview.previewView.setHoveredCommentID(nil)
+        source.setSelectedCommentRange(nil);source.setHoveredCommentRange(nil);preview.selectedCommentID=nil
         comments.removeAll{$0.comment.id==id};sidebar.setComments(comments)
         source.setCommentRanges(comments.filter{$0.comment.status == .open}.compactMap(\.anchorRange))
         preview.comments=comments
         let selection=source.selection
-        markdownDocument.replace(range,with:"",selection:selection,undoSelection:selection,name:"Delete Comment")
+        replaceCommentSource(range,with:"",selection:selection,name:"Delete Comment")
         source.setCommentRecordRanges(comments.map(\.recordRange))
     }
     func popoverWillClose(_ notification:Notification) {
@@ -1175,8 +1271,11 @@ final class EditorWindowController: NSWindowController, NSSplitViewDelegate, NSS
     func debugClearCommentSelection() {clearCommentSelection()}
     func debugOpenCommentPopover(_ id:String) {
         revealComment(id,focusSource:false)
-        let anchor=preview.selectedCommentAnchor ?? NSRect(x:preview.bounds.maxX-32,y:16,width:20,height:20)
+        let anchor=preview.selectedCommentAnchor ?? NSRect(x:8,y:16,width:20,height:20)
         showCommentPopover(id:id,relativeTo:anchor)
+    }
+    func debugScheduleCommentOutsideClick() {
+        if let popover=commentPopover {scheduleCommentOutsideClick(popover)}
     }
     @discardableResult func debugDeleteCommentFromPopover()->Bool {
         guard debugCommentPopoverCanDelete else{return false}

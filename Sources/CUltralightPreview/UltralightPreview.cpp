@@ -124,9 +124,44 @@ struct AstraULSurface {
   std::unordered_set<std::string> dirty_entries;
   double pending_font_size = 14;
   dom::Node resize_anchor_node;
+  std::string hovered_comment_id;
+  std::vector<dom::Element> hovered_comment_elements;
   size_t resize_anchor_offset = 0;
   double resize_anchor_target_viewport_y = 0;
   bool has_resize_anchor = false;
+
+  void clear_comment_hover() {
+    for (auto element : hovered_comment_elements)
+      element.classList.remove("is-comment-hovered");
+    hovered_comment_elements.clear();
+    hovered_comment_id.clear();
+  }
+
+  void set_comment_hover(const std::string& id) {
+    if (hovered_comment_id == id) return;
+    clear_comment_hover();
+    if (id.empty()) return;
+    for (auto element : root.querySelectorAll(
+             ".markato-comment-bubble,.markato-comment-highlight")) {
+      auto candidate = element.getAttribute("data-comment-id");
+      if (candidate && *candidate == id) {
+        element.classList.add("is-comment-hovered");
+        hovered_comment_elements.push_back(element);
+      }
+    }
+    hovered_comment_id = id;
+  }
+
+  void update_comment_hover(int x, int y) {
+    auto target = document.elementFromPoint(x, y).closest(
+        ".markato-comment-bubble,.markato-comment-highlight");
+    if (target) {
+      auto id = target.getAttribute("data-comment-id");
+      set_comment_hover(id ? *id : "");
+    } else {
+      clear_comment_hover();
+    }
+  }
 
   size_t text_length(const dom::Node& node) const {
     const std::string text = node.nodeValue;
@@ -314,6 +349,7 @@ struct AstraULSurface {
 
   bool commit() {
     if (!ready) return false;
+    clear_comment_hover();
     std::unordered_map<std::string, size_t> old;
     for (size_t i = 0; i < entries.size(); ++i) old.emplace(entries[i].id, i);
     std::vector<Entry> next;
@@ -559,12 +595,25 @@ bool astra_ul_surface_pump(AstraULSurface* surface) {
 void astra_ul_surface_mouse(AstraULSurface* surface, int type, int x, int y,
                             int button) {
   if (!surface) return;
+  if (type == 0) surface->update_comment_hover(x, y);
   MouseEvent event;
   event.type = static_cast<MouseEvent::Type>(std::clamp(type, 0, 2));
   event.x = x; event.y = y;
   event.button = static_cast<MouseEvent::Button>(std::clamp(button, 0, 5));
   surface->view->FireMouseEvent(event);
   surface->render();
+}
+
+void astra_ul_surface_set_comment_hover(AstraULSurface* surface,
+                                         const char* comment_id) {
+  if (!surface) return;
+  surface->set_comment_hover(comment_id ? comment_id : "");
+  surface->render();
+}
+
+char* astra_ul_surface_hovered_comment_id(AstraULSurface* surface) {
+  if (!surface || surface->hovered_comment_id.empty()) return nullptr;
+  return copy_string(surface->hovered_comment_id);
 }
 
 void astra_ul_surface_horizontal_scroll(AstraULSurface* surface, int delta_x,
