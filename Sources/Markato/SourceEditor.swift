@@ -2,7 +2,7 @@ import AppKit
 import MarkdownCore
 
 /// Opt-in geometry-only trace for reproducing AppKit resize event order.
-/// Enable with `defaults write org.astramarkdown.editor ResizeTraceEnabled -bool YES`.
+/// Enable with `defaults write de.alexanderkoller.markato ResizeTraceEnabled -bool YES`.
 @MainActor enum ResizeTrace {
     private static let file:FileHandle? = {
         guard UserDefaults.standard.bool(forKey:"ResizeTraceEnabled") else{return nil}

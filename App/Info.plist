@@ -3,7 +3,7 @@
 <plist version="1.0"><dict>
 <key>CFBundleName</key><string>Markato</string>
 <key>CFBundleDisplayName</key><string>Markato</string>
-<key>CFBundleIdentifier</key><string>org.astramarkdown.editor</string>
+<key>CFBundleIdentifier</key><string>de.alexanderkoller.markato</string>
 <key>CFBundleExecutable</key><string>Markato</string>
 <key>CFBundleIconFile</key><string>Markato.icns</string>
 <key>CFBundlePackageType</key><string>APPL</string>
