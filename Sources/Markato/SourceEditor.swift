@@ -235,10 +235,6 @@ final class SourceEditor:NSView,NSTextViewDelegate,NSTextStorageDelegate,ScrollS
     private var pendingEditViewport:(offset:Int,displacement:CGFloat,origin:CGFloat)?
     private var latestEditAnchor=0
     private var nativeLayoutRevision:Int?
-    private var layoutCompletionScheduled=false
-    private var layoutCompletionPaused=false
-    private var pendingNavigation:NavigationRequest?
-    private var retainedNavigationPin:NavigationRequest?
     private var observations=[NSObjectProtocol]()
     var resizeSession:ViewportResizeSession?
     private var highlightedRanges=[NSRange]()
@@ -270,11 +266,11 @@ final class SourceEditor:NSView,NSTextViewDelegate,NSTextStorageDelegate,ScrollS
     #if DEBUG
     private var debugCommentHighlightMutations=[NSRange]()
     var debugHasCompleteLayout:Bool {prepared.sourceLayout.firstEstimatedRange() == nil}
-    var debugHasPendingNavigation:Bool {pendingNavigation != nil}
-    func debugSetLayoutCompletionPaused(_ paused:Bool) {
-        layoutCompletionPaused=paused
-        if !paused {scheduleLayoutCompletion()}
-    }
+    var debugEstimatedLayoutLength:Int {prepared.sourceLayout.estimatedLength}
+    private(set) var debugMeasuredLayoutCharacters=0
+    private(set) var debugLayoutTransactions=0
+    func debugHasEstimatedLayout(in range:NSRange)->Bool {prepared.sourceLayout.hasEstimates(in:range)}
+    func debugRefineLayout(around range:NSRange) {refineLayout(around:range)}
     var debugCommentRangeCount:Int {commentRanges.count}
     var debugHasSelectedCommentRange:Bool {selectedCommentRange != nil || hoveredCommentRange != nil}
     var debugHasHoveredCommentRange:Bool {hoveredCommentRange != nil}
@@ -450,7 +446,7 @@ final class SourceEditor:NSView,NSTextViewDelegate,NSTextStorageDelegate,ScrollS
         (scroll.contentView as? SourceClipView)?.resizeSession=nil
     }
     fileprivate func prepareForUserInteraction() {
-        clearResizePin();pendingNavigation=nil;retainedNavigationPin=nil
+        clearResizePin()
     }
     private func prepareForUserScroll() {
         prepareForUserInteraction()
@@ -468,7 +464,6 @@ final class SourceEditor:NSView,NSTextViewDelegate,NSTextStorageDelegate,ScrollS
     }
     func beginScrollGesture() {
         guard !isScrolling else{return}
-        pendingNavigation=nil;retainedNavigationPin=nil
         isScrolling=true;scrollGestureChanged?(true)
     }
     func endScrollGesture() {
@@ -537,7 +532,6 @@ final class SourceEditor:NSView,NSTextViewDelegate,NSTextStorageDelegate,ScrollS
         return nil
     }
     private func updateDimensions() {
-        defer {scheduleLayoutCompletion()}
         #if DEBUG
         let work=TimingDiagnostics.shared.begin("source.layout")
         var timingValues=["documentCharacters":Double(document.source.count),"width":Double(scroll.contentSize.width)]
@@ -575,6 +569,10 @@ final class SourceEditor:NSView,NSTextViewDelegate,NSTextStorageDelegate,ScrollS
         let boundary=dirtyRange.location
         let end=min(document.source.count,NSMaxRange(dirtyRange)+document.source.count-prepared.sourceLayout.length)
         let characters=NSRange(location:boundary,length:max(0,end-boundary))
+        #if DEBUG
+        debugMeasuredLayoutCharacters += characters.length
+        debugLayoutTransactions += 1
+        #endif
         if replacingCompleteIndex {manager.ensureLayout(for:container)}
         else {manager.ensureLayout(forCharacterRange:characters)}
         let glyphs=manager.glyphRange(forCharacterRange:characters,actualCharacterRange:nil)
@@ -743,6 +741,10 @@ final class SourceEditor:NSView,NSTextViewDelegate,NSTextStorageDelegate,ScrollS
     private func refineLayout(around requested:NSRange) {
         let rope=document.source,index=prepared.sourceLayout
         guard requested.length>0,index.hasEstimates(in:requested),nativeLayoutRevision==nil,!localEdit else{return}
+        #if DEBUG
+        let refinement=TimingDiagnostics.shared.begin("source.refinement.total")
+        defer {TimingDiagnostics.shared.end(refinement)}
+        #endif
         let first=max(0,rope.line(at:requested.location)-12)
         let last=min(rope.lineCount,rope.line(at:NSMaxRange(requested))+80)
         let range=rope.lines(first,last)
@@ -765,50 +767,6 @@ final class SourceEditor:NSView,NSTextViewDelegate,NSTextStorageDelegate,ScrollS
             scroll.reflectScrolledClipView(scroll.contentView)
         }
         changingLayout=false;geometryChanged?()
-    }
-    private func scheduleLayoutCompletion() {
-        guard !layoutCompletionPaused,initialStylesReady,document.source.count>0,
-              !layoutCompletionScheduled else{return}
-        guard prepared.sourceLayout.firstEstimatedRange() != nil else {
-            guard pendingNavigation != nil || retainedNavigationPin != nil else{return}
-            layoutCompletionScheduled=true
-            DispatchQueue.main.async { [weak self] in
-                self?.layoutCompletionScheduled=false
-                self?.fulfillPendingNavigationIfReady()
-            }
-            return
-        }
-        layoutCompletionScheduled=true
-        DispatchQueue.main.async { [weak self] in self?.completeLayoutBatch() }
-    }
-    private func completeLayoutBatch() {
-        layoutCompletionScheduled=false
-        guard !layoutCompletionPaused else{return}
-        guard initialStylesReady,loadedRevision==document.revision else{return}
-        guard nativeLayoutRevision==nil,!localEdit,!changingLayout,dirtyRange==nil else {
-            scheduleLayoutCompletion();return
-        }
-        guard let estimated=prepared.sourceLayout.firstEstimatedRange() else {
-            fulfillPendingNavigationIfReady();return
-        }
-        let rope=document.source
-        let first=rope.line(at:estimated.location)
-        let batch=layoutReplacementRange(
-            expanding:rope.lines(first,min(rope.lineCount,first+128)))
-        guard batch.length>0 else{return}
-        dirtyRange=batch
-        relayoutPreservingViewport {}
-        fulfillPendingNavigationIfReady()
-        scheduleLayoutCompletion()
-    }
-    private func fulfillPendingNavigationIfReady() {
-        guard let request=pendingNavigation ?? retainedNavigationPin else{return}
-        let prefixEnd=request.offset==document.source.count
-            ? document.source.count:min(document.source.count,request.offset+1)
-        guard prefixEnd==0 || !prepared.sourceLayout.hasEstimates(in:NSRange(location:0,length:prefixEnd)) else{return}
-        pendingNavigation=nil
-        retainedNavigationPin=nil
-        performNavigation(request)
     }
     func verticalPosition(for offset:Int)->CGFloat? {
         // EOF has no glyph. Its coordinate is the explicit document boundary.
@@ -926,7 +884,6 @@ final class SourceEditor:NSView,NSTextViewDelegate,NSTextStorageDelegate,ScrollS
         // event. Resize pinning lasts through resize completion and queued
         // resize layout only; it must not survive into an edit.
         clearResizePin()
-        pendingNavigation=nil;retainedNavigationPin=nil
         let insertedText=edit.insertedLength>0
             ? document.source.string(in:NSRange(location:edit.range.location,length:edit.insertedLength)):""
         let insertedAnchor:Int = {
@@ -1430,19 +1387,12 @@ final class SourceEditor:NSView,NSTextViewDelegate,NSTextStorageDelegate,ScrollS
             // A semantic jump needs exact geometry only around its destination.
             // The retained prefix may remain estimated: subsequent prefix
             // corrections shift the target and the logical origin together.
-            pendingNavigation=nil
             let localStart=position==document.source.count ? max(0,position-1024):position
             refineLayout(around:NSRange(location:localStart,
                 length:max(1,min(1024,document.source.count-localStart))))
         }
-        pendingNavigation=nil
-        // Navigation is immediate, but its semantic destination and alignment
-        // remain pinned until the retained prefix becomes exact. This keeps an
-        // outline target or EOF fixed through later canvas-height correction.
         let request=NavigationRequest(offset:position,alignment:alignment)
-        retainedNavigationPin=hasEstimatedPrefix ? request:nil
         performNavigation(request)
-        scheduleLayoutCompletion()
     }
     private func performNavigation(_ request:NavigationRequest) {
         let position=request.offset
@@ -1499,6 +1449,10 @@ final class SourceEditor:NSView,NSTextViewDelegate,NSTextStorageDelegate,ScrollS
     }
     private func notifyViewport() {
         guard !changingLayout,!localEdit,nativeLayoutRevision==nil else{return}
+        #if DEBUG
+        let notification=TimingDiagnostics.shared.begin("source.viewport.total")
+        defer {TimingDiagnostics.shared.end(notification)}
+        #endif
         refineLayout(around:visibleSourceRange)
         // NSClipView minimizes invalidation when its origin changes. That is
         // normally desirable, but a simultaneous TextKit reflow means copied

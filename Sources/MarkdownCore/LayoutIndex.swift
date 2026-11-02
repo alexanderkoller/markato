@@ -22,12 +22,13 @@ public final class LayoutIndex {
     private final class Node {
         let line: Line
         let left: Node?, right: Node?
-        let length: Int, count: Int, depth: Int
+        let length: Int, estimatedLength: Int, count: Int, depth: Int
         let advance: Double
         let hasEstimates: Bool
         init(_ line:Line,_ left:Node?=nil,_ right:Node?=nil) {
             self.line=line;self.left=left;self.right=right
             length=(left?.length ?? 0)+line.length+(right?.length ?? 0)
+            estimatedLength=(left?.estimatedLength ?? 0)+(line.estimated ? line.length:0)+(right?.estimatedLength ?? 0)
             advance=(left?.advance ?? 0)+line.advance+(right?.advance ?? 0)
             count=(left?.count ?? 0)+1+(right?.count ?? 0)
             depth=1+max(left?.depth ?? 0,right?.depth ?? 0)
@@ -37,6 +38,7 @@ public final class LayoutIndex {
     private var root: Node?
     public private(set) var origin=0.0
     public var length: Int {root?.length ?? 0}
+    public var estimatedLength: Int {root?.estimatedLength ?? 0}
     public var count: Int {root?.count ?? 0}
     public var height: Double {origin+(root?.advance ?? 0)}
     public var treeDepth: Int {root?.depth ?? 0}
@@ -138,7 +140,7 @@ public final class LayoutIndex {
             let before=n.left?.length ?? 0,above=n.left?.advance ?? 0
             let lineY=y+above
             let lineStart=start+before
-            if n.line.estimated,target<lineY+n.line.advance {
+            if n.line.estimated,target>=lineY,target<lineY+n.line.advance {
                 let fraction=max(0,min(1,(target-lineY)/max(n.line.advance,0.001)))
                 let offset=min(lineStart+n.line.length-1,lineStart+Int(Double(n.line.length)*fraction))
                 return Position(range:NSRange(location:offset,length:1),y:lineY+n.line.advance*fraction,height:n.line.height,estimated:true)
@@ -153,7 +155,7 @@ public final class LayoutIndex {
     public func hasEstimates(in range:NSRange)->Bool {
         guard range.length>0 else{return false}
         func visit(_ node:Node?,_ start:Int)->Bool {
-            guard let node else{return false}
+            guard let node,node.hasEstimates else{return false}
             let before=node.left?.length ?? 0,lineStart=start+before,lineEnd=lineStart+node.line.length
             if range.location<lineStart,visit(node.left,start) {return true}
             if range.location<lineEnd,NSMaxRange(range)>lineStart,node.line.estimated {return true}

@@ -65,12 +65,14 @@ private struct LaunchConfiguration {
     }
 }
 
-@_used @_cdecl("astra_timing_start")
+#if DEBUG
+@used @_cdecl("astra_timing_start")
 func startProfileRecording() { TimingDiagnostics.shared.start() }
-@_used @_cdecl("astra_timing_export")
+@used @_cdecl("astra_timing_export")
 func exportProfileRecording(_ path:UnsafePointer<CChar>) {
     try? TimingDiagnostics.shared.snapshot().json().write(to:URL(fileURLWithPath:String(cString:path)))
 }
+#endif
 
 @MainActor final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, NSMenuDelegate {
     private let launchConfiguration:LaunchConfiguration

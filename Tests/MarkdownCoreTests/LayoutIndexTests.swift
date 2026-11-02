@@ -85,3 +85,34 @@ import Testing
         #expect(index.treeDepth<24)
     }
 }
+
+@Test func estimatedLengthTracksIncrementalReplacement() {
+    let index=LayoutIndex()
+    index.replaceSuffix(at:0,with:[
+        LayoutIndex.Line(length:1_000,advance:2_000,height:20,estimated:true)
+    ])
+    #expect(index.estimatedLength==1_000)
+    index.replace(NSRange(location:200,length:100),with:[
+        LayoutIndex.Line(length:100,advance:180,height:20)
+    ])
+    #expect(index.length==1_000)
+    #expect(index.estimatedLength==900)
+    index.replace(NSRange(location:0,length:200),with:[
+        LayoutIndex.Line(length:200,advance:360,height:20)
+    ])
+    #expect(index.estimatedLength==700)
+}
+
+@Test func mixedLayoutHitTestingDoesNotSkipEarlierMeasuredLines() {
+    let index=LayoutIndex()
+    let lines=(0..<31).map {i in
+        LayoutIndex.Line(length:10,advance:20,height:18,estimated:i%2==1)
+    }
+    index.replaceSuffix(at:0,with:lines,origin:16)
+    for (i,line) in lines.enumerated() {
+        let y=16+Double(i)*20
+        let hit=index.position(atY:y+10)
+        #expect(hit?.range.location==i*10+(line.estimated ? 5:0))
+        #expect(hit?.estimated==line.estimated)
+    }
+}

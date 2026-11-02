@@ -311,12 +311,10 @@ import PDFKit
                         try? TimingDiagnostics.shared.snapshot().json().write(to:URL(fileURLWithPath:"/private/tmp/markato-preview-jump-timings.json"))
                         fflush(nil);_exit(EXIT_SUCCESS)
                     }
-                    let frame=controller.preview.committedFrameID
                     controller.source.reveal(positions[index],alignment:index==0 ? .top:.minimalReveal)
                     func awaitJump(_ remaining:Int) {
                         guard remaining>0 else{fail("Bounded jump did not publish: \(controller.preview.debugGeometry())")}
-                        if controller.preview.coversSourceViewport && !controller.preview.isRenderingPresentation &&
-                           (positions[index]==0 || controller.preview.committedFrameID>frame) {
+                        if controller.preview.coversSourceViewport && !controller.preview.hasPendingPresentation {
                             check(!controller.preview.displaysCompleteDocument,
                                 "A deep jump mounted a document-sized DOM")
                             check(!controller.preview.isShowingLoadingState,
@@ -512,14 +510,27 @@ import PDFKit
 
     private static func verifyRenderAhead(_ controller:EditorWindowController) {
         let preview=controller.preview,source=controller.source
+        let scrollStep=CommandLine.arguments.first(where:{$0.hasPrefix("--integration-scroll-step=")})
+            .flatMap{Double($0.dropFirst("--integration-scroll-step=".count))} ?? 120
+        let sourceSteps=CommandLine.arguments.first(where:{$0.hasPrefix("--integration-source-scroll-steps=")})
+            .flatMap{Int($0.dropFirst("--integration-source-scroll-steps=".count))} ?? 180
+        precondition(sourceSteps>0 && sourceSteps%2==0)
         func wait(_ remaining:Int,_ ready:@escaping()->Bool,_ completion:@escaping()->Void) {
             guard remaining>0 else{fail("Render-ahead did not settle: \(preview.debugGeometry())")}
             if ready() {completion()}
             else {DispatchQueue.main.asyncAfter(deadline:.now()+0.01){wait(remaining-1,ready,completion)}}
         }
         wait(3000,{controller.hasMeasuredPreviewDocument && !preview.hasPendingPresentation}) {
+            if CommandLine.arguments.contains("--integration-complete-source-layout") {
+                source.debugRefineLayout(around:source.documentRange)
+            } else {
+                check(source.debugEstimatedLayoutLength>0,
+                    "Preparing preview scroll geometry eagerly measured the entire sample")
+            }
             var worstLag:CGFloat=0,lagged=0,samples=0
             var lagStarted:UInt64?,longestLag:Double=0
+            var loadingSamples=0
+            if CommandLine.arguments.contains("--diagnostics") {TimingDiagnostics.shared.start()}
             let started=DispatchTime.now().uptimeNanoseconds
             let initialHits=preview.previewView.debugRenderAheadHits
             let initialPaints=preview.previewView.debugRenderAheadPaints
@@ -529,6 +540,7 @@ import PDFKit
                 check(rect.minY<=1 && rect.maxY>=preview.bounds.height-1,
                     "Render-ahead exposed unpainted viewport: \(rect)")
                 let lag=abs(preview.clipOrigin-preview.debugPresentedOrigin)
+                if preview.isShowingLoadingState {loadingSamples += 1}
                 worstLag=max(worstLag,lag);samples += 1
                 let now=DispatchTime.now().uptimeNanoseconds
                 if lag>1 {
@@ -538,12 +550,23 @@ import PDFKit
                 } else {lagStarted=nil}
             }
             @MainActor func step(_ index:Int) {
-                if index==180 {source.endScrollGesture()}
-                guard index<360 else {
+                if index==sourceSteps {
+                    print("SOURCE SCROLL DIAGNOSTIC: loading=\(loadingSamples), lagged=\(lagged)/\(samples), longestLagMS=\(longestLag*1000)")
+                    source.endScrollGesture()
+                }
+                guard index<sourceSteps+180 else {
                     wait(1500,{!preview.hasPendingPresentation && abs(preview.clipOrigin-preview.debugPresentedOrigin)<1}) {
                         let hits=preview.previewView.debugRenderAheadHits-initialHits
                         let paints=preview.previewView.debugRenderAheadPaints-initialPaints
-                        check(hits>180,"Render-ahead did not reuse painted pixels")
+                        print("SCROLL DIAGNOSTIC: loading=\(loadingSamples), lagged=\(lagged)/\(samples), longestLagMS=\(longestLag*1000), maxLag=\(worstLag), hits=\(hits), paints=\(paints)")
+                        if CommandLine.arguments.contains("--diagnostics") {
+                            try? TimingDiagnostics.shared.snapshot().json().write(to:URL(fileURLWithPath:"/private/tmp/markato-scroll-diagnostic.json"))
+                        }
+                        if scrollStep<=60 {
+                            check(loadingSamples==0 && longestLag<2.0/60 && lagged<samples/60,
+                                "Cached scrolling exposed loading or lag: loading=\(loadingSamples), lagged=\(lagged)")
+                        }
+                        check(hits>180,"Render-ahead did not reuse painted pixels: \(hits) hits")
                         check(longestLag<0.25 && lagged<samples/5,
                             "Render-ahead lagged excessively: duration=\(longestLag), max=\(worstLag), samples=\(lagged)/\(samples)")
                         print("RENDER AHEAD PASSED: samples=\(samples), lagged=\(lagged), maxLag=\(worstLag), longestLagMS=\(longestLag*1000), cacheHits=\(hits), paints=\(paints), pixelBytes=\(preview.previewView.debugPixelBytes)")
@@ -551,8 +574,14 @@ import PDFKit
                     }
                     return
                 }
-                let delta:CGFloat=(index%180)<90 ? 120:-120
-                if index<180 {source.debugScrollViewport(by:delta)}
+                let forward=index<sourceSteps ? index<sourceSteps/2 : index-sourceSteps<90
+                let delta:CGFloat=forward ? scrollStep:-scrollStep
+                if index<sourceSteps {
+                    if CommandLine.arguments.contains("--integration-native-wheel"),
+                       let event=scrollWheelEvent(units:.pixel,delta:Int32(-delta)) {
+                        source.scrollWheel(with:event)
+                    } else {source.debugScrollViewport(by:delta)}
+                }
                 else {preview.debugScrollViewport(by:delta)}
                 sample()
                 DispatchQueue.main.asyncAfter(deadline:DispatchTime(uptimeNanoseconds:started+UInt64(index+1)*16_666_667)) {
@@ -579,6 +608,8 @@ import PDFKit
             var publications=[UInt64]()
             var draws=[UInt64]()
             var lastPoint:NSPoint?
+            var worstPresentedLag:CGFloat=0,presentedLagSamples=0
+            var presentedLagStarted:UInt64?,longestPresentedLag:Double=0
             preview.previewView.debugScrollPublished={point in
                 publications.append(DispatchTime.now().uptimeNanoseconds);lastPoint=point
             }
@@ -625,18 +656,35 @@ import PDFKit
                                 "Preview published only \(active.count) frames during sustained source scrolling (\(rate) fps)")
                             check(activeDraws.count>=30,
                                 "Preview drew only \(activeDraws.count) frames during sustained source scrolling (\(drawRate) fps)")
-                            check(longestGap<0.1 && longestDrawGap<0.1,
+                            // Cached pixels move without a renderer publication.
+                            // Display cadence and actual clip lag are the visible
+                            // contract; a publication gap alone is not a stall.
+                            check(longestDrawGap<0.1,
                                 "Preview stalled during sustained source scrolling " +
-                                "(publication \(longestGap) s, draw \(longestDrawGap) s)")
+                                "(draw \(longestDrawGap) s, publication \(longestGap) s)")
+                            check(longestPresentedLag<0.05,
+                                "Preview held stale pixels during sustained source scrolling " +
+                                "(duration \(longestPresentedLag) s, max \(worstPresentedLag) px, " +
+                                "samples \(presentedLagSamples)/\(steps))")
                             print(String(format:
                                 "SCROLL THROUGHPUT PASSED: %d publications (%.1f fps), %d draws (%.1f fps), " +
-                                "longest gaps %.1f/%.1f ms",
-                                active.count,rate,activeDraws.count,drawRate,longestGap*1000,longestDrawGap*1000))
+                                "longest gaps %.1f/%.1f ms, presented lag %.1f ms/%.1f px (%d samples)",
+                                active.count,rate,activeDraws.count,drawRate,longestGap*1000,longestDrawGap*1000,
+                                longestPresentedLag*1000,worstPresentedLag,presentedLagSamples))
                             fflush(nil);_exit(EXIT_SUCCESS)
                         }
                         return
                     }
                     source.debugScrollViewport(by:18)
+                    let now=DispatchTime.now().uptimeNanoseconds
+                    let lag=abs(preview.clipOrigin-preview.debugPresentedOrigin)
+                    worstPresentedLag=max(worstPresentedLag,lag)
+                    if lag>1 {
+                        presentedLagSamples += 1
+                        if presentedLagStarted==nil {presentedLagStarted=now}
+                        longestPresentedLag=max(longestPresentedLag,
+                            Double(now-presentedLagStarted!)/1e9)
+                    } else {presentedLagStarted=nil}
                     DispatchQueue.main.asyncAfter(
                         deadline:DispatchTime(uptimeNanoseconds:started+UInt64(index+1)*period)) {
                         step(index+1)
@@ -817,18 +865,45 @@ import PDFKit
 
     private static func verifySourceEndNavigation(_ controller:EditorWindowController,
         document:MarkdownDocument) {
-        let source=controller.source
-        source.debugSetLayoutCompletionPaused(true)
+        let source=controller.source,preview=controller.preview
         func wait(_ remaining:Int,_ ready:@escaping()->Bool,_ failure:String,_ completion:@escaping()->Void) {
             guard remaining>0 else{fail("\(failure): \(source.debugResizeState)")}
             if ready() {completion()}
             else {DispatchQueue.main.asyncAfter(deadline:.now()+0.01){wait(remaining-1,ready,failure,completion)}}
         }
-        wait(500,{source.hasMeasuredLayout && source.contentHeight>source.bounds.height*2},
+        wait(500,{source.hasMeasuredLayout && source.contentHeight>source.bounds.height*2 &&
+            preview.lastRevision==document.revision},
             "Source layout did not become scrollable") {
-            let step=max(80,source.bounds.height*0.75)
+            check(source.debugEstimatedLayoutLength>document.source.count/2,
+                "Initial source layout measured more than a bounded viewport window " +
+                "(estimated=\(source.debugEstimatedLayoutLength), document=\(document.source.count), " +
+                "measuredWork=\(source.debugMeasuredLayoutCharacters), transactions=\(source.debugLayoutTransactions))")
+            // Cross still-estimated regions before TextKit has laid them out.
+            // Every downward destination must resolve monotonically, and the
+            // retained range published to the preview must have exact local
+            // geometry before it is exposed.
+            let jump=max(source.bounds.height,source.contentHeight/10)
+            let initialLocation=source.visibleSourceRange.location
+            var previousLocation=initialLocation
+            var reachedEnd=NSMaxRange(source.visibleSourceRange)==document.source.count
             source.beginScrollGesture()
-            for _ in 0..<24 {source.debugScrollViewport(by:step)}
+            for index in 0..<8 {
+                source.debugScrollViewport(by:jump)
+                let visible=source.visibleSourceRange
+                // Once EOF is visible, refining the estimated canvas height
+                // may clamp the viewport upward to fill the final page.
+                check(reachedEnd || visible.location>=previousLocation,
+                    "Fast estimated scroll moved the source range backwards at step \(index): " +
+                    "\(previousLocation) -> \(visible.location); \(source.debugResizeState)")
+                check(!source.debugHasEstimatedLayout(in:visible),
+                    "Fast estimated scroll published an unmeasured source range at step \(index): " +
+                    "visible=\(visible); \(source.debugResizeState)")
+                previousLocation=visible.location
+                reachedEnd = reachedEnd || NSMaxRange(visible)==document.source.count
+            }
+            check(previousLocation>initialLocation,
+                "Fast estimated scroll did not advance through the document")
+            let step=max(80,source.bounds.height*0.75)
             for _ in 0..<12 {source.debugScrollViewport(by:-step)}
             source.endScrollGesture()
             guard let window=controller.window else{fail("Missing source integration window")}
@@ -837,21 +912,31 @@ import PDFKit
                 "Could not click source after scrolling")
             DispatchQueue.main.async {source.textView.moveToEndOfDocument(nil)}
             DispatchQueue.main.asyncAfter(deadline:.now()+0.05) {
-                check(!source.debugHasPendingNavigation,
-                    "Cmd-End incorrectly waited for its unmeasured source prefix")
                 check(source.selection.location==document.source.count,
                     "Cmd-End did not move immediately to the retained end estimate")
-                source.debugSetLayoutCompletionPaused(false)
-            }
-            wait(500,{source.selection.location==document.source.count && source.debugHasCompleteLayout},
-                "Cmd-End did not remain stable while source measurement completed") {
                 guard document.source.count>0,
-                      let lastY=source.debugRenderedViewportY(for:document.source.count-1) else {
+                      let referenceY=source.debugRenderedViewportY(for:document.source.count-1) else {
                     fail("Could not locate the final source character")
                 }
-                check(lastY >= -0.01 && lastY <= source.bounds.height+0.01,
-                    "Cmd-End left the final source character outside the viewport at y=\(lastY); retainedLast=\(source.debugMeasuredPosition(for:document.source.count-1)); \(source.debugResizeState)")
-                print("SOURCE END NAVIGATION PASSED: scroll down/up, click, and Cmd-End reached visible EOF")
+                check(referenceY >= -0.01 && referenceY <= source.bounds.height+0.01,
+                    "Cmd-End left the final source character outside the viewport at y=\(referenceY); " +
+                    "retainedLast=\(source.debugMeasuredPosition(for:document.source.count-1)); \(source.debugResizeState)")
+                let destinations=[0,document.source.count/4,document.source.count/2,
+                    document.source.count*3/4]
+                for destination in destinations {
+                    source.debugRefineLayout(around:NSRange(location:destination,
+                        length:min(1024,document.source.count-destination)))
+                    guard let lastY=source.debugRenderedViewportY(for:document.source.count-1) else {
+                        fail("Could not locate EOF after refining source offset \(destination)")
+                    }
+                    check(source.selection.location==document.source.count,
+                        "Source refinement moved the Cmd-End selection")
+                    check(abs(lastY-referenceY)<1,
+                        "Source refinement moved visible EOF by \(lastY-referenceY) points at offset \(destination)")
+                }
+                check(source.debugEstimatedLayoutLength>0,
+                    "Bounded navigation unexpectedly completed whole-document source layout")
+                print("SOURCE END NAVIGATION PASSED: bounded startup, immediate Cmd-End, and stable EOF while estimates remain")
                 fflush(nil);_exit(EXIT_SUCCESS)
             }
         }
@@ -1335,6 +1420,7 @@ import PDFKit
     }
     private static func verifyCommentSourceFoldEditing(_ controller:EditorWindowController,
                                                         document:MarkdownDocument) {
+        controller.source.showsCommentSource=true
         let prefix=(1...20).map{"Leading paragraph \($0) keeps the comment away from the document boundary."}
             .joined(separator:"\n\n")
         let base="# Comment source fold\n\n\(prefix)\n\nThe anchor word is precise.\n\nDownstream sentinel stays put.\n\n"
@@ -1384,7 +1470,9 @@ import PDFKit
             controller.source.debugAlignViewport(at:insertion,
                 viewportY:controller.source.readingAnchorViewportY)
             controller.source.textView.setSelectedRange(NSRange(location:insertion,length:0))
+            document.undoManager?.beginUndoGrouping()
             controller.source.textView.insertText(addition,replacementRange:NSRange(location:insertion,length:0))
+            document.undoManager?.endUndoGrouping()
             let editDestinationY=controller.source.editAnchorViewportY
             let revision=document.revision
             @MainActor func waitForDirectEdit(_ remaining:Int) {
@@ -1395,6 +1483,14 @@ import PDFKit
                    controller.source.textView.string==document.source.string,
                    controller.debugComments.first?.comment.body.hasSuffix("final direct words")==true,
                    sentinel.location != NSNotFound {
+                    let first=current.range(of:"Tiny."),last=current.range(of:"final direct words")
+                    let body=NSRange(location:first.location,
+                        length:last.location==NSNotFound ? 0:NSMaxRange(last)-first.location)
+                    guard first.location != NSNotFound,last.location != NSNotFound,
+                          !controller.source.debugHasEstimatedLayout(in:body) else {
+                        DispatchQueue.main.asyncAfter(deadline:.now()+0.005){waitForDirectEdit(remaining-1)}
+                        return
+                    }
                     checkReadableBody(first:"Tiny.",last:"final direct words",
                         message:"Direct source comment edit")
                     guard let anchorY=controller.preview.debugParagraphViewportY(
@@ -1481,6 +1577,15 @@ import PDFKit
                    controller.source.textView.string==document.source.string,
                    sentinel.location != NSNotFound {
                     if phase==1 {
+                        let first=text.range(of:"A long edited comment body")
+                        let last=text.range(of:"second detail",options:.backwards)
+                        let bodyRange=NSRange(location:first.location,
+                            length:last.location==NSNotFound ? 0:NSMaxRange(last)-first.location)
+                        guard first.location != NSNotFound,last.location != NSNotFound,
+                              !controller.source.debugHasEstimatedLayout(in:bodyRange) else {
+                            DispatchQueue.main.asyncAfter(deadline:.now()+0.005){waitForSave(remaining-1)}
+                            return
+                        }
                         checkReadableBody(first:"A long edited comment body",last:"second detail",
                             message:"Popover comment edit")
                         saveBody("Tiny.",phase:2);return
@@ -1498,7 +1603,7 @@ import PDFKit
             if controller.debugComments.count==1,
                controller.debugComments.first?.comment.body=="Short note.",
                controller.preview.lastRevision==document.revision,
-               controller.source.debugHasCompleteLayout,
+               controller.source.hasMeasuredLayout,
                sentinel.location != NSNotFound {
                 controller.source.reveal(sentinel.location,alignment:.top)
                 @MainActor func waitForPosition(_ positionRemaining:Int) {
