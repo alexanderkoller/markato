@@ -7,9 +7,10 @@
 <key>CFBundleExecutable</key><string>Markato</string>
 <key>CFBundleIconFile</key><string>Markato.icns</string>
 <key>CFBundlePackageType</key><string>APPL</string>
-<key>CFBundleShortVersionString</key><string>0.1.0</string>
+<key>CFBundleShortVersionString</key><string>1.0.0</string>
 <key>CFBundleVersion</key><string>1</string>
 <key>LSMinimumSystemVersion</key><string>15.0</string>
+<key>LSApplicationCategoryType</key><string>public.app-category.developer-tools</string>
 <key>NSPrincipalClass</key><string>NSApplication</string>
 <key>NSHighResolutionCapable</key><true/>
 <key>NSHumanReadableCopyright</key><string>Markato</string>
@@ -18,6 +19,7 @@
 <key>CFBundleTypeExtensions</key><array><string>md</string><string>markdown</string><string>mdown</string><string>mkd</string></array>
 <key>CFBundleTypeIconFile</key><string>Markato.icns</string>
 <key>CFBundleTypeRole</key><string>Editor</string>
+<key>LSHandlerRank</key><string>Alternate</string>
 <key>NSDocumentClass</key><string>Markato.MarkdownDocument</string>
 <key>LSItemContentTypes</key><array><string>net.daringfireball.markdown</string></array>
 </dict></array>
