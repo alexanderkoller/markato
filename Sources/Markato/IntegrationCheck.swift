@@ -314,9 +314,11 @@ import PDFKit
                     let frame=controller.preview.committedFrameID
                     controller.source.reveal(positions[index],alignment:index==0 ? .top:.minimalReveal)
                     func awaitJump(_ remaining:Int) {
-                        guard remaining>0 else{fail("Bounded jump did not publish: \(controller.preview.debugGeometry())")}
-                        if controller.preview.coversSourceViewport && !controller.preview.isRenderingPresentation &&
-                           (positions[index]==0 || controller.preview.committedFrameID>frame) {
+                        guard remaining>0 else{fail("Bounded jump did not settle: \(controller.preview.debugGeometry())")}
+                        let reusedMountedWindow=controller.preview.committedFrameID==frame &&
+                            controller.preview.debugScrollMapError.map{abs($0)<0.01}==true
+                        if controller.preview.coversSourceViewport && !controller.preview.hasPendingPresentation &&
+                           (positions[index]==0 || controller.preview.committedFrameID>frame || reusedMountedWindow) {
                             check(!controller.preview.displaysCompleteDocument,
                                 "A deep jump mounted a document-sized DOM")
                             check(!controller.preview.isShowingLoadingState,
@@ -1335,6 +1337,9 @@ import PDFKit
     }
     private static func verifyCommentSourceFoldEditing(_ controller:EditorWindowController,
                                                         document:MarkdownDocument) {
+        // This check exercises editing and measuring the serialized body. Do
+        // not inherit the user's preference, which normally folds that body.
+        controller.source.showsCommentSource=true
         let prefix=(1...20).map{"Leading paragraph \($0) keeps the comment away from the document boundary."}
             .joined(separator:"\n\n")
         let base="# Comment source fold\n\n\(prefix)\n\nThe anchor word is precise.\n\nDownstream sentinel stays put.\n\n"
@@ -1384,7 +1389,10 @@ import PDFKit
             controller.source.debugAlignViewport(at:insertion,
                 viewportY:controller.source.readingAnchorViewportY)
             controller.source.textView.setSelectedRange(NSRange(location:insertion,length:0))
+            let undo=document.undoManager,beginsUndoGroup=undo?.groupingLevel==0
+            if beginsUndoGroup {undo?.beginUndoGrouping()}
             controller.source.textView.insertText(addition,replacementRange:NSRange(location:insertion,length:0))
+            if beginsUndoGroup {undo?.endUndoGrouping()}
             let editDestinationY=controller.source.editAnchorViewportY
             let revision=document.revision
             @MainActor func waitForDirectEdit(_ remaining:Int) {
@@ -2742,6 +2750,61 @@ import PDFKit
                 controller.sidebar.layoutSubtreeIfNeeded()
                 check(controller.sidebar.debugCommentCardsFit,
                     "Sidebar comment cards and wrapped labels must remain inside their table cells")
+                if CommandLine.arguments.contains("--integration-comment-source-preview") {
+                    let originalCommentSourceVisibility=CommentSourcePreferences.isShown
+                    controller.sidebar.debugSelectComment(id:id)
+                    @MainActor func waitForSelectedPreview(_ remaining:Int) {
+                        guard remaining>0 else {
+                            fail("Selected comment preview did not settle before toggling source: \(controller.preview.debugGeometry())")
+                        }
+                        guard controller.preview.lastRevision==document.revision,
+                              !controller.preview.hasPendingPresentation,
+                              web.debugCount(".markato-comment-bubble.is-selected")==1 else {
+                            DispatchQueue.main.asyncAfter(deadline:.now()+0.01) {
+                                waitForSelectedPreview(remaining-1)
+                            }
+                            return
+                        }
+                        let patchCount=controller.preview.patchCount
+                        CommentSourcePreferences.isShown=true
+                        @MainActor func waitForShownSource(_ shownRemaining:Int) {
+                            guard shownRemaining>0 else {
+                                fail("Showing comment source stranded the preview: \(controller.preview.debugGeometry())")
+                            }
+                            guard !controller.preview.isShowingLoadingState,
+                                  controller.preview.lastRevision==document.revision else {
+                                DispatchQueue.main.asyncAfter(deadline:.now()+0.01) {
+                                    waitForShownSource(shownRemaining-1)
+                                }
+                                return
+                            }
+                            check(controller.preview.patchCount==patchCount,
+                                "Showing comment source must refresh only the scroll map, not rebuild the preview")
+                            CommentSourcePreferences.isShown=false
+                            @MainActor func waitForHiddenSource(_ hiddenRemaining:Int) {
+                                guard hiddenRemaining>0 else {
+                                    fail("Hiding comment source stranded the preview: \(controller.preview.debugGeometry())")
+                                }
+                                guard !controller.preview.isShowingLoadingState,
+                                      controller.preview.lastRevision==document.revision else {
+                                    DispatchQueue.main.asyncAfter(deadline:.now()+0.01) {
+                                        waitForHiddenSource(hiddenRemaining-1)
+                                    }
+                                    return
+                                }
+                                check(controller.preview.patchCount==patchCount,
+                                    "Hiding comment source must refresh only the scroll map, not rebuild the preview")
+                                CommentSourcePreferences.isShown=originalCommentSourceVisibility
+                                print("COMMENT SOURCE PREVIEW PASSED: sidebar-visible show/hide refreshed only the scroll map")
+                                fflush(nil);_exit(EXIT_SUCCESS)
+                            }
+                            waitForHiddenSource(500)
+                        }
+                        waitForShownSource(500)
+                    }
+                    waitForSelectedPreview(500)
+                    return
+                }
                 if let path=commentsScreenshotOutput,let content=controller.window?.contentView {
                     @MainActor func waitForScreenshot(_ screenshotRemaining:Int) {
                         guard screenshotRemaining>0 else {

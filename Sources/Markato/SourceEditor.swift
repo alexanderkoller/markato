@@ -44,7 +44,7 @@ private final class SourceCommentLayoutManager:NSLayoutManager {
 }
 
 /// Opt-in geometry-only trace for reproducing AppKit resize event order.
-/// Enable with `defaults write de.alexanderkoller.markato ResizeTraceEnabled -bool YES`.
+/// Enable with `defaults write de.akoller.markato ResizeTraceEnabled -bool YES`.
 @MainActor enum ResizeTrace {
     private static let file:FileHandle? = {
         guard UserDefaults.standard.bool(forKey:"ResizeTraceEnabled") else{return nil}
@@ -255,7 +255,10 @@ final class SourceEditor:NSView,NSTextViewDelegate,NSTextStorageDelegate,ScrollS
     var showsCommentSource=CommentSourcePreferences.isShown {
         didSet {
             guard showsCommentSource != oldValue else{return}
-            refreshCommentSourcePresentation()
+            // Folding metadata changes source geometry, not the semantic
+            // viewport. Publish landmarks without selecting another bounded
+            // preview window or rebuilding its unchanged DOM.
+            refreshCommentSourcePresentation(notifyViewport:false)
             moveSelectionOutOfHiddenSource()
         }
     }
@@ -898,7 +901,8 @@ final class SourceEditor:NSView,NSTextViewDelegate,NSTextStorageDelegate,ScrollS
         return edit.range.location+min(edit.insertedLength,max(0,offset-edit.range.location))
     }
     private func relayoutPreservingViewport(through edit:SourceEdit?=nil,
-                                            preferredAnchor:Int?=nil,_ change:()->Void) {
+                                            preferredAnchor:Int?=nil,notifyViewport shouldNotifyViewport:Bool=true,
+                                            _ change:()->Void) {
         let anchor=preferredAnchor ?? renderedViewportAnchor,oldOrigin=scroll.contentView.bounds.minY
         let oldPosition=renderedVerticalPosition(for:anchor)
         let restoredAnchor=edit.map{transformedViewportOffset(anchor,through:$0)} ?? anchor
@@ -919,7 +923,8 @@ final class SourceEditor:NSView,NSTextViewDelegate,NSTextStorageDelegate,ScrollS
             #endif
         }
         scroll.reflectScrolledClipView(scroll.contentView)
-        changingLayout=false;geometryChanged?();notifyViewport()
+        changingLayout=false;geometryChanged?()
+        if shouldNotifyViewport {notifyViewport()}
     }
     func documentEdited(selection:NSRange,edit:SourceEdit,semanticAnchor:Int?=nil) {
         // Any document edit starts a new center-synchronized positioning
@@ -1219,7 +1224,8 @@ final class SourceEditor:NSView,NSTextViewDelegate,NSTextStorageDelegate,ScrollS
         insertedCommentSourceRanges[record]
     }
 
-    private func refreshCommentSourcePresentation(reflow:Bool=true,paintRange:NSRange?=nil) {
+    private func refreshCommentSourcePresentation(reflow:Bool=true,paintRange:NSRange?=nil,
+                                                  notifyViewport:Bool=true) {
         let folds:[NSRange]=showsCommentSource ? []:commentRecordRanges.compactMap {
             guard let canonical=MarkdownComments.standaloneSourceRange($0,in:document.source) else{return nil}
             return insertedCommentSourceRanges[$0] ?? canonical
@@ -1246,7 +1252,9 @@ final class SourceEditor:NSView,NSTextViewDelegate,NSTextStorageDelegate,ScrollS
             }
             self.paintCommentSource(in:paintRange)
         }
-        if !changed.isEmpty,reflow {relayoutPreservingViewport(update)}else{update()}
+        if !changed.isEmpty,reflow {
+            relayoutPreservingViewport(notifyViewport:notifyViewport,update)
+        } else {update()}
     }
 
     private func paintCommentSource(in requested:NSRange?=nil) {

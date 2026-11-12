@@ -13,6 +13,7 @@ dist/debug/Markato.app/Contents/MacOS/Markato --integration-test --integration-m
 dist/debug/Markato.app/Contents/MacOS/Markato --integration-test --integration-highlighting
 dist/debug/Markato.app/Contents/MacOS/Markato --integration-test --integration-empty-edits
 dist/debug/Markato.app/Contents/MacOS/Markato --integration-test --integration-comments
+dist/debug/Markato.app/Contents/MacOS/Markato --integration-test --integration-comments --integration-comment-source-preview
 dist/debug/Markato.app/Contents/MacOS/Markato --integration-test --integration-block-comment-anchor
 dist/debug/Markato.app/Contents/MacOS/Markato --integration-test --integration-inline-comment-anchor
 dist/debug/Markato.app/Contents/MacOS/Markato --integration-test --integration-comment-markup-anchor
